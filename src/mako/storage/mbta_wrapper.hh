@@ -4,9 +4,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <mutex>
+#include <stdexcept>
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
 #include "sto/Transaction.hh"
+#include "sto/thread_registration.hh"
+#include "sto/replay_record.h"
 #include "sto/MassTrans.hh"
 #include "sto/Hashtable.hh"
 #include "sto/simple_str.hh"
@@ -26,34 +30,43 @@
 #include "mbta_sharded_ordered_index.hh"
 
 // We have to do it on the coordinator instead of transaction.cc, because it only has a local copy of the readSet;
-#define GET_NODE_POINTER(val,len) reinterpret_cast<mako::Node *>((char*)(val+len-mako::BITS_OF_NODE));
-#define GET_NODE_EXTRA_POINTER(val,len) reinterpret_cast<uint32_t *>((char*)(val+len-mako::EXTRA_BITS_FOR_VALUE));
 #define MAX(a,b) ((a)>(b)?(a):(b))
 
 #if defined(FAIL_NEW_VERSION)
 // control_mode==4, If a value is in the old epoch while this transaction is from the new epoch,  if not stable, we put it in the queue.
 // If control_mode==4
 #define UPDATE_VS(val,len) \
-  mako::Node *header = GET_NODE_POINTER(val,len); \
-  uint32_t *shardtimestamp = GET_NODE_EXTRA_POINTER(val,len); \
-  /* Update single max timestamp in readset */ \
-  TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, header->timestamp); \
-  if (BenchmarkConfig::getInstance().getControlMode()==4) { \
-    if (*shardtimestamp % 10 < TThread::txn->current_term_ && sync_util::sync_logger::safety_check(header->timestamp)){ \
-      TThread::transget_without_stable = true; \
-      TThread::transget_without_throw = true; \
+  do { \
+    const uint32_t node_timestamp = \
+      mako::load_value_node_timestamp((val), (len)); \
+    const uint32_t shard_timestamp = \
+      mako::load_value_time_term((val), (len)); \
+    /* Update single max timestamp in readset */ \
+    TThread::txn->maxTimestampReadSet = \
+      MAX(TThread::txn->maxTimestampReadSet, node_timestamp); \
+    if (BenchmarkConfig::getInstance().getControlMode()==4) { \
+      if (shard_timestamp % 10 < TThread::txn->current_term_ && \
+          sync_util::sync_logger::safety_check(node_timestamp)){ \
+        TThread::transget_without_stable = true; \
+        TThread::transget_without_throw = true; \
+      } \
     } \
-  }
+  } while (0)
 #else
 #define UPDATE_VS(val,len) \
-  mako::Node *header = GET_NODE_POINTER(val,len); \
-  /* Update single max timestamp in readset */ \
-  TThread::txn->maxTimestampReadSet = MAX(TThread::txn->maxTimestampReadSet, header->timestamp); \
-  if (BenchmarkConfig::getInstance().getControlMode()==1){ \
-    if (TThread::txn->maxTimestampReadSet>sync_util::sync_logger::failed_shard_ts){ \
-      TThread::transget_without_throw = true;\
+  do { \
+    const uint32_t node_timestamp = \
+      mako::load_value_node_timestamp((val), (len)); \
+    /* Update single max timestamp in readset */ \
+    TThread::txn->maxTimestampReadSet = \
+      MAX(TThread::txn->maxTimestampReadSet, node_timestamp); \
+    if (BenchmarkConfig::getInstance().getControlMode()==1){ \
+      if (TThread::txn->maxTimestampReadSet > \
+          sync_util::sync_logger::failed_shard_ts.load(std::memory_order_relaxed)){ \
+        TThread::transget_without_throw = true;\
+      } \
     } \
-  }
+  } while (0)
 #endif
 // It may cause too many aborts and slow down the system if using throw abstract_db::abstract_abort_exception()
 // Instead, we use TThread::transget_without_throw = true.
@@ -64,6 +77,25 @@
   } catch (Transaction::Abort E) { \
     throw abstract_db::abstract_abort_exception(); \
   }
+
+// MassTrans uses this TLS flag when it has already aborted locally and cannot
+// throw through a hot-path read. UPDATE_VS also uses it to reject a value after
+// it was copied. Consume the flag at every adapter boundary before exposing the
+// value or reporting success.
+inline bool oi_mbta_consume_silent_abort() {
+  if (!TThread::transget_without_throw)
+    return false;
+
+  TThread::transget_without_throw = false;
+  if (TThread::txn != nullptr && TThread::txn->has_active_state())
+    Sto::abort_without_throw();
+  return true;
+}
+
+inline void oi_mbta_throw_if_silent_abort() {
+  if (oi_mbta_consume_silent_abort())
+    throw abstract_db::abstract_abort_exception();
+}
 
 #define OP_LOGGING 0
 #if OP_LOGGING
@@ -90,10 +122,11 @@ std::atomic<long> ht_del(0);
 // C++ stays where C++ must: the per-verb kernels below own the
 // exception boundary (Sto ops throw Transaction::Abort — STD_OP
 // translates it to abstract_db::abstract_abort_exception for the
-// txn'd/2PC families; the non-txn family catches and retries in
-// place), the UPDATE_VS read-set bookkeeping macro, and the RPC retry
-// loops. The DSL owns the class shape, the interface attachment, and
-// the remote/local dispatch.
+// txn'd/2PC families; the non-txn point verbs catch and retry in
+// place, the non-txn scans surface a conflict as an abort), the
+// UPDATE_VS read-set bookkeeping macro, and the RPC retry loops. The
+// DSL owns the class shape, the interface attachment, and the
+// remote/local dispatch.
 //
 // The index holds its MassTrans behind a raw pointer: MassTrans is
 // non-movable and DSL structs are move-only with a synthesized
@@ -152,15 +185,10 @@ inline mbta_table* oi_mbta_point_table(mbta_table* source, const mako::ShardingP
 inline bool oi_mbta_tx_get_local(mbta_table *t, lcdf::Str key, std::string &value) {
   STD_OP({
     bool ret = t->transGet(key, value);
-    // Check for silent abort (transGet uses abort_without_throw for
-    // certain failures). Throw to match RPC path behavior and allow
-    // caller to handle properly.
-    if (TThread::transget_without_throw) {
-      TThread::transget_without_throw = false;
-      throw Transaction::Abort();
-    }
+    oi_mbta_throw_if_silent_abort();
     if (ret) {
-      UPDATE_VS(value.data(), value.length())
+      UPDATE_VS(value.data(), value.length());
+      oi_mbta_throw_if_silent_abort();
       if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
         value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     }
@@ -174,10 +202,15 @@ inline bool oi_mbta_tx_get_remote(mbta_table *t, lcdf::Str key,
   int ret = TThread::sclient->remoteGet(t->get_table_id(), key, value, point);
   if (ret == mako::ErrorCode::NOT_FOUND) return false;
   if (ret > 0) {
+    // remoteGet has already marked this participant in the coordinator's
+    // read-set bits. Resolve the local attempt and abort every staged remote
+    // participant before the facade observes the failure.
+    Sto::abort_without_throw();
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-    UPDATE_VS(value.data(), value.length())
+    UPDATE_VS(value.data(), value.length());
+    oi_mbta_throw_if_silent_abort();
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
   return true;
@@ -199,7 +232,10 @@ inline void oi_mbta_tx_put(mbta_table *t, lcdf::Str key,
 #if OP_LOGGING
   mt_put++;
 #endif
-  STD_OP({ t->transPut(key, StringWrapper(value)); });
+  STD_OP({
+    t->transPut(key, StringWrapper(value));
+    oi_mbta_throw_if_silent_abort();
+  });
 }
 
 // @unsafe - Sto txn insert
@@ -207,7 +243,10 @@ inline void oi_mbta_tx_insert(mbta_table *t, lcdf::Str key,
                               const std::string &value) {
   const auto point = mako::sharding_resolve_point(t->get_table_id(), key.data(), key.length());
   t = oi_mbta_point_table(t, point);
-  STD_OP(t->transInsert(key, StringWrapper(value));)
+  STD_OP({
+    t->transInsert(key, StringWrapper(value));
+    oi_mbta_throw_if_silent_abort();
+  });
 }
 
 // @unsafe - Sto txn delete
@@ -221,6 +260,7 @@ inline void oi_mbta_tx_remove(mbta_table *t, lcdf::Str key) {
     // Proxy carriers must stage an explicit delete, not insert-then-delete.
     if (t->get_is_remote()) t->transDeleteRemote(key);
     else t->transDelete(key);
+    oi_mbta_throw_if_silent_abort();
   });
 }
 
@@ -305,8 +345,7 @@ inline void oi_mbta_full_scan_page(mbta_table* table,
       };
       table->transQuery(mbta_table::Str(lo), mbta_table::Str(), observe);
       oi_mbta_scan_require(status);
-      if (TThread::transget_without_throw)
-        throw abstract_db::abstract_abort_exception();
+      oi_mbta_throw_if_silent_abort();
       MakoShardBytes maximum{};
       uint32_t present = 0;
       oi_mbta_scan_require(mako_scan_page_maximum(state.page, &maximum, &present));
@@ -324,8 +363,7 @@ inline void oi_mbta_full_scan_page(mbta_table* table,
                        !bounds.has_cursor);
   });
   oi_mbta_scan_require(status);
-  if (TThread::transget_without_throw)
-    throw abstract_db::abstract_abort_exception();
+  oi_mbta_throw_if_silent_abort();
   oi_mbta_scan_require(mako_scan_page_finish(state.page, output, capacity,
                                              output_length));
 }
@@ -341,7 +379,9 @@ struct oi_mbta_scan_delivery {
   uint32_t deliver(MakoShardBytes key, std::string& value) {
     try {
       if (strip && value.size() >= mako::EXTRA_BITS_FOR_VALUE) {
-        UPDATE_VS(value.data(), value.size())
+        UPDATE_VS(value.data(), value.size());
+        // UPDATE_VS can reject a copied value; never expose it to the callback.
+        oi_mbta_throw_if_silent_abort();
         value.resize(value.size() - mako::EXTRA_BITS_FOR_VALUE);
       }
       stopped = !callback.invoke(
@@ -400,8 +440,7 @@ inline void oi_mbta_scan_direct(mbta_table* table, MakoShardBytes lo,
         return true;
       };
       table->transQuery(lower, mbta_table::Str(), observe);
-      if (TThread::transget_without_throw)
-        throw abstract_db::abstract_abort_exception();
+      oi_mbta_throw_if_silent_abort();
       if (present)
         table->transRQuery(mbta_table::Str(maximum), lower, emit, allocator,
             mbta_table::mythreadinfo, true, true);
@@ -416,8 +455,7 @@ inline void oi_mbta_scan_direct(mbta_table* table, MakoShardBytes lo,
   });
   // Do not translate a callback's Transaction::Abort into an engine exception.
   if (delivery.exception) std::rethrow_exception(delivery.exception);
-  if (TThread::transget_without_throw)
-    throw abstract_db::abstract_abort_exception();
+  oi_mbta_throw_if_silent_abort();
 }
 
 // @unsafe - storage binding resolver is defined after the concrete index type.
@@ -591,10 +629,18 @@ inline void oi_mbta_tx_scan_one_remote(mbta_table *t,
   int ret =
       TThread::sclient->remoteScan(t->get_table_id(), start_key, end_key, value);
   if (ret > 0) {
+    // Match remote get failure semantics. Do not leave a live native attempt
+    // for Commit to publish after this operation has reported an abort.
+    // This includes ErrorCode::NOT_FOUND: an empty range is a successful
+    // absence read on the participant (which therefore stays live and is
+    // resolved by the remoteAbort below), but this median-row verb has no
+    // row to return, so the attempt aborts as it does on both parent lines.
+    Sto::abort_without_throw();
     throw abstract_db::abstract_abort_exception();
   }
   if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-    UPDATE_VS(value.data(), value.length())
+    UPDATE_VS(value.data(), value.length());
+    oi_mbta_throw_if_silent_abort();
     value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
 }
@@ -605,6 +651,7 @@ inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
                                    const std::string &value) {
   STD_OP({
     t->transPutMbta(key, StringWrapper(value), compar);
+    oi_mbta_throw_if_silent_abort();
     return 0;
   });
 }
@@ -617,6 +664,7 @@ inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
   mako::sharding_require_point(t->get_table_id(), key.data(), key.length());
   STD_OP({
     bool ret = t->transGet(key, value);
+    oi_mbta_throw_if_silent_abort();
     return ret;
   });
 }
@@ -629,6 +677,7 @@ inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
     // RPC scratch strings are overwritten by the next piece; the engine must
     // own this value until install/abort, protected by its retained STO epoch.
     t->transPut(key, value);
+    oi_mbta_throw_if_silent_abort();
     if (!Sto::shard_try_lock_last_writeset()) {
       throw Transaction::Abort();
     }
@@ -641,6 +690,22 @@ inline void oi_mbta_shard_remove(mbta_table* t, lcdf::Str key) {
   mako::sharding_require_point(t->get_table_id(), key.data(), key.length());
   STD_OP({
     t->transDelete(key);
+    oi_mbta_throw_if_silent_abort();
+    if (!Sto::shard_try_lock_last_writeset()) throw Transaction::Abort();
+  });
+}
+
+// @unsafe - stage a real insert on the owner, then lock it.
+// Shared by mbta_wrapper::shard_mutate and the shard receiver's batch-lock
+// path (server.cc stage_batch_write), which must stay in step for wire kind 1.
+inline void oi_mbta_shard_insert(mbta_table* t, lcdf::Str key,
+                                 const std::string& value) {
+  mako::sharding_require_point(t->get_table_id(), key.data(), key.length());
+  STD_OP({
+    // RPC scratch strings are overwritten by the next piece; the engine owns
+    // the staged value until install/abort.
+    t->transInsert(key, value);
+    oi_mbta_throw_if_silent_abort();
     if (!Sto::shard_try_lock_last_writeset()) throw Transaction::Abort();
   });
 }
@@ -659,23 +724,25 @@ inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
                        [&](mbta_table::Str key, std::string &value) {
     return callback.invoke(key.data(), key.length(), value);
   }, value_allocator_ptr));
+  oi_mbta_throw_if_silent_abort();
   return true;
 }
 
 // ---- non-transactional verbs (Masstree-shape) -----------------------------
 //
-// Each local op delegates to MassTrans's one-op-txn variant and
-// retries on OCC abort, so callers get Masstree-parity "no spurious
-// failure" semantics. remove is MassTrans's direct raw write (the
-// documented asymmetry). Values follow the raw-bytes convention:
-// writes are Encoded here, once, at the storage boundary; reads/scans
-// strip EXTRA_BITS_FOR_VALUE.
+// Each local point op (get/put/insert/remove) delegates to MassTrans's
+// one-op-txn variant and retries on OCC abort, so callers get
+// Masstree-parity "no spurious failure" semantics. Values follow the
+// raw-bytes convention: writes are Encoded here, once, at the storage
+// boundary; reads/scans strip EXTRA_BITS_FOR_VALUE.
 //
-// Scan/rscan deliver callbacks live during the attempt; if the one-op
-// txn aborts mid-scan the whole scan retries, so callbacks may observe
-// a repeated prefix. This matches the pre-existing
-// shard_scan-with-caller-retry behavior, just with the retry moved
-// inside.
+// Scan/rscan are one logical OCC scan (oi_mbta_nontxn_scan/rscan):
+// callbacks are delivered live and are never replayed. An OCC conflict,
+// a failed remote page, or a rejected value resolves the attempt
+// (Sto::abort_without_throw, which also sends the terminal to every
+// touched participant) and surfaces as abstract_db::abstract_abort_exception;
+// a caller that needs "no spurious failure" retries the whole scan itself
+// and must tolerate the prefix its callback already saw.
 
 // Shared retry driver for the remote non-txn write RPCs. Transient
 // failures (TIMEOUT: lost/late reply; SERVER_BUSY: the serving worker
@@ -730,12 +797,12 @@ inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key, std::string &value) 
   while (true) {
     try {
       bool ret = t->get(key, value);
-      if (TThread::transget_without_throw) {
-        TThread::transget_without_throw = false;
+      if (oi_mbta_consume_silent_abort())
         continue;  // silent abort — retry
-      }
       if (ret) {
-        UPDATE_VS(value.data(), value.length())
+        UPDATE_VS(value.data(), value.length());
+        if (oi_mbta_consume_silent_abort())
+          continue;  // UPDATE_VS rejected the copied value
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
@@ -764,7 +831,10 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key, const std::string &v
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return t->put(key, StringWrapper(enc));
+      bool inserted = t->put(key, StringWrapper(enc));
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return inserted;
     } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
@@ -784,7 +854,10 @@ inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key, const std::string
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return t->insert(key, StringWrapper(enc));
+      bool inserted = t->insert(key, StringWrapper(enc));
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return inserted;
     } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
@@ -797,9 +870,16 @@ inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key, const mako::Shar
   });
 }
 
-// @unsafe - already admitted by the resolver; direct MassTrans cursor write.
+// @unsafe - already admitted by the resolver; one-op OCC delete with retry.
 inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
-  return t->remove(key);
+  while (true) {
+    try {
+      bool removed = t->erase(key);
+      if (oi_mbta_consume_silent_abort())
+        continue;
+      return removed;
+    } catch (Transaction::Abort &) { /* conflict — retry */ }
+  }
 }
 
 // @unsafe - pins one captured route across dispatch and all one-op OCC/RPC retries.
@@ -877,7 +957,7 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
 inline oi_stats_map oi_mbta_clear_unsupported() {
   // TODO: unclear if we need to implement; apparently this should
   // clear the tree and possibly return some stats
-  throw 2;
+  throw oi_clear_unsupported{};
 }
 
 #if RUSTYCPP_RUST
@@ -1908,18 +1988,111 @@ inline const char *mbta_sharded_put_mbta(
 
 class mbta_wrapper : public abstract_db {
 public:
-  // tables for a database instance; we can pre-allocate many tables; 
-  // then do a mapping when user creates one in the code 
+  inline static thread_local bool tls_benchmark_thread_attached_ = false;
+
+  // @unsafe - Apply a source record through this backend's concrete catalog.
+  // Only a definite predecision conflict requests retry. Other failures escape.
+  bool replay_apply_record(uint16_t table_id, std::string_view key,
+                           std::string_view payload, bool is_delete,
+                           uint32_t source_time_term) override {
+    observe_replay_timestamp(source_time_term);
+    if (table_id >= global_table_instances.size() ||
+        global_table_instances[table_id] == nullptr) {
+      throw std::logic_error("unregistered native replay table");
+    }
+    static thread_local str_arena replay_arena;
+    static thread_local std::string replay_value;
+    mako::materialize_replay_value(
+        replay_value, payload, is_delete, source_time_term);
+    struct quiesce_guard {
+      // @unsafe - The replay transaction has ended before its RCU slot retires.
+      ~quiesce_guard() {
+        if (TThread::txn == nullptr || !TThread::txn->has_active_state())
+          Transaction::rcu_quiesce();
+      }
+    } quiesce;
+    void* txn = new_txn(0, replay_arena, nullptr, HINT_DEFAULT);
+    try {
+      global_table_instances[table_id]->put_mbta(
+          txn, lcdf::Str(key.data(), key.size()),
+          [](const std::string& incoming, const std::string& existing) {
+            return mako::replay_source_is_newer(
+                mako::load_value_time_term(incoming.data(), incoming.size()),
+                mako::load_value_time_term(existing.data(), existing.size()));
+          },
+          replay_value);
+      return commit_txn_no_paxos(txn);
+    } catch (const abstract_abort_exception&) {
+      abort_txn_local(txn);
+      return false;
+    }
+  }
+
+  // @unsafe - Attach the ordinary native backend without a coordinator client.
+  void replay_thread_init() override {
+    thread_init(true, 2);
+    // A replay worker attaches like a loader (no coordinator client) but is
+    // not in the loading phase: replication-log application has its own
+    // native admission lane (mako::ShardingReplicationReplay).
+    TThread::in_loading_phase = false;
+    TThread::disable_multiversion();
+  }
+  // @unsafe - A replay partition is not this OS thread's STO/RCU identity.
+  void replay_thread_select_partition(int partition) override {
+    TThread::set_pid(partition);
+    Sto::update_threadid();
+  }
+  // @unsafe - Floor only the distributed clock, never the OCC or cache HLC.
+  void observe_replay_timestamp(uint32_t source_time_term) override {
+    if (!mako::valid_replay_time_term(source_time_term))
+      throw std::logic_error("invalid replay source timestamp");
+    Transaction::observe_legacy_distributed_timestamp(source_time_term / 10);
+  }
+
+  // @safe - Inspect only this OS thread's participant state.
+  bool shard_participant_active() const noexcept override {
+    return TThread::txn != nullptr && TThread::txn->has_active_state();
+  }
+  // @safe - Inspect only this OS thread's staged frame.
+  bool shard_participant_empty() const noexcept override {
+    return TThread::txn == nullptr || !TThread::txn->has_staged_items();
+  }
+  // @unsafe - Uses the legacy process-wide atomic distributed clock.
+  bool shard_timestamp(uint32_t& timestamp) override {
+    return Transaction::try_allocate_legacy_distributed_timestamp(timestamp);
+  }
+  // @unsafe - The receiver admits the term before any participant operation.
+  void shard_set_term(uint32_t term) override {
+    if (term > 9 || TThread::txn == nullptr ||
+        !TThread::txn->has_active_state()) {
+      throw std::logic_error("invalid native participant term or state");
+    }
+    TThread::txn->current_term_ = static_cast<uint8_t>(term);
+  }
+
+  // Fixed native catalog: NUM_TABLES_PER_SHARD IDs are preallocated per shard.
+  // One logical name consumes one ID on every configured shard; IDs are not
+  // reclaimed. Opening beyond the budget returns nullptr.
 
   // table-id and index of this array is exactly same
   std::vector<mbta_ordered_index *> global_table_instances ;
   std::unordered_map<int, int> availableTable_id ;
   // Track created tables by (name, shard_index) to avoid duplicates
   std::map<std::tuple<std::string,int>, int> tables_taken;
+  std::mutex table_catalog_mutex_;
 
   mbta_wrapper() { /* Avoid doing something here! */}
 
   void init() {
+    // Initialize the process-wide MassTrans callback before the epoch worker
+    // can observe it. Multiple database instances share the same Transaction
+    // epoch domain, so both operations must be idempotent.
+    static std::once_flag mass_trans_init_once;
+    std::call_once(mass_trans_init_once, [] {
+      mbta_table::static_init();
+    });
+    Transaction::start_epoch_advancer();
+
     preallocate_open_index() ;
 
     auto& benchConfig = BenchmarkConfig::getInstance();
@@ -1956,11 +2129,37 @@ public:
     //txn_epoch_sync<Transaction>::finish();
   }
 
-  // for the helper thread, loader == true, source == 1
-  // @unsafe - assign one process-global STO slot and initialize legacy worker TLS.
-  void
-  thread_init(bool loader, int source)
+  // Initialize the application-level TThread fields shared by the native and
+  // Rust TPC-C backends. This deliberately does not initialize MassTrans or
+  // start its epoch advancer, so a backend that does not use native STO can
+  // reuse the benchmark context without acquiring process-lifetime Masstree
+  // state.
+  static void
+  benchmark_thread_init(bool loader)
   {
+    if (tls_benchmark_thread_attached_) {
+      throw std::logic_error("database thread was initialized twice");
+    }
+    // Reject a partially owned raw STO context before changing this thread's
+    // stable ID, mode, topology, or shard-client state. A caller must resolve
+    // the transaction at the boundary where it was created.
+    if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
+      throw std::logic_error(
+          "database thread initialization found an active transaction");
+    }
+    if (TThread::sclient != nullptr) {
+      throw std::logic_error(
+          "database thread initialization found a live shard client");
+    }
+    tls_benchmark_thread_attached_ = true;
+    struct attachment_reservation {
+      bool committed = false;
+      ~attachment_reservation() {
+        if (!committed)
+          mbta_wrapper::tls_benchmark_thread_attached_ = false;
+      }
+    } reservation;
+
     // Per-SHARD worker sequence. A single process can run several
     // shards (dbtest -L 0,1): pid = seq % warehouses is only correct
     // if each shard's workers draw a contiguous block, but concurrent
@@ -1968,34 +2167,79 @@ public:
     // workers could get the same pid, derive identical client ports,
     // and EADDRINUSE-panic (shard2SingleProcess CI flake).
     static constexpr size_t kMaxLocalShards = 64;
+    static constexpr size_t kMaxProtocolShards = 31;
     static std::atomic<size_t> partition_seq[kMaxLocalShards];
-    Transaction::register_thread();
+    auto& benchmark_config = BenchmarkConfig::getInstance();
+    transport::Configuration* const transport_config =
+        benchmark_config.getConfig();
+    const size_t shard_index = benchmark_config.getShardIndex();
+    const size_t shard_count = benchmark_config.getNshards();
+    // Shard participation still flows through unsigned-int masks and signed
+    // `1 << shard` expressions in ShardClient. Until those are widened, only
+    // indices 0..30 are representable without overflow or signed-shift UB.
+    ALWAYS_ASSERT(shard_count > 0 && shard_count <= kMaxProtocolShards);
+    ALWAYS_ASSERT(shard_index < shard_count &&
+                  shard_index < kMaxLocalShards);
+
+    size_t warehouse_count = benchmark_config.getNthreads();
+    if (transport_config != nullptr) {
+      // Configuration::warehouses is signed. Check it before conversion so a
+      // negative YAML value cannot become a huge size_t and corrupt pid/port
+      // assignment.
+      ALWAYS_ASSERT(transport_config->warehouses > 0);
+      ALWAYS_ASSERT(transport_config->nshards > 0 &&
+                    transport_config->nshards <=
+                        static_cast<int>(kMaxProtocolShards));
+      ALWAYS_ASSERT(shard_index <
+                    static_cast<size_t>(transport_config->nshards));
+      warehouse_count =
+          static_cast<size_t>(transport_config->warehouses);
+    }
+    ALWAYS_ASSERT(warehouse_count > 0);
+
+    // A detached OS thread keeps ownership of its RCU slot. Reusing that slot
+    // on a later attachment avoids exhausting MAX_THREADS while preserving
+    // the no-cross-thread-recycling safety boundary. The shared registration
+    // also rejects a worker that already serves the Rust-facing local ABI.
+    if (!mako::silo::claim_thread_runtime(
+            mako::silo::thread_runtime::native_mako)) {
+      Panic("OS thread cannot switch from the local C ABI to native Mako");
+    }
+    const int thread_id = mako::silo::try_allocate_thread_id();
+    if (thread_id < 0) {
+      Panic("STO thread-ID space exhausted (%d process-lifetime slots)",
+            MAX_THREADS);
+    }
+    TThread::set_id(thread_id);
+    // Sto caches the thread id in its reusable thread-local Transaction.
+    // Restore this OS thread's assigned id in case intervening code changed
+    // TThread::id(), then refresh the cache before any lock or RCU operation.
+    Sto::update_threadid();
     TThread::set_mode(0); // checking in-progress
     TThread::in_loading_phase = loader;
-    TThread::set_num_rpc_server(BenchmarkConfig::getInstance().getNumRpcServer());
-    TThread::set_is_micro(BenchmarkConfig::getInstance().getIsMicro());
+    TThread::set_num_rpc_server(benchmark_config.getNumRpcServer());
+    TThread::set_is_micro(benchmark_config.getIsMicro());
 #if defined(DISABLE_MULTI_VERSION)
     TThread::disable_multiversion();
 #else
-    if (BenchmarkConfig::getInstance().getIsReplicated()) {
+    if (benchmark_config.getIsReplicated()) {
       TThread::enable_multiverison();
     }else{
       TThread::disable_multiversion();
     }
 #endif
-    TThread::set_shard_index(BenchmarkConfig::getInstance().getShardIndex());
-    TThread::set_nshards(BenchmarkConfig::getInstance().getNshards());
-    TThread::set_warehouses(BenchmarkConfig::getInstance().getConfig()->warehouses);
+    TThread::set_shard_index(benchmark_config.getShardIndex());
+    TThread::set_nshards(benchmark_config.getNshards());
+    TThread::set_warehouses(warehouse_count);
     Notice("thread_init: thread_id=%d, shard_index=%d, getShardIndex=%zu, loader=%d",
-           TThread::id(), TThread::get_shard_index(), BenchmarkConfig::getInstance().getShardIndex(), loader);
+           TThread::id(), TThread::get_shard_index(),
+           benchmark_config.getShardIndex(), loader);
     TThread::readset_shard_bits = 0;
     TThread::writeset_shard_bits = 0;
     TThread::transget_without_throw = false;
     TThread::transget_without_stable = false;
     TThread::the_debug_bit = 0;
-    if (BenchmarkConfig::getInstance().getLeaderConfig()){
-      TThread::is_worker_leader = true;
-    }
+    TThread::is_worker_leader = benchmark_config.getLeaderConfig();
 
     TThread::increment_id = 0;
     TThread::skipBeforeRemoteNewOrder = 0;
@@ -2003,61 +2247,146 @@ public:
     TThread::isRemoteShard = false;
     TThread::skipBeforeRemotePayment = 0;
     if(!loader) {
-      size_t shard_slot = BenchmarkConfig::getInstance().getShardIndex() % kMaxLocalShards;
-      size_t old = partition_seq[shard_slot].fetch_add(1);
-      // Use local partition ID (0 to warehouses-1) within each shard
-      // getPartitionID() will compute absolute partition ID using shard_index
-      size_t local_pid = old % BenchmarkConfig::getInstance().getConfig()->warehouses;
+      const size_t shard_slot = shard_index;
+      static thread_local size_t assigned_local_pid[kMaxLocalShards] = {};
+      static thread_local size_t assigned_warehouse_count[kMaxLocalShards] = {};
+      if (assigned_warehouse_count[shard_slot] == 0) {
+        size_t old = partition_seq[shard_slot].fetch_add(1);
+        if (old >= warehouse_count) {
+          throw std::runtime_error(
+              "native STO worker topology exceeded configured warehouses");
+        }
+        assigned_local_pid[shard_slot] = old;
+        assigned_warehouse_count[shard_slot] = warehouse_count;
+      } else {
+        // A process-wide shard topology is immutable once a thread attaches.
+        // Changing it would also invalidate ShardClient port ownership.
+        ALWAYS_ASSERT(assigned_warehouse_count[shard_slot] == warehouse_count);
+      }
+      // Preserve the local partition and ShardClient port across detach and
+      // reattach on the same OS thread.
+      size_t local_pid = assigned_local_pid[shard_slot];
       TThread::set_pid(local_pid);
 
-      TThread::sclient = new mako::ShardClient(BenchmarkConfig::getInstance().getConfig()->configFile,
-                                                 BenchmarkConfig::getInstance().getCluster(),
-                                                 BenchmarkConfig::getInstance().getShardIndex(),
-                                                 local_pid);
+      if (transport_config == nullptr) {
+        // The RocksDB-compatible local facade permits a standalone,
+        // non-replicated one-shard database without a transport YAML file.
+        // Such a transaction can never acquire remote shard bits and needs no
+        // ShardClient, but it still needs TThread and MassTrans attachment.
+        ALWAYS_ASSERT(benchmark_config.getNshards() == 1);
+        ALWAYS_ASSERT(!benchmark_config.getIsReplicated());
+      } else {
+        try {
+          TThread::sclient = new mako::ShardClient(
+              transport_config->configFile,
+              benchmark_config.getCluster(),
+              benchmark_config.getShardIndex(),
+              local_pid);
 
-      // Verify remote shards are ready before proceeding (Option 4A)
-      // This ensures distributed deployment safety: all shards must be listening
-      // before any worker starts executing transactions
-      int myShardIndex = BenchmarkConfig::getInstance().getShardIndex();
-      int nshards = BenchmarkConfig::getInstance().getNshards();
-      for (int i = 0; i < nshards; i++) {
-        if (i == myShardIndex) continue;  // Skip self
-        int retries = 0;
-        const int maxRetries = 30;  // 30 seconds max wait
-        while (TThread::sclient->checkRemoteShardReady(i) != mako::ErrorCode::SUCCESS) {
-          retries++;
-          if (retries >= maxRetries) {
-            Warning("Shard %d not ready after %d retries, proceeding anyway", i, maxRetries);
-            break;
+          // Verify remote shards are ready before proceeding (Option 4A)
+          // This ensures distributed deployment safety: all shards must be listening
+          // before any worker starts executing transactions
+          int myShardIndex = benchmark_config.getShardIndex();
+          int nshards = benchmark_config.getNshards();
+          for (int i = 0; i < nshards; i++) {
+            if (i == myShardIndex) continue;  // Skip self
+            int retries = 0;
+            const int maxRetries = 30;  // 30 seconds max wait
+            while (TThread::sclient->checkRemoteShardReady(i) != mako::ErrorCode::SUCCESS) {
+              retries++;
+              if (retries >= maxRetries) {
+                Warning("Shard %d not ready after %d retries, proceeding anyway", i, maxRetries);
+                break;
+              }
+              usleep(1000000);  // 1 second retry interval
+            }
+            if (retries < maxRetries && retries > 0) {
+              Notice("Shard %d ready after %d retries", i, retries);
+            }
           }
-          usleep(1000000);  // 1 second retry interval
-        }
-        if (retries < maxRetries && retries > 0) {
-          Notice("Shard %d ready after %d retries", i, retries);
+        } catch (...) {
+          delete TThread::sclient;
+          TThread::sclient = nullptr;
+          throw;
         }
       }
       //Notice("ParID[worker-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     } else {
-      TThread::set_pid(TThread::id()%BenchmarkConfig::getInstance().getConfig()->warehouses);
+      TThread::set_pid(TThread::id() % warehouse_count);
       //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     }
-    
-    // @unsafe - process-wide static initialization waits for the winning thread;
-    // replay may own slot zero, so slot identity cannot elect this initializer.
-    [[maybe_unused]] static const bool epochs_started = [] {
-      mbta_table::static_init();
-      pthread_t advancer;
-      pthread_create(&advancer, nullptr, Transaction::epoch_advancer, nullptr);
-      pthread_detach(advancer);
-      return true;
-    }();
-    mbta_table::thread_init();
+    reservation.committed = true;
+  }
+
+  static void
+  benchmark_thread_end()
+  {
+    if (!tls_benchmark_thread_attached_) {
+      throw std::logic_error("database thread was not initialized");
+    }
+    // A loader, worker, or helper that exits with its last transaction epoch
+    // published would pin active_epoch forever. It has no further STO reads,
+    // so remove its slot from the process-wide minimum before returning.
+    Transaction::rcu_quiesce();
+    if (TThread::sclient != nullptr) {
+      mako::ShardClient *client = TThread::sclient;
+      TThread::sclient = nullptr;
+      delete client;
+    }
+    tls_benchmark_thread_attached_ = false;
+  }
+
+  // for the helper thread, loader == true, source == 1
+  void
+  thread_init(bool loader, int source)
+  {
+    (void)source;
+    benchmark_thread_init(loader);
+    try {
+      // Shared with the Rust-facing local ABI. Starting two epoch advancers
+      // is both wasteful and a data race on the process-global epoch callback.
+      ALWAYS_ASSERT(mako::silo::ensure_epoch_runtime());
+      mbta_table::thread_init();
+    } catch (...) {
+      Transaction::tinfo[TThread::id()].trans_start_callback = {};
+      Transaction::tinfo[TThread::id()].trans_end_callback = {};
+      benchmark_thread_end();
+      throw;
+    }
   }
 
   void
   thread_end()
   {
-
+    // A lexical database-thread guard may unwind while its last transaction
+    // is still open. Release its locks and remote state before retiring the
+    // STO and Masstree RCU participants or destroying the shard client. This
+    // includes an empty mode-1 participant transaction: shard_reset() leaves
+    // an idle placeholder that has entered neither the STO epoch nor Masstree
+    // RCU (its first storage access does, through ensure_epoch()), so ending
+    // it owes no end callback, while one that did touch storage is stopped
+    // exactly once here. If INSTALL has already made the participant commit
+    // irreversible, silent_abort() instead completes committed unlock/cleanup
+    // before ending the context.
+    // An attempt that is no longer active sends nothing from here: if it
+    // still owes a touched participant a terminal, ~ShardClient quarantines
+    // that participant lane instead (benchmark_thread_end below).
+    if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
+      abort_txn(nullptr);
+    }
+    // This worker owns every callback in its Masstree limbo queue. Run each
+    // one whose grace period is already complete, so an uncontended detach
+    // leaves none behind. Never wait for an older active reader: that reader
+    // may be blocked on this thread (a scan callback that joins a writer), so
+    // a blocking drain here deadlocks. Callbacks such a reader can still reach
+    // stay queued on this thread's threadinfo, which no other thread
+    // reclaims: they run only if this same OS thread later reattaches to the
+    // same MasstreeContext, and otherwise leak (a spawned writer or a
+    // per-connection worker that exits never reattaches).
+    if (mbta_table::mythreadinfo.ti != nullptr) {
+      (void)mbta_table::mythreadinfo.ti->rcu_try_drain();
+    }
+    benchmark_thread_end();
   }
 
   size_t
@@ -2103,8 +2432,9 @@ public:
     return true;
   }
 
-  // @unsafe - finish every touched remote engine before releasing local leases.
+  // @unsafe - Shared legacy cleanup closes the complete touched-participant set.
   void abort_txn(void *txn) {
+    (void)txn;
     Sto::abort_without_throw();
   }
 
@@ -2113,7 +2443,43 @@ public:
   }
 
   void shard_reset() {
+    // Reset is a transaction boundary. Resolve a partially handled request
+    // first: pre-INSTALL work aborts, while an irreversible INSTALL decision
+    // completes committed cleanup through Transaction::silent_abort().
+    if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
+      TThread::txn->silent_abort();
+    }
     Sto::start_transaction();
+  }
+
+  // @unsafe - Bridges admitted wire operations to the retained legacy STO set.
+  void shard_mutate(uint16_t table_id, lcdf::Str key,
+                    const std::string &value, uint8_t operation) override {
+    if (static_cast<size_t>(table_id) >= global_table_instances.size())
+      throw abstract_db::abstract_abort_exception();
+    mbta_ordered_index *index = global_table_instances[table_id];
+    if (index == nullptr || index->get_is_remote())
+      throw abstract_db::abstract_abort_exception();
+    // The receiver executes on the owner: every case admits the point, stages
+    // and locks its write-set entry here (shard_put / oi_mbta_shard_insert /
+    // oi_mbta_shard_remove) instead of re-entering the coordinator-side
+    // resolver behind tx_insert/tx_remove. server.cc stage_batch_write runs
+    // the same three kernels on the receiver's registered index.
+    switch (operation) {
+      case 0:
+        index->shard_put(key, value);
+        return;
+      case 1:
+        // Stages a real insert of an engine-owned value and locks it.
+        oi_mbta_shard_insert(index->mbta, key, value);
+        return;
+      case 2:
+        // Stages a real delete (including an absent-key read) and locks it.
+        oi_mbta_shard_remove(index->mbta, key);
+        return;
+      default:
+        throw abstract_db::abstract_abort_exception();
+    }
   }
 
   int shard_validate() {
@@ -2141,23 +2507,37 @@ public:
              size_t value_size_hint,
 	           bool mostly_append = false,
              bool use_hashtable = false) {
-    // We only actually create tables in preallocate_open_index now!
-    std::cout << "deprecated function!" << std::endl;
-    std::exit(EXIT_FAILURE);
+    // Dynamic allocation through the historical hint-based API is retired.
+    // Report ordinary failure rather than terminating a facade caller.
+    (void)name;
+    (void)value_size_hint;
+    (void)mostly_append;
+    (void)use_hashtable;
     return nullptr;
   }
 
 
   abstract_ordered_index *
-  open_index(const std::string &name, int shard_index) { // This is allocate a new table
+  open_index(const std::string &name, int shard_index) {
+    std::lock_guard<std::mutex> lock(table_catalog_mutex_);
+    return open_index_locked(name, shard_index);
+  }
+
+private:
+  abstract_ordered_index *
+  open_index_locked(const std::string &name, int shard_index) {
     auto& benchConfig = BenchmarkConfig::getInstance();
 
     if (shard_index == -1) {
       shard_index = benchConfig.getShardIndex() ;
-    } 
+    }
+    if (shard_index < 0 || shard_index >= benchConfig.getNshards())
+      return nullptr;
 
-    if (tables_taken.find(std::make_tuple(name, shard_index)) != tables_taken.end() ) {
-      int table_id = tables_taken[std::make_tuple(name, shard_index)];
+    const auto table_key = std::make_tuple(name, shard_index);
+    auto existing = tables_taken.find(table_key);
+    if (existing != tables_taken.end()) {
+      int table_id = existing->second;
       auto tbl = get_index_by_table_id(table_id) ;
       std::cout << "existing table is created with name: " << name 
               << ", table-id: " << tbl->get_table_id()
@@ -2165,57 +2545,82 @@ public:
       return tbl ;
     }
 
-    int available_table_id = __sync_fetch_and_add(&availableTable_id[shard_index], 1);
+    auto available = availableTable_id.find(shard_index);
+    if (available == availableTable_id.end())
+      return nullptr;
+    const int available_table_id = available->second;
 
-    // table-id is between [shard_index*mako::NUM_TABLES_PER_SHARD+1, shard_index*mako::NUM_TABLES_PER_SHARD+1+mako::NUM_TABLES_PER_SHARD]
+    // Table ids are in [shard * N + 1, shard * N + N]. Capacity
+    // exhaustion is a normal catalog failure: do not consume another id or
+    // terminate the process.
     if (!(available_table_id >= shard_index*mako::NUM_TABLES_PER_SHARD+1 
         && available_table_id <= (shard_index*mako::NUM_TABLES_PER_SHARD+mako::NUM_TABLES_PER_SHARD))) {
-          std::cout << "We don't have sufficient tables for you, please don't create too many tables more than " 
-                    << mako::NUM_TABLES_PER_SHARD << " on each shard."
-                    << " Assigned table_id (strange):" << available_table_id
-                    << ", expected range is:" << (shard_index*mako::NUM_TABLES_PER_SHARD+1)
-                    << "," << (shard_index*mako::NUM_TABLES_PER_SHARD+mako::NUM_TABLES_PER_SHARD) 
-                    << ", shard_index: " << BenchmarkConfig::getInstance().getShardIndex()
-                    << ", shard_index(args) [strange]:" << shard_index << std::endl;
-          
-          std::cout << "All existing tables:" << std::endl;
-          for (const auto& [key, value] : tables_taken) {
-              const auto& [str, num] = key;  // unpack the tuple
-              std::cout << "(" << str << ", " << num << ") -> " << value << "\n";
-          }
-          
-          std::exit(EXIT_FAILURE);
-        }
+      return nullptr;
+    }
 
     auto tbl = global_table_instances[available_table_id];
+    if (tbl == nullptr)
+      return nullptr;
     tbl->set_table_name(name) ;
     // Register table in global registry for policy-based shard routing
     mako::get_table_registry().register_table(
         available_table_id, name, shard_index, !tbl->get_is_remote(), tbl);
     // Record this table to prevent duplicate creation for the same (name, shard)
-    tables_taken[std::make_tuple(name, shard_index)] = available_table_id;
+    tables_taken[table_key] = available_table_id;
+    ++available->second;
     std::cout << "new table is created with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
+    // Publish the new index to the helper receivers already running for this
+    // shard. setup_update_table holds the helper lifecycle lock and each
+    // receiver's table map is mutex-guarded, so this needs no quiescence. The
+    // static profile still reaches it only while every process constructs the
+    // same deterministic schema before helper or serving threads start (peers
+    // address tables by numeric id); native sharding also reaches it at run
+    // time when a governed warehouse index or origin-side proxy is opened
+    // lazily. A request naming an index its receiver has not yet learned
+    // fails as an aborted request.
     mako::setup_update_table(available_table_id, tbl);
     return tbl;
   }
 
+public:
   mbta_sharded_ordered_index *
   open_sharded_index(const std::string &name) override {
     auto &benchConfig = BenchmarkConfig::getInstance();
     const size_t shard_count = static_cast<size_t>(benchConfig.getNshards());
+    std::lock_guard<std::mutex> lock(table_catalog_mutex_);
+
+    // One logical name consumes one of the fixed 200 IDs on every shard.
+    // Preflight every shard so capacity failure cannot leave a partially
+    // registered logical table.
+    for (size_t shard = 0; shard != shard_count; ++shard) {
+      const int shard_index = static_cast<int>(shard);
+      if (tables_taken.find(std::make_tuple(name, shard_index)) !=
+          tables_taken.end())
+        continue;
+      auto available = availableTable_id.find(shard_index);
+      const int last_id =
+          shard_index * mako::NUM_TABLES_PER_SHARD +
+          mako::NUM_TABLES_PER_SHARD;
+      if (available == availableTable_id.end() ||
+          available->second > last_id)
+        return nullptr;
+    }
+
     return mbta_sharded_build(
         name,
         shard_count,
         [this, &name](size_t shard) {
-          return open_index(name, static_cast<int>(shard));
+          return open_index_locked(name, static_cast<int>(shard));
         });
   }
 
   // replay will use this function, otherwise NO; get table back;
   abstract_ordered_index *
   get_index_by_table_id(unsigned short table_id) {
+    if (static_cast<size_t>(table_id) >= global_table_instances.size())
+      return nullptr;
     return global_table_instances[table_id];
   }
 
@@ -2235,12 +2640,12 @@ public:
 
       // Determine if this table is local
       bool is_local = false;
-      if (multi_shard_mode) {
-        // In multi-shard mode, all shards in local_shard_indices are local
+      if (multi_shard_mode && !benchConfig.getIsReplicated()) {
+        // Only unreplicated colocated tables may bypass the owning participant.
         const auto& local_shards = config->local_shard_indices;
         is_local = (std::find(local_shards.begin(), local_shards.end(), shard_index) != local_shards.end());
       } else {
-        // Single-shard mode: only current shard is local
+        // Replicated tables retain shard ownership regardless of address space.
         is_local = (shard_index == static_cast<int>(benchConfig.getShardIndex()));
       }
 

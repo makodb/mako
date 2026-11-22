@@ -1,0 +1,1289 @@
+--- a/crates/sto-core/src/transaction.rs
++++ b/crates/sto-core/src/transaction.rs
+@@ -607,83 +607,10 @@
+     }
+ }
+ 
+-pub(crate) struct TransactionScratch {
+-    // Keep one worker-affine runtime handle paired with the reusable frame.
+-    // Moving it between scratch and the active frame avoids a shared Arc
+-    // increment/decrement on every transaction boundary.
+-    runtime: Arc<Runtime>,
+-    items: Vec<Option<Box<dyn ErasedItem>>>,
+-    // The leading ordinary boxes whose retained resource handles have already
+-    // been disposed. This avoids repeating erased calls and unwind boundaries
+-    // after a transaction switches to the separate typed-batch pool.
+-    ordinary_disposed_prefix: usize,
+-    unique_batch: Option<Box<dyn ErasedItemBatch>>,
+-    item_index: ItemIndex,
+-    lock_storage: LockPlanStorage,
+-}
+-
+-impl TransactionScratch {
+-    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
+-        Self {
+-            runtime,
+-            items: Vec::new(),
+-            ordinary_disposed_prefix: 0,
+-            unique_batch: None,
+-            item_index: ItemIndex::default(),
+-            lock_storage: LockPlanStorage::default(),
+-        }
+-    }
+-
+-    /// Drops every adapter binding retained by this idle worker scratch under
+-    /// an unwind boundary. On failure the caller must poison the runtime and
+-    /// quarantine the returned scratch rather than run any more destructors.
+-    #[allow(
+-        clippy::result_large_err,
+-        reason = "the unwind path must return the allocation itself for no-allocation quarantine"
+-    )]
+-    pub(crate) fn dispose_retained_resources(mut self) -> Result<(), Self> {
+-        debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
+-        for item_slot in self.ordinary_disposed_prefix..self.items.len() {
+-            let Some(item) = self.items[item_slot].as_mut() else {
+-                continue;
+-            };
+-            let disposal = catch_unwind(AssertUnwindSafe(|| {
+-                item.dispose_retained_resource();
+-            }));
+-            if disposal.is_err() {
+-                return Err(self);
+-            }
+-        }
+-        if let Some(batch) = self.unique_batch.as_mut() {
+-            let disposal = catch_unwind(AssertUnwindSafe(|| {
+-                batch.dispose_retained_resources();
+-            }));
+-            if disposal.is_err() {
+-                return Err(self);
+-            }
+-        }
+-        Ok(())
+-    }
+-}
+-
+-impl std::fmt::Debug for TransactionScratch {
+-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        formatter
+-            .debug_struct("TransactionScratch")
+-            .field("runtime_id", &self.runtime.id())
+-            .field("item_capacity", &self.items.capacity())
+-            .field("ordinary_disposed_prefix", &self.ordinary_disposed_prefix)
+-            .field("has_unique_batch_pool", &self.unique_batch.is_some())
+-            .field("item_index_capacity", &self.item_index.entries.capacity())
+-            .finish()
+-    }
+-}
+-
+ /// Worker-affine storage used only by the restricted terminal-read protocol.
+ ///
+-/// Keeping this pool separate preserves the general transaction frame's
+-/// by-value layout while allowing a terminal batch to retain one reusable
+-/// typed allocation and resource binding at a stable address.
++/// Keeping this pool separate lets a terminal batch retain one reusable typed
++/// allocation and resource binding without touching the general frame.
+ pub(crate) struct TerminalReadScratch {
+     runtime: Arc<Runtime>,
+     terminal_read_batch: Option<Box<dyn ErasedTerminalReadBatch>>,
+@@ -726,10 +653,17 @@
+     }
+ }
+ 
+-struct TransactionFrame {
++/// One allocation per attached worker, moved by exclusive ownership between
++/// the idle worker, active transaction, and commit driver. The frame itself
++/// stays in place; no raw frame reference aliases the mutable worker borrow.
++pub(crate) struct TransactionFrame {
++    // This handle stays with the allocation across attempts, avoiding a shared
++    // Arc increment/decrement on every transaction boundary.
+     runtime: Arc<Runtime>,
+     isolation: IsolationMode,
+     items: Vec<Option<Box<dyn ErasedItem>>>,
++    // Leading ordinary boxes whose retained bindings have already been
++    // disposed after switching to the separate typed-batch pool.
+     ordinary_disposed_prefix: usize,
+     unique_batch: Option<Box<dyn ErasedItemBatch>>,
+     batch_active: bool,
+@@ -747,51 +681,74 @@
+     // Consecutive read-then-write operations commonly touch the same logical
+     // item. Store slot + 1 so this exact-identity cache remains one word and
+     // can bypass hashing plus open-addressed probing on the second access.
+-    // The cache is attempt-local and never enters worker scratch.
++    // The cache is attempt-local and is reset before reusing this frame.
+     last_accessed_item_slot: Option<NonZeroUsize>,
+     lock_storage: LockPlanStorage,
+     doomed: bool,
+ }
+ 
+ impl TransactionFrame {
+-    fn new(isolation: IsolationMode, mut scratch: TransactionScratch) -> Self {
+-        scratch.item_index.begin_transaction();
+-        debug_assert!(scratch
+-            .unique_batch
+-            .as_ref()
+-            .is_none_or(|batch| batch.active_len() == 0));
+-        debug_assert!(scratch.ordinary_disposed_prefix <= scratch.items.len());
++    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
+         Self {
+-            runtime: scratch.runtime,
+-            isolation,
+-            items: scratch.items,
+-            ordinary_disposed_prefix: scratch.ordinary_disposed_prefix,
+-            unique_batch: scratch.unique_batch,
++            isolation: runtime.config().default_isolation(),
++            runtime,
++            items: Vec::new(),
++            ordinary_disposed_prefix: 0,
++            unique_batch: None,
+             batch_active: false,
+-            item_index: scratch.item_index,
++            item_index: ItemIndex::default(),
+             item_count: 0,
+             validated_bindings: ValidatedBindings::default(),
+             last_accessed_item_slot: None,
+-            lock_storage: scratch.lock_storage,
++            lock_storage: LockPlanStorage::default(),
+             doomed: false,
+         }
+     }
+ 
+-    fn into_scratch(self) -> TransactionScratch {
++    fn begin(&mut self, isolation: IsolationMode) {
++        self.assert_reusable();
++        self.item_index.begin_transaction();
++        self.isolation = isolation;
++        self.item_count = 0;
++        self.validated_bindings = ValidatedBindings::default();
++        self.last_accessed_item_slot = None;
++        self.doomed = false;
++    }
++
++    pub(crate) fn assert_reusable(&self) {
+         debug_assert!(!self.batch_active);
+         debug_assert!(self
+             .unique_batch
+             .as_ref()
+             .is_none_or(|batch| batch.active_len() == 0));
+         debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
+-        TransactionScratch {
+-            runtime: self.runtime,
+-            items: self.items,
+-            ordinary_disposed_prefix: self.ordinary_disposed_prefix,
+-            unique_batch: self.unique_batch,
+-            item_index: self.item_index,
+-            lock_storage: self.lock_storage,
+-        }
++    }
++
++    /// Drops idle retained bindings under the existing unwind boundaries.
++    /// Failure returns the complete allocation for no-allocation quarantine;
++    /// the caller must not run further adapter destructors on that frame.
++    pub(crate) fn dispose_retained_resources(mut self: Box<Self>) -> Result<(), Box<Self>> {
++        self.assert_reusable();
++        for item_slot in self.ordinary_disposed_prefix..self.items.len() {
++            let Some(item) = self.items[item_slot].as_mut() else {
++                continue;
++            };
++            let disposal = catch_unwind(AssertUnwindSafe(|| {
++                item.dispose_retained_resource();
++            }));
++            if disposal.is_err() {
++                return Err(self);
++            }
++        }
++        if let Some(batch) = self.unique_batch.as_mut() {
++            let disposal = catch_unwind(AssertUnwindSafe(|| {
++                batch.dispose_retained_resources();
++            }));
++            if disposal.is_err() {
++                return Err(self);
++            }
++        }
++        Ok(())
+     }
+ 
+     fn commit_shape(&self) -> CommitShape {
+@@ -843,6 +800,19 @@
+     }
+ }
+ 
++impl std::fmt::Debug for TransactionFrame {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        formatter
++            .debug_struct("TransactionFrame")
++            .field("runtime_id", &self.runtime.id())
++            .field("item_capacity", &self.items.capacity())
++            .field("ordinary_disposed_prefix", &self.ordinary_disposed_prefix)
++            .field("has_unique_batch_pool", &self.unique_batch.is_some())
++            .field("item_index_capacity", &self.item_index.entries.capacity())
++            .finish()
++    }
++}
++
+ /// Minimal active state for the terminal-read-only protocol.
+ ///
+ /// It deliberately contains no ordinary item pool, item index, unique batch,
+@@ -901,7 +871,7 @@
+ /// ```
+ pub struct Transaction<'worker, State = Active> {
+     worker: Option<&'worker mut WorkerContext>,
+-    frame: Option<TransactionFrame>,
++    frame: Option<Box<TransactionFrame>>,
+     state: PhantomData<fn() -> State>,
+     not_send_sync: PhantomData<Rc<()>>,
+ }
+@@ -1142,14 +1112,15 @@
+         isolation: IsolationMode,
+     ) -> Result<Transaction<'_, Active>, BeginError> {
+         self.begin_isolation(isolation)?;
+-        let scratch = self
+-            .transaction_scratch
++        let mut frame = self
++            .transaction_frame
+             .take()
+-            .expect("idle worker retains transaction scratch");
+-        debug_assert!(Arc::ptr_eq(&scratch.runtime, &self.runtime));
++            .expect("idle worker retains its transaction frame");
++        debug_assert!(Arc::ptr_eq(&frame.runtime, &self.runtime));
++        frame.begin(isolation);
+         Ok(Transaction {
+             worker: Some(self),
+-            frame: Some(TransactionFrame::new(isolation, scratch)),
++            frame: Some(frame),
+             state: PhantomData,
+             not_send_sync: PhantomData,
+         })
+@@ -2853,11 +2824,15 @@
+ }
+ 
+ #[cfg(test)]
++#[path = "frame_reuse_tests.rs"]
++mod frame_reuse_tests;
++
++#[cfg(test)]
+ mod item_index_tests {
+     use super::{
+         Active, ErasedTerminalReadBatch, ItemIndex, ItemIndexEntry, ItemIndexProbe,
+-        TerminalReadFrame, TerminalReadScratch, Transaction, TransactionFrame, TransactionScratch,
+-        UniqueItemKeyIndex, UniqueItemKeys, ValidatedBindings,
++        TerminalReadFrame, TerminalReadScratch, Transaction, TransactionFrame, UniqueItemKeyIndex,
++        UniqueItemKeys, ValidatedBindings,
+     };
+     use crate::{
+         AccessError, CapacityError, CheckError, ExecutionCheckContext, FinishContext,
+@@ -2872,7 +2847,7 @@
+         sync::Arc,
+     };
+ 
+-    struct CacheObservation;
++    pub(super) struct CacheObservation;
+ 
+     impl OpacityToken for CacheObservation {
+         fn observation_order(&self) -> ObservationOrder {
+@@ -2880,7 +2855,7 @@
+         }
+     }
+ 
+-    struct CacheAdapter;
++    pub(super) struct CacheAdapter;
+ 
+     impl TransactionalResource for CacheAdapter {
+         type Key = u64;
+@@ -2961,7 +2936,7 @@
+         }
+     }
+ 
+-    fn cache_resource(runtime: &Arc<Runtime>) -> RegisteredResource<CacheAdapter> {
++    pub(super) fn cache_resource(runtime: &Arc<Runtime>) -> RegisteredResource<CacheAdapter> {
+         runtime
+             .register_object()
+             .unwrap()
+@@ -2969,7 +2944,7 @@
+             .unwrap()
+     }
+ 
+-    fn cached_bindings(transaction: &Transaction<'_, Active>) -> Vec<NonZeroUsize> {
++    pub(super) fn cached_bindings(transaction: &Transaction<'_, Active>) -> Vec<NonZeroUsize> {
+         transaction
+             .frame
+             .as_ref()
+@@ -3049,15 +3024,14 @@
+ 
+     #[test]
+     #[cfg(target_pointer_width = "64")]
+-    fn validated_binding_cache_is_one_word_without_growing_worker_scratch() {
++    fn reusable_frame_keeps_the_transaction_handle_to_two_words() {
+         assert_eq!(std::mem::size_of::<Option<NonZeroUsize>>(), 8);
+         assert_eq!(std::mem::size_of::<ValidatedBindings>(), 8);
+         assert_eq!(std::mem::align_of::<ValidatedBindings>(), 8);
+-        assert_eq!(std::mem::size_of::<TransactionScratch>(), 168);
+         assert_eq!(std::mem::size_of::<TransactionFrame>(), 200);
+-        assert_eq!(std::mem::size_of::<Option<TransactionFrame>>(), 200);
+-        assert_eq!(std::mem::size_of::<Transaction<'static, Active>>(), 208);
+-        assert_eq!(std::mem::size_of::<WorkerContext>(), 208);
++        assert_eq!(std::mem::size_of::<Option<Box<TransactionFrame>>>(), 8);
++        assert_eq!(std::mem::size_of::<Transaction<'static, Active>>(), 16);
++        assert_eq!(std::mem::size_of::<WorkerContext>(), 48);
+     }
+ 
+     #[test]
+@@ -3364,7 +3338,7 @@
+ 
+ struct CommitDriver<'worker, 'hook> {
+     worker: &'worker mut WorkerContext,
+-    frame: Option<TransactionFrame>,
++    frame: Option<Box<TransactionFrame>>,
+     locks: Option<LockPlan>,
+     // The concrete plan is retained inside the exact typed batch so its
+     // allocation can be reused without adding another transaction-frame word.
+@@ -3379,7 +3353,7 @@
+ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
+     fn new(
+         worker: &'worker mut WorkerContext,
+-        frame: TransactionFrame,
++        frame: Box<TransactionFrame>,
+         hook: Option<&'hook mut dyn CommitHook>,
+     ) -> Self {
+         Self {
+@@ -4583,8 +4557,7 @@
+ 
+     fn recycle_frame(&mut self) {
+         if let Some(frame) = self.frame.take() {
+-            self.worker
+-                .recycle_transaction_scratch(frame.into_scratch());
++            self.worker.recycle_transaction_frame(frame);
+         }
+     }
+ 
+@@ -4878,7 +4851,7 @@
+ 
+ fn abort_without_locks(
+     worker: &mut WorkerContext,
+-    mut frame: TransactionFrame,
++    mut frame: Box<TransactionFrame>,
+     reason: AbortReason,
+ ) -> AbortInfo {
+     let cleanup = catch_unwind(AssertUnwindSafe(|| {
+@@ -4907,7 +4880,7 @@
+         frame.runtime.poison();
+         std::mem::forget(frame);
+     } else {
+-        worker.recycle_transaction_scratch(frame.into_scratch());
++        worker.recycle_transaction_frame(frame);
+     }
+     worker.finish_transaction();
+     AbortInfo::new(reason)
+--- a/crates/sto-core/src/runtime.rs
++++ b/crates/sto-core/src/runtime.rs
+@@ -19,7 +19,7 @@
+         RegistrationError, RuntimeError, Unsupported,
+     },
+     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
+-    transaction::{TerminalReadScratch, TransactionScratch},
++    transaction::{TerminalReadScratch, TransactionFrame},
+ };
+ 
+ static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
+@@ -270,7 +270,7 @@
+             owner,
+             thread: current_thread,
+             transaction_active: false,
+-            transaction_scratch: Some(TransactionScratch::new(Arc::clone(self))),
++            transaction_frame: Some(Box::new(TransactionFrame::new(Arc::clone(self)))),
+             terminal_read_scratch: Some(Box::new(TerminalReadScratch::new(Arc::clone(self)))),
+             next_lock_plan_generation,
+             not_send_sync: PhantomData,
+@@ -382,7 +382,7 @@
+     pub(crate) owner: OwnerId,
+     pub(crate) thread: ThreadId,
+     pub(crate) transaction_active: bool,
+-    pub(crate) transaction_scratch: Option<TransactionScratch>,
++    pub(crate) transaction_frame: Option<Box<TransactionFrame>>,
+     pub(crate) terminal_read_scratch: Option<Box<TerminalReadScratch>>,
+     next_lock_plan_generation: u64,
+     not_send_sync: PhantomData<Rc<()>>,
+@@ -417,10 +417,11 @@
+         self.transaction_active = false;
+     }
+ 
+-    pub(crate) fn recycle_transaction_scratch(&mut self, scratch: TransactionScratch) {
++    pub(crate) fn recycle_transaction_frame(&mut self, frame: Box<TransactionFrame>) {
+         debug_assert!(self.transaction_active);
+-        debug_assert!(self.transaction_scratch.is_none());
+-        self.transaction_scratch = Some(scratch);
++        debug_assert!(self.transaction_frame.is_none());
++        frame.assert_reusable();
++        self.transaction_frame = Some(frame);
+     }
+ 
+     pub(crate) fn recycle_terminal_read_scratch(&mut self, scratch: Box<TerminalReadScratch>) {
+@@ -452,10 +453,10 @@
+         if self.transaction_active {
+             self.runtime.poison();
+         }
+-        if let Some(scratch) = self.transaction_scratch.take() {
+-            if let Err(quarantined) = scratch.dispose_retained_resources() {
++        if let Some(frame) = self.transaction_frame.take() {
++            if let Err(quarantined) = frame.dispose_retained_resources() {
+                 // A retained adapter destructor unwound. Keep the entire
+-                // scratch allocation quarantined so no later pooled destructor
++                // frame allocation quarantined so no later pooled destructor
+                 // runs during this unwind, and make the failure observable to
+                 // every other worker through runtime health.
+                 self.runtime.poison();
+--- /dev/null
++++ b/crates/sto-core/src/frame_reuse_tests.rs
+@@ -0,0 +1,209 @@
++//! Ownership checks for the worker's reusable general transaction frame.
++
++use super::item_index_tests::{cache_resource, cached_bindings};
++use crate::transaction::{CommitDriver, TransactionFrame};
++use crate::{
++    AccessError, CommitHook, CommitHookError, CommitOutcome, InvalidUse, Runtime, RuntimeConfig,
++    RuntimeHealth, TxnCell, WorkerContext,
++};
++use std::panic::{catch_unwind, AssertUnwindSafe};
++
++fn idle_frame(worker: &WorkerContext) -> *const TransactionFrame {
++    std::ptr::from_ref(worker.transaction_frame.as_deref().unwrap())
++}
++
++#[test]
++fn frame_reuse_preserves_one_allocation_across_commit_abort_and_drop() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let cell = TxnCell::new(&runtime, 0_u64).unwrap();
++    let mut worker = runtime.attach().unwrap();
++    let address = idle_frame(&worker);
++    let runtime_owners = std::sync::Arc::strong_count(&runtime);
++    let mut visible = 0;
++    for generation in 1..=48 {
++        let mut transaction = worker.begin().unwrap();
++        assert!(transaction
++            .worker
++            .as_ref()
++            .unwrap()
++            .transaction_frame
++            .is_none());
++        assert_eq!(
++            std::ptr::from_ref(transaction.frame.as_deref().unwrap()),
++            address
++        );
++        assert_eq!(cell.get(&mut transaction).unwrap(), visible);
++        cell.set(&mut transaction, generation).unwrap();
++        assert_eq!(cell.get(&mut transaction).unwrap(), generation);
++        match generation % 3 {
++            0 => {
++                assert!(matches!(
++                    transaction.commit().unwrap(),
++                    CommitOutcome::Committed(_)
++                ));
++                visible = generation;
++            }
++            1 => {
++                transaction.abort();
++            }
++            _ => drop(transaction),
++        }
++        assert!(!worker.transaction_active);
++        assert_eq!(idle_frame(&worker), address);
++        assert_eq!(std::sync::Arc::strong_count(&runtime), runtime_owners);
++    }
++    let mut verify = worker.begin().unwrap();
++    assert_eq!(cell.get(&mut verify).unwrap(), visible);
++    verify.commit().unwrap();
++    drop(worker);
++    assert_eq!(runtime.health(), RuntimeHealth::Healthy);
++}
++
++#[test]
++fn frame_reuse_resets_metadata_after_typed_materialized_and_doomed_attempts() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let resource = cache_resource(&runtime);
++    let cell = TxnCell::new(&runtime, 7_u64).unwrap();
++    let mut worker = runtime.attach().unwrap();
++    let address = idle_frame(&worker);
++    for materialize in [false, true, false, true] {
++        let mut transaction = worker.begin().unwrap();
++        let frame = transaction.frame.as_deref().unwrap();
++        assert_eq!(std::ptr::from_ref(frame), address);
++        assert_eq!(frame.item_count, 0);
++        assert_eq!(frame.item_index.len, 0);
++        assert!(!frame.batch_active);
++        assert!(frame.last_accessed_item_slot.is_none());
++        assert!(!frame.doomed);
++        assert!(cached_bindings(&transaction).is_empty());
++        assert!(!transaction.has_items_for(&resource));
++        transaction.with_item(&resource, 1, |_| Ok(())).unwrap();
++        assert!(transaction.frame.as_ref().unwrap().batch_active);
++        if materialize {
++            assert_eq!(cell.get(&mut transaction).unwrap(), 7);
++            assert!(!transaction.frame.as_ref().unwrap().batch_active);
++        }
++        let failure: Result<(), AccessError> =
++            transaction.with_item(&resource, 1, |_| Err(InvalidUse::IllegalItemState.into()));
++        assert_eq!(failure, Err(InvalidUse::IllegalItemState.into()));
++        assert!(transaction.is_doomed());
++        let frame = transaction.frame.as_deref().unwrap();
++        let capacities = (frame.items.capacity(), frame.item_index.entries.capacity());
++        transaction.abort();
++        assert_eq!(idle_frame(&worker), address);
++        let frame = worker.transaction_frame.as_deref().unwrap();
++        assert_eq!(
++            (frame.items.capacity(), frame.item_index.entries.capacity()),
++            capacities
++        );
++    }
++    assert_eq!(runtime.health(), RuntimeHealth::Healthy);
++}
++
++#[test]
++fn frame_reuse_moves_only_ownership_into_commit_driver_and_its_drop_fallback() {
++    for publish in [false, true, false, true] {
++        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++        let cell = TxnCell::new(&runtime, 0_u64).unwrap();
++        let mut worker = runtime.attach().unwrap();
++        let address = idle_frame(&worker);
++        let mut transaction = worker.begin().unwrap();
++        cell.set(&mut transaction, 11).unwrap();
++        let attached = transaction.worker.take().unwrap();
++        let frame = transaction.frame.take().unwrap();
++        // The public Drop guard is disarmed before the private guard takes over.
++        drop(transaction);
++        let mut driver = CommitDriver::new(attached, frame, None);
++        assert_eq!(std::ptr::from_ref(driver.frame()), address);
++        if publish {
++            assert!(matches!(driver.run().unwrap(), CommitOutcome::Committed(_)));
++        }
++        drop(driver);
++        assert!(!worker.transaction_active);
++        assert_eq!(idle_frame(&worker), address);
++        // Abandoning the private driver means unexpected unwind, not ordinary
++        // public abort. Its existing fallback deliberately poisons the runtime.
++        assert_eq!(
++            runtime.health(),
++            if publish {
++                RuntimeHealth::Healthy
++            } else {
++                RuntimeHealth::Poisoned
++            }
++        );
++    }
++}
++
++#[test]
++fn rejected_begin_leaves_the_idle_frame_owned_and_reusable() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let mut worker = runtime.attach().unwrap();
++    let address = idle_frame(&worker);
++    assert!(worker.begin_with(crate::IsolationMode::Opaque).is_err());
++    assert!(!worker.transaction_active);
++    assert_eq!(idle_frame(&worker), address);
++    worker.begin().unwrap().commit().unwrap();
++    assert_eq!(idle_frame(&worker), address);
++}
++
++#[test]
++fn frame_reuse_survives_caller_unwind_and_keeps_terminal_pool_separate() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let cell = TxnCell::new(&runtime, 5_u64).unwrap();
++    let mut worker = runtime.attach().unwrap();
++    let address = idle_frame(&worker);
++    let unwind = catch_unwind(AssertUnwindSafe(|| {
++        let mut transaction = worker.begin().unwrap();
++        cell.set(&mut transaction, 99).unwrap();
++        panic!("caller unwinds while owning a reusable frame");
++    }));
++    assert!(unwind.is_err());
++    assert_eq!(idle_frame(&worker), address);
++    let terminal_address = std::ptr::from_ref(worker.terminal_read_scratch.as_deref().unwrap());
++    drop(worker.begin_terminal_read_batch().unwrap());
++    assert_eq!(idle_frame(&worker), address);
++    assert_eq!(
++        std::ptr::from_ref(worker.terminal_read_scratch.as_deref().unwrap()),
++        terminal_address
++    );
++    let mut verify = worker.begin().unwrap();
++    assert_eq!(cell.get(&mut verify).unwrap(), 5);
++    verify.commit().unwrap();
++    assert_eq!(runtime.health(), RuntimeHealth::Healthy);
++}
++
++struct PanickingReservation;
++
++impl CommitHook for PanickingReservation {
++    fn reserve_upper_metadata(&mut self) -> Result<(), CommitHookError> {
++        panic!("reservation failure before irreversible publication");
++    }
++
++    fn pre_install(&mut self) -> Result<(), CommitHookError> {
++        panic!("failed reservation must not reach pre-install");
++    }
++}
++
++#[test]
++fn frame_reuse_after_clean_failure_does_not_bypass_runtime_poison() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let cell = TxnCell::new(&runtime, 5_u64).unwrap();
++    let mut worker = runtime.attach().unwrap();
++    let address = idle_frame(&worker);
++    let mut transaction = worker.begin().unwrap();
++    cell.set(&mut transaction, 99).unwrap();
++    assert!(transaction
++        .commit_with_hook(&mut PanickingReservation)
++        .is_err());
++    assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
++    assert!(!worker.transaction_active);
++    // Clean rollback can recycle storage, but cannot authorize another begin.
++    assert_eq!(idle_frame(&worker), address);
++    assert!(worker.begin().is_err());
++    std::thread::scope(|scope| {
++        scope
++            .spawn(|| assert!(runtime.attach().is_err()))
++            .join()
++            .unwrap();
++    });
++}
+--- /dev/null
++++ b/crates/sto-core/tests/frame_allocations.rs
+@@ -0,0 +1,110 @@
++//! Allocation accounting is a native test; frame ownership also has Miri tests.
++#![cfg(not(miri))]
++#![allow(
++    unsafe_code,
++    reason = "test-only transparent System allocator counting"
++)]
++
++use std::alloc::{GlobalAlloc, Layout, System};
++use std::cell::Cell;
++use sto_core::{CommitOutcome, Runtime, RuntimeConfig, TxnCell};
++
++thread_local! {
++    static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
++}
++
++struct CountingAllocator;
++
++fn note_allocation() {
++    let _ = ALLOCATIONS.try_with(|counter| {
++        if let Some(count) = counter.get() {
++            counter.set(Some(count + 1));
++        }
++    });
++}
++
++// SAFETY: Every method forwards the allocator's original pointer and layout
++// unchanged. The counter neither allocates nor reads the allocation's bytes.
++unsafe impl GlobalAlloc for CountingAllocator {
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        note_allocation();
++        unsafe { System.alloc(layout) }
++    }
++
++    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
++        note_allocation();
++        unsafe { System.alloc_zeroed(layout) }
++    }
++
++    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
++        note_allocation();
++        unsafe { System.realloc(pointer, layout, size) }
++    }
++
++    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
++        unsafe { System.dealloc(pointer, layout) }
++    }
++}
++
++#[global_allocator]
++static ALLOCATOR: CountingAllocator = CountingAllocator;
++
++fn allocations(operation: impl FnOnce()) -> usize {
++    struct Reset;
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            ALLOCATIONS.with(|counter| counter.set(None));
++        }
++    }
++    ALLOCATIONS.with(|counter| assert!(counter.replace(Some(0)).is_none()));
++    let _reset = Reset;
++    operation();
++    ALLOCATIONS.with(|counter| counter.get().unwrap())
++}
++
++#[test]
++fn reused_frames_do_not_allocate_at_transaction_boundaries() {
++    let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
++    let cell = TxnCell::new(&runtime, 0_u64).unwrap();
++    let mut worker = runtime.attach().unwrap();
++
++    // An empty frame needs no item/lock/index storage, including its first
++    // begin. Every frame allocation must already have happened at attach.
++    assert_eq!(
++        allocations(|| {
++            for _ in 0..32 {
++                worker.begin().unwrap().commit().unwrap();
++                worker.begin().unwrap().abort();
++                drop(worker.begin().unwrap());
++            }
++        }),
++        0
++    );
++
++    // Fill both item and lock pools before counting. TxnCell intentionally
++    // allocates one owned Arc value per set; the core must add no frame Box.
++    for value in 0..32 {
++        let mut transaction = worker.begin().unwrap();
++        cell.set(&mut transaction, value).unwrap();
++        transaction.commit().unwrap();
++    }
++    assert_eq!(
++        allocations(|| {
++            for value in 0..48 {
++                let mut transaction = worker.begin().unwrap();
++                cell.set(&mut transaction, value).unwrap();
++                match value % 3 {
++                    0 => assert!(matches!(
++                        transaction.commit().unwrap(),
++                        CommitOutcome::Committed(_)
++                    )),
++                    1 => {
++                        transaction.abort();
++                    }
++                    _ => drop(transaction),
++                }
++            }
++        }),
++        48
++    );
++}
+--- a/crates/sto-core/tests/ui/active_transaction.stderr
++++ b/crates/sto-core/tests/ui/active_transaction.stderr
+@@ -42,9 +42,71 @@
+ note: required because it appears within the type `transaction::TransactionFrame`
+   --> src/transaction.rs
+    |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
++  --> $RUST/core/src/option.rs
++   |
++   | pub enum Option<T> {
++   |          ^^^^^^
++note: required because it appears within the type `Transaction<'static>`
++  --> src/transaction.rs
++   |
++   | pub struct Transaction<'worker, State = Active> {
++   |            ^^^^^^^^^^^
++note: required by a bound in `assert_send`
++  --> tests/ui/active_transaction.rs:3:19
++   |
++ 3 | fn assert_send<T: Send>() {}
++   |                   ^^^^ required by this bound in `assert_send`
++
++error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
++  --> tests/ui/active_transaction.rs:11:19
++   |
++11 |     assert_send::<Transaction<'static, Active>>();
++   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
++   |
++   = help: the trait `Send` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
++   = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Send`
++note: required because it appears within the type `Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>>`
++  --> $RUST/core/src/option.rs
++   |
++   | pub enum Option<T> {
++   |          ^^^^^^
++note: required because it appears within the type `transaction::TerminalReadScratch`
++  --> src/transaction.rs
++   |
++   | pub(crate) struct TerminalReadScratch {
++   |                   ^^^^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TerminalReadScratch>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TerminalReadScratch>>`
++  --> $RUST/core/src/option.rs
++   |
++   | pub enum Option<T> {
++   |          ^^^^^^
++note: required because it appears within the type `WorkerContext`
++  --> src/runtime.rs
++   |
++   | pub struct WorkerContext {
++   |            ^^^^^^^^^^^^^
++   = note: required because it appears within the type `&'static mut WorkerContext`
++note: required because it appears within the type `Option<&'static mut WorkerContext>`
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+@@ -96,9 +158,15 @@
+ note: required because it appears within the type `transaction::TransactionFrame`
+   --> src/transaction.rs
+    |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+@@ -150,9 +218,15 @@
+ note: required because it appears within the type `transaction::TransactionFrame`
+   --> src/transaction.rs
+    |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+@@ -168,14 +242,82 @@
+  3 | fn assert_send<T: Send>() {}
+    |                   ^^^^ required by this bound in `assert_send`
+ 
+-error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
+-  --> tests/ui/active_transaction.rs:11:19
+-   |
+-11 |     assert_send::<Transaction<'static, Active>>();
+-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be sent between threads safely
+-   |
+-   = help: the trait `Send` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
+-   = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Send`
++error[E0277]: `Rc<()>` cannot be shared between threads safely
++  --> tests/ui/active_transaction.rs:12:19
++   |
++12 |     assert_sync::<Transaction<'static, Active>>();
++   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
++   |
++   = help: within `Transaction<'static>`, the trait `Sync` is not implemented for `Rc<()>`
++note: required because it appears within the type `PhantomData<Rc<()>>`
++  --> $RUST/core/src/marker.rs
++   |
++   | pub struct PhantomData<T: PointeeSized>;
++   |            ^^^^^^^^^^^
++note: required because it appears within the type `Transaction<'static>`
++  --> src/transaction.rs
++   |
++   | pub struct Transaction<'worker, State = Active> {
++   |            ^^^^^^^^^^^
++note: required by a bound in `assert_sync`
++  --> tests/ui/active_transaction.rs:4:19
++   |
++ 4 | fn assert_sync<T: Sync>() {}
++   |                   ^^^^ required by this bound in `assert_sync`
++
++error[E0277]: `(dyn sto_core::item::ErasedItemBatch + 'static)` cannot be shared between threads safely
++  --> tests/ui/active_transaction.rs:12:19
++   |
++12 |     assert_sync::<Transaction<'static, Active>>();
++   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::item::ErasedItemBatch + 'static)` cannot be shared between threads safely
++   |
++   = help: the trait `Sync` is not implemented for `(dyn sto_core::item::ErasedItemBatch + 'static)`
++   = note: required for `std::ptr::Unique<(dyn sto_core::item::ErasedItemBatch + 'static)>` to implement `Sync`
++note: required because it appears within the type `Box<(dyn sto_core::item::ErasedItemBatch + 'static)>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<(dyn sto_core::item::ErasedItemBatch + 'static)>>`
++  --> $RUST/core/src/option.rs
++   |
++   | pub enum Option<T> {
++   |          ^^^^^^
++note: required because it appears within the type `transaction::TransactionFrame`
++  --> src/transaction.rs
++   |
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
++  --> $RUST/core/src/option.rs
++   |
++   | pub enum Option<T> {
++   |          ^^^^^^
++note: required because it appears within the type `Transaction<'static>`
++  --> src/transaction.rs
++   |
++   | pub struct Transaction<'worker, State = Active> {
++   |            ^^^^^^^^^^^
++note: required by a bound in `assert_sync`
++  --> tests/ui/active_transaction.rs:4:19
++   |
++ 4 | fn assert_sync<T: Sync>() {}
++   |                   ^^^^ required by this bound in `assert_sync`
++
++error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
++  --> tests/ui/active_transaction.rs:12:19
++   |
++12 |     assert_sync::<Transaction<'static, Active>>();
++   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
++   |
++   = help: the trait `Sync` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
++   = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Sync`
+ note: required because it appears within the type `Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>`
+   --> $RUST/alloc/src/boxed.rs
+    |
+@@ -191,7 +333,7 @@
+    |
+    | pub(crate) struct TerminalReadScratch {
+    |                   ^^^^^^^^^^^^^^^^^^^
+-   = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Send`
++   = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Sync`
+ note: required because it appears within the type `Box<transaction::TerminalReadScratch>`
+   --> $RUST/alloc/src/boxed.rs
+    |
+@@ -218,68 +360,6 @@
+    |
+    | pub struct Transaction<'worker, State = Active> {
+    |            ^^^^^^^^^^^
+-note: required by a bound in `assert_send`
+-  --> tests/ui/active_transaction.rs:3:19
+-   |
+- 3 | fn assert_send<T: Send>() {}
+-   |                   ^^^^ required by this bound in `assert_send`
+-
+-error[E0277]: `Rc<()>` cannot be shared between threads safely
+-  --> tests/ui/active_transaction.rs:12:19
+-   |
+-12 |     assert_sync::<Transaction<'static, Active>>();
+-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+-   |
+-   = help: within `Transaction<'static>`, the trait `Sync` is not implemented for `Rc<()>`
+-note: required because it appears within the type `PhantomData<Rc<()>>`
+-  --> $RUST/core/src/marker.rs
+-   |
+-   | pub struct PhantomData<T: PointeeSized>;
+-   |            ^^^^^^^^^^^
+-note: required because it appears within the type `Transaction<'static>`
+-  --> src/transaction.rs
+-   |
+-   | pub struct Transaction<'worker, State = Active> {
+-   |            ^^^^^^^^^^^
+-note: required by a bound in `assert_sync`
+-  --> tests/ui/active_transaction.rs:4:19
+-   |
+- 4 | fn assert_sync<T: Sync>() {}
+-   |                   ^^^^ required by this bound in `assert_sync`
+-
+-error[E0277]: `(dyn sto_core::item::ErasedItemBatch + 'static)` cannot be shared between threads safely
+-  --> tests/ui/active_transaction.rs:12:19
+-   |
+-12 |     assert_sync::<Transaction<'static, Active>>();
+-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::item::ErasedItemBatch + 'static)` cannot be shared between threads safely
+-   |
+-   = help: the trait `Sync` is not implemented for `(dyn sto_core::item::ErasedItemBatch + 'static)`
+-   = note: required for `std::ptr::Unique<(dyn sto_core::item::ErasedItemBatch + 'static)>` to implement `Sync`
+-note: required because it appears within the type `Box<(dyn sto_core::item::ErasedItemBatch + 'static)>`
+-  --> $RUST/alloc/src/boxed.rs
+-   |
+-   | pub struct Box<
+-   |            ^^^
+-note: required because it appears within the type `Option<Box<(dyn sto_core::item::ErasedItemBatch + 'static)>>`
+-  --> $RUST/core/src/option.rs
+-   |
+-   | pub enum Option<T> {
+-   |          ^^^^^^
+-note: required because it appears within the type `transaction::TransactionFrame`
+-  --> src/transaction.rs
+-   |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
+-  --> $RUST/core/src/option.rs
+-   |
+-   | pub enum Option<T> {
+-   |          ^^^^^^
+-note: required because it appears within the type `Transaction<'static>`
+-  --> src/transaction.rs
+-   |
+-   | pub struct Transaction<'worker, State = Active> {
+-   |            ^^^^^^^^^^^
+ note: required by a bound in `assert_sync`
+   --> tests/ui/active_transaction.rs:4:19
+    |
+@@ -322,9 +402,15 @@
+ note: required because it appears within the type `transaction::TransactionFrame`
+   --> src/transaction.rs
+    |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+@@ -376,65 +462,15 @@
+ note: required because it appears within the type `transaction::TransactionFrame`
+   --> src/transaction.rs
+    |
+-   | struct TransactionFrame {
+-   |        ^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionFrame>`
+-  --> $RUST/core/src/option.rs
+-   |
+-   | pub enum Option<T> {
+-   |          ^^^^^^
+-note: required because it appears within the type `Transaction<'static>`
+-  --> src/transaction.rs
+-   |
+-   | pub struct Transaction<'worker, State = Active> {
+-   |            ^^^^^^^^^^^
+-note: required by a bound in `assert_sync`
+-  --> tests/ui/active_transaction.rs:4:19
+-   |
+- 4 | fn assert_sync<T: Sync>() {}
+-   |                   ^^^^ required by this bound in `assert_sync`
+-
+-error[E0277]: `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
+-  --> tests/ui/active_transaction.rs:12:19
+-   |
+-12 |     assert_sync::<Transaction<'static, Active>>();
+-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)` cannot be shared between threads safely
+-   |
+-   = help: the trait `Sync` is not implemented for `(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)`
+-   = note: required for `std::ptr::Unique<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>` to implement `Sync`
+-note: required because it appears within the type `Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>`
+-  --> $RUST/alloc/src/boxed.rs
+-   |
+-   | pub struct Box<
+-   |            ^^^
+-note: required because it appears within the type `Option<Box<(dyn sto_core::terminal_read::ErasedTerminalReadBatch + 'static)>>`
+-  --> $RUST/core/src/option.rs
+-   |
+-   | pub enum Option<T> {
+-   |          ^^^^^^
+-note: required because it appears within the type `transaction::TerminalReadScratch`
+-  --> src/transaction.rs
+-   |
+-   | pub(crate) struct TerminalReadScratch {
+-   |                   ^^^^^^^^^^^^^^^^^^^
+-   = note: required for `std::ptr::Unique<transaction::TerminalReadScratch>` to implement `Sync`
+-note: required because it appears within the type `Box<transaction::TerminalReadScratch>`
+-  --> $RUST/alloc/src/boxed.rs
+-   |
+-   | pub struct Box<
+-   |            ^^^
+-note: required because it appears within the type `Option<Box<transaction::TerminalReadScratch>>`
+-  --> $RUST/core/src/option.rs
+-   |
+-   | pub enum Option<T> {
+-   |          ^^^^^^
+-note: required because it appears within the type `WorkerContext`
+-  --> src/runtime.rs
+-   |
+-   | pub struct WorkerContext {
+-   |            ^^^^^^^^^^^^^
+-   = note: required because it appears within the type `&'static mut WorkerContext`
+-note: required because it appears within the type `Option<&'static mut WorkerContext>`
++   | pub(crate) struct TransactionFrame {
++   |                   ^^^^^^^^^^^^^^^^
++   = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++  --> $RUST/alloc/src/boxed.rs
++   |
++   | pub struct Box<
++   |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+   --> $RUST/core/src/option.rs
+    |
+    | pub enum Option<T> {
+--- a/crates/sto-core/tests/ui/worker_context.stderr
++++ b/crates/sto-core/tests/ui/worker_context.stderr
+@@ -39,12 +39,18 @@
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+@@ -138,12 +144,18 @@
+   |
+   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+   |            ^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+@@ -192,12 +204,18 @@
+   |
+   | pub(crate) struct LockPlanStorage {
+   |                   ^^^^^^^^^^^^^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Send`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+@@ -254,12 +272,18 @@
+   |
+   | pub enum Option<T> {
+   |          ^^^^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+@@ -353,12 +377,18 @@
+   |
+   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+   |            ^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {
+@@ -407,12 +437,18 @@
+   |
+   | pub(crate) struct LockPlanStorage {
+   |                   ^^^^^^^^^^^^^^^
+-note: required because it appears within the type `transaction::TransactionScratch`
+- --> src/transaction.rs
+-  |
+-  | pub(crate) struct TransactionScratch {
+-  |                   ^^^^^^^^^^^^^^^^^^
+-note: required because it appears within the type `Option<transaction::TransactionScratch>`
++note: required because it appears within the type `transaction::TransactionFrame`
++ --> src/transaction.rs
++  |
++  | pub(crate) struct TransactionFrame {
++  |                   ^^^^^^^^^^^^^^^^
++  = note: required for `std::ptr::Unique<transaction::TransactionFrame>` to implement `Sync`
++note: required because it appears within the type `Box<transaction::TransactionFrame>`
++ --> $RUST/alloc/src/boxed.rs
++  |
++  | pub struct Box<
++  |            ^^^
++note: required because it appears within the type `Option<Box<transaction::TransactionFrame>>`
+  --> $RUST/core/src/option.rs
+   |
+   | pub enum Option<T> {

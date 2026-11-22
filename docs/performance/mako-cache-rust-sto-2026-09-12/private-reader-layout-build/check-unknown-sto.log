@@ -1,0 +1,6 @@
+
+running 1 test
+test tests::two_readers_drain_one_pinned_writer_and_reject_unknown_outcome ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 204 filtered out; finished in 0.00s
+

@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "benchmark": {
+    "name": "Mako STO-derived TPC-C comparison",
+    "started_at_utc": "2026-08-29T01:11:05.579115+00:00",
+    "local_report_date": "2026-08-28",
+    "host": "zoo-002",
+    "runtime_seconds_per_sample": 3,
+    "repetitions": 3,
+    "threads_and_warehouses": [1, 4, 8, 16],
+    "official_tpcc_or_tpmc": false
+  },
+  "source": {
+    "branch": "codex/sto-rust",
+    "base_commit_at_build": "45ab87597aa881d283fdc0bc2dfcb2b458e965b6",
+    "implementation_commit": "a2d851f71e0ff0154ca6f12a0b268d40e4f61390",
+    "run_json_git_commit": null,
+    "run_json_git_status": null,
+    "provenance_note": "The timed executable was built from the dirty implementation worktree above the recorded base commit. The runner's root-owned process could not query that shared worktree because Git safe.directory rejected it. The implementation was subsequently committed as implementation_commit. Changes made after the timed executable was built scoped structured result emission to this target, corrected a non-default diagnostic scan hint, strengthened runner provenance, and wired the new native test; none of those changes affects the timed default transaction path. The measured executable itself is identified by SHA-256 below but was not archived."
+  },
+  "host": {
+    "kernel": "Linux 6.8.0-137-generic x86_64",
+    "processor": "AMD EPYC 7702P 64-Core Processor",
+    "sockets": 1,
+    "physical_cores": 64,
+    "logical_cpus": 128,
+    "numa_nodes": 1,
+    "l3_cache_mib": 256,
+    "selected_cpu_ids": "0-15"
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "llvm": "22.1.6",
+    "clang": "Homebrew clang 22.1.8",
+    "cmake": "3.31.6",
+    "cmake_build_type": "Release",
+    "allocator_mode": "USE_MALLOC_MODE=1; jemalloc linked"
+  },
+  "effective_build": {
+    "cpp": "-march=native -O2 -g -fno-omit-frame-pointer -DNDEBUG; libc++",
+    "rust": "release opt-level=2, target-cpu=native, force-frame-pointers=yes, debug=1, codegen-units=1, fat LTO, panic=unwind",
+    "rust_native_libraries": "static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+  },
+  "binaries": {
+    "timed_result_producer": {
+      "path_at_run": "/var/tmp/mako-sto-tpcc-20260828.lXHJ1Y/build/sto_tpcc_bench",
+      "sha256": "a5dbcde6142d1f0f6e44f638fd57be1b2624c8b532b2419ff7bf480a11cbcb1b",
+      "size_bytes": 121097648,
+      "archived": false
+    },
+    "final_verified_rebuild": {
+      "path_at_validation": "/var/tmp/mako-sto-tpcc-20260828.lXHJ1Y/build/sto_tpcc_bench",
+      "sha256": "a8dcde24704ee95ca7e259be90608a2b3cb231315b4fbfcabacd3bc5cff1b477",
+      "size_bytes": 121098440,
+      "mtime_utc": "2026-08-29T01:27:35.507878529Z",
+      "note": "Post-matrix build, not the executable that produced raw.jsonl; both cpp and rust modes passed a one-second smoke run."
+    },
+    "rust_static_archive": {
+      "sha256": "9c0717f8c91763f64d30ecaf56419e15f795074c02aae1a83ba8eb2030634dc7",
+      "size_bytes": 30101582
+    }
+  },
+  "validation": {
+    "workspace_tests": "cargo test --workspace --all-targets: pass",
+    "workspace_clippy": "cargo clippy --workspace --all-targets -- -D warnings: pass",
+    "format": "cargo fmt --all -- --check: pass",
+    "runner_unit_tests": "11 passed",
+    "native_masstree_tests": "4 passed",
+    "native_sto_masstree_tests": "6 passed",
+    "native_tpcc_ffi_tests": "1 passed",
+    "benchmark_audit": "pass; checked output matches audit.txt"
+  },
+  "artifact_sha256": {
+    "config/mako_sto_tpcc_local.yml": "3324428f7b8767c74d93041f500126e6b5721f0d7eb05fbc6b907b6a9d9c9a24",
+    "raw.jsonl": "ddf3c76f3c7111431eac1385389ed52d6de161f7d6ac629a88efb73913b10178",
+    "summary.csv": "fc3ed4847a02c9c6da0c2c2f7343f1558c634d3fc24379cc679230d60cf5748f",
+    "run.json": "beb3a12d86ea8718337055926da0437d560f948e0669255504d59cdde167aee9",
+    "audit.py": "bdcc8365e4a67b87c7e7e5a2a16dda1c546a19f41819e97aead799d7c6c16e9e",
+    "audit.txt": "9b23827023a31154f7fb72eb8668808356fa4c4146cff97b3632f6d8dce41124",
+    "run-command.txt": "36239adc095b613a4e63fa02c217bbaf60f6946c7a97298d5abcb456e8ad0c6b"
+  }
+}

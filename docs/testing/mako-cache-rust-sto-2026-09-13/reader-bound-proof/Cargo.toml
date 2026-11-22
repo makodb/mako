@@ -1,0 +1,10 @@
+[package]
+name = "private-mako-fence-bound-model"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+loom = "=0.7.2"
+
+[workspace]

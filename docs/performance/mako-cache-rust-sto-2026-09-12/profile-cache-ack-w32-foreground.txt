@@ -1,0 +1,48 @@
+Command: perf report --stdio --no-children --call-graph none --tid 333562,333563,333564,333565,333566,333567,333568,333569,333570,333571,333572,333573,333574,333575,333576,333577,333578,333579,333580,333581,333582,333583,333584,333585,333586,333587,333588,333589,333590,333591,333592,333593 --percentage relative -i /var/tmp/mako-engine-perf-20260912.trsFuD/profile-record-local/cache-ack-w32/perf.data --percent-limit 0.5 --sort symbol | c++filt -s rust
+
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 113K of event 'cycles:u'
+# Event count (approx.): 90137186387
+#
+# Overhead  Symbol                                                                                                                                                                                                                            IPC   [IPC Coverage]
+# ........  ................................................................................................................................................................................................................................  ....................
+#
+    47.25%  [.] mako_clock::Clock::try_allocate_restricted_timestamp                                                                                                                                                                          -      -            
+     2.63%  [.] engine_compare::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::hee4946b43bbea348                                                                                              -      -            
+     2.63%  [.] sto_core::transaction::Transaction::commit_with_optional_hook                                                                                                                                                                 -      -            
+     2.31%  [.] mako_engine_sto::txn::Transaction::commit_preselected_holder                                                                                                                                                                  -      -            
+     2.03%  [.] Masstree::unlocked_tcursor<mt_abi_detail::record_params>::find_unlocked(simple_threadinfo&)                                                                                                                                   -      -            
+     1.92%  [.] mako_engine_sto::txn::Transaction::put                                                                                                                                                                                        -      -            
+     1.49%  [.] 0x000000000000086c                                                                                                                                                                                                            -      -            
+     1.44%  [.] <sto_core::item::TypedItemBatch<A> as sto_core::item::ErasedItemBatch>::finish_and_teardown                                                                                                                                   -      -            
+     1.40%  [.] Masstree::node_base<mt_abi_detail::record_params>::reach_leaf(Masstree::key<unsigned long> const&, nodeversion<nodeversion_parameters<unsigned int> >&, simple_threadinfo&) const                                             -      -            
+     1.39%  [.] sto_masstree::CommittedStatePublication::publish                                                                                                                                                                              -      -            
+     1.38%  [.] sto_core::transaction::with_item_inner_validated                                                                                                                                                                              -      -            
+     1.38%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::acquire_all                                                                                            -      -            
+     1.20%  [.] sto_core::transaction::with_resolved_item_inner_validated::_$u7b$$u7b$closure$u7d$$u7d$::hdb8073147b862702                                                                                                                    -      -            
+     1.13%  [.] sto_core::transaction::<impl sto_core::runtime::WorkerContext>::begin_with                                                                                                                                                    -      -            
+     0.95%  [.] 0x0000000000188e35                                                                                                                                                                                                            -      -            
+     0.90%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::validate                                                                                               -      -            
+     0.89%  [.] sto_core::transaction::activate_typed_batch_item                                                                                                                                                                              -      -            
+     0.87%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::release_all                                                                                            -      -            
+     0.84%  [.] (anonymous namespace)::point_get_validated(mt_tree&, mt_thread&, mt_runtime*, bool, void const*, unsigned long, unsigned long*)                                                                                               -      -            
+     0.81%  [.] malloc                                                                                                                                                                                                                        -      -            
+     0.76%  [.] std::panicking::catch_unwind::do_call                                                                                                                                                                                         -      -            
+     0.71%  [.] <sto_core::direct_commit::BorrowedInjectiveLockCommitPlan<A,L> as sto_core::direct_commit::ErasedDirectCommitPlan<A>>::prepare                                                                                                -      -            
+     0.71%  [.] 0x0000000000188d05                                                                                                                                                                                                            -      -            
+     0.70%  [.] mako_engine_sto::txn::Transaction::begin                                                                                                                                                                                      -      -            
+     0.67%  [.] mako_engine_sto::db::LocalDb::trusted_bound_transaction                                                                                                                                                                       -      -            
+     0.65%  [.] mako_engine_sto::txn::run_terminal                                                                                                                                                                                            -      -            
+     0.64%  [.] mako_cache::writeback_set::WritebackSet<B>::ensure_no_unknown                                                                                                                                                                 -      -            
+     0.63%  [.] ticker::guard::guard(ticker&)                                                                                                                                                                                                 -      -            
+     0.53%  [.] <std[e28293b1aa0f68bd]::time::SystemTime>::duration_since                                                                                                                                                            -      -            
+     0.53%  [.] mako_cache::Cache<B>::transaction                                                                                                                                                                                             -      -            
+
+
+#
+# (Tip: To measure approximate function latency with Processor Trace use perf record -e intel_pt// ... ; perf script --call-ret-trace)
+#

@@ -184,8 +184,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
       return;
     }
     auto ess_cc = es_cc;
-    auto sp_quorum = commo()->BroadcastBulkAccept(
-        par_id_, cmd_, [](ballot_t, int) {});
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_);
     
   // auto strt = std::chrono::high_resolution_clock::now();
   // auto endt2 = std::chrono::high_resolution_clock::now();
@@ -229,24 +228,8 @@ void BulkCoordinatorMultiPaxos::Commit() {
     prep_cmd.leader_id = cmd_temp1.unwrap()->leader_id;
     auto commit_cmd = rusty::Arc<PaxosPrepCmd>::make(std::move(prep_cmd));
 
-    auto ess_cc = es_cc;
-    // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, std::move(commit_cmd), [ess_cc](ballot_t ballot, int valid){
-      if(!valid){
-        ess_cc->step_down(ballot);
-      }
-    });
-    // Log_info("Called BroadcastBulkDecide from Commit()");
-    // it's not necessary to wait for a majority of commits
-  //   sp_quorum->wait();
-  //   if (sp_quorum->yes()) {
-	// //Log_info("Commit: some stuff is committed");
-  //   } else if (sp_quorum->no()) {
-  //     in_submission_ = false;
-  //     return;
-  //   } else {
-  //     verify(0);
-  //   }
+    // Accept already established a quorum; decisions are delivered asynchronously.
+    commo()->BroadcastBulkDecide(par_id_, std::move(commit_cmd));
     in_commit_ = false;
     //verify(phase_ == Phase::COMMIT);
     commit_callback_();

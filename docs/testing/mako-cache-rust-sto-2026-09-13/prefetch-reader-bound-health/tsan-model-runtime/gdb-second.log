@@ -1,0 +1,372 @@
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+process 1971002 is executing new program: /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+running 1 test
+test concurrent_reader_cuts_preserve_each_prefix_publication ... [New Thread 0x7ffff45ff6c0 (LWP 1971062)]
+[New Thread 0x7ffff3dfe6c0 (LWP 1971063)]
+
+Thread 3 "concurrent_read" received signal SIGSEGV, Segmentation fault.
+[Switching to Thread 0x7ffff3dfe6c0 (LWP 1971063)]
+0x000055555566d4c6 in FuncEntry () at .compiler-rt/lib/tsan/rtl/tsan_rtl.h:799
+warning: 799	.compiler-rt/lib/tsan/rtl/tsan_rtl.h: No such file or directory
+
+Thread 3 (Thread 0x7ffff3dfe6c0 (LWP 1971063) "concurrent_read"):
+#0  0x000055555566d4c6 in FuncEntry () at .compiler-rt/lib/tsan/rtl/tsan_rtl.h:799
+#1  __tsan_func_entry () at .compiler-rt/lib/tsan/rtl/tsan_interface.inc:168
+#2  0x0000555555bfb361 in core::ub_checks::check_language_ub () at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ub_checks.rs:96
+#3  0x0000555555bf9026 in core::mem::alignment::Alignment::new_unchecked (align=8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ub_checks.rs:77
+#4  0x0000555555bf911d in core::mem::alignment::Alignment::new (align=8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/alignment.rs:173
+#5  0x0000555555c098fe in core::alloc::layout::Layout::is_size_align_valid (size=40, align=8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:70
+#6  0x0000555555c10df5 in core::alloc::layout::{impl#0}::from_size_align_unchecked::precondition_check (size=40, align=8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/alloc/layout.rs:140
+#7  0x0000555555c099be in core::alloc::layout::Layout::from_size_align_unchecked (size=40, align=8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ub_checks.rs:78
+#8  0x0000555555d00385 in std::alloc::__default_lib_allocator::__rdl_alloc (size=40, align=8) at src/alloc.rs:465
+#9  0x000055555589a974 in alloc::alloc::alloc (layout=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:124
+#10 0x0000555555896286 in alloc::alloc::Global::alloc_impl_runtime (layout=..., zeroed=false) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:296
+#11 0x00005555558960be in alloc::alloc::Global::alloc_impl (self=0x1, layout=..., zeroed=false) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:418
+#12 0x000055555589c03c in alloc::alloc::{impl#1}::allocate (self=0x1, layout=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:535
+#13 0x000055555586be53 in alloc::boxed::box_new_uninit (layout=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:251
+#14 0x0000555555893521 in alloc::boxed::{impl#0}::new<loom::thread::Thread> (x=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:290
+#15 loom::rt::thread::LocalValue::new<loom::thread::Thread> (value=...) at src/rt/thread.rs:463
+#16 0x00005555558933cc in loom::rt::thread::Set::local_init<loom::thread::Thread> (self=0x7ffff3df7310, key=0x55555612c5b0 <loom::thread::CURRENT_THREAD_KEY>, value=...) at src/rt/thread.rs:408
+#17 0x00005555558809df in loom::thread::init_current (execution=0x7ffff3df7310, name=...) at src/thread.rs:102
+#18 0x00005555556bf07c in loom::thread::spawn_internal::{closure#0}::{closure#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>> (execution=0x7ffff3df7310) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/thread.rs:165
+#19 0x00005555556907d0 in loom::rt::scheduler::{impl#0}::with_execution::{closure#0}<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()> (state=0x7ffff3df6b48) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/scheduler.rs:43
+#20 0x000055555568d780 in loom::rt::scheduler::{impl#0}::with_state::{closure#0}<loom::rt::scheduler::{impl#0}::with_execution::{closure_env#0}<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()>, ()> (state=0x7ffff3df6b40) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/scheduler.rs:131
+#21 0x000055555567ed08 in scoped_tls::ScopedKey<core::cell::RefCell<loom::rt::scheduler::State>>::with<core::cell::RefCell<loom::rt::scheduler::State>, loom::rt::scheduler::{impl#0}::with_state::{closure_env#0}<loom::rt::scheduler::{impl#0}::with_execution::{closure_env#0}<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()>, ()>, ()> (self=0x555556129ce0 <loom::rt::scheduler::STATE>, f=...) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scoped-tls-1.0.1/src/lib.rs:171
+#22 0x00005555556869ed in loom::rt::scheduler::Scheduler::with_state<loom::rt::scheduler::{impl#0}::with_execution::{closure_env#0}<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()>, ()> (f=...) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/scheduler.rs:131
+#23 0x00005555556889f4 in loom::rt::scheduler::Scheduler::with_execution<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()> (f=...) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/scheduler.rs:43
+#24 0x00005555556b0cb4 in loom::rt::execution<loom::thread::spawn_internal::{closure#0}::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>, ()> (f=...) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/mod.rs:174
+#25 0x00005555556bd9a2 in loom::thread::spawn_internal::{closure#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>> () at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/thread.rs:164
+#26 0x00005555556b1de4 in loom::rt::spawn::{closure#1}<loom::thread::spawn_internal::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>> () at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/mod.rs:78
+#27 0x00005555556cb932 in core::ops::function::FnOnce::call_once<loom::rt::spawn::{closure_env#1}<loom::thread::spawn_internal::{closure_env#0}<commit_fence_loom::concurrent_reader_cuts_preserve_each_prefix_publication::{closure#0}::{closure_env#1}, core::option::Option<u64>>>, ()> () at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250
+#28 0x000055555586d46f in alloc::boxed::{impl#31}::call_once<(), dyn core::ops::function::FnOnce<(), Output=()>, alloc::alloc::Global> (self=..., args=()) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:2318
+#29 0x000055555583fedb in loom::rt::scheduler::spawn_thread::{closure#0} () at src/rt/scheduler.rs:142
+#30 0x00005555558793da in core::ops::function::FnOnce::call_once<loom::rt::scheduler::spawn_thread::{closure_env#0}, ()> () at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250
+#31 0x000055555585df56 in generator::gen_impl::{impl#9}::init_code::{closure#0}<core::option::Option<alloc::boxed::Box<dyn core::ops::function::FnOnce<(), Output=()>, alloc::alloc::Global>>, (), loom::rt::scheduler::spawn_thread::{closure_env#0}> () at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generator-0.8.9/src/gen_impl.rs:357
+#32 0x000055555586af80 in generator::stack::StackBox<generator::gen_impl::{impl#9}::init_code::{closure_env#0}<core::option::Option<alloc::boxed::Box<dyn core::ops::function::FnOnce<(), Output=()>, alloc::alloc::Global>>, (), loom::rt::scheduler::spawn_thread::{closure_env#0}>>::call_once<generator::gen_impl::{impl#9}::init_code::{closure_env#0}<core::option::Option<alloc::boxed::Box<dyn core::ops::function::FnOnce<(), Output=()>, alloc::alloc::Global>>, (), loom::rt::scheduler::spawn_thread::{closure_env#0}>> (data=0x7ffff6728da0) at /home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generator-0.8.9/src/stack/mod.rs:137
+#33 0x0000555555b7bf57 in generator::stack::Func::call_once (self=...) at src/stack/mod.rs:119
+#34 0x0000555555b78009 in generator::detail::gen::gen_init_impl::{closure#0} () at src/detail/gen.rs:35
+#35 0x0000555555b808a3 in core::ops::function::FnOnce::call_once<generator::detail::gen::gen_init_impl::{closure_env#0}, ()> () at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250
+#36 0x0000555555b77872 in std::panicking::catch_unwind::do_call<generator::detail::gen::gen_init_impl::{closure_env#0}, ()> (data=0x7ffff6728bd8) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:576
+#37 0x0000555555b80b07 in __rust_try ()
+#38 0x0000555555b76f9b in std::panicking::catch_unwind<(), generator::detail::gen::gen_init_impl::{closure_env#0}> (f=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:544
+#39 0x0000555555b76ef6 in std::panic::catch_unwind<generator::detail::gen::gen_init_impl::{closure_env#0}, ()> (f=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panic.rs:359
+
+Thread 2 (Thread 0x7ffff45ff6c0 (LWP 1971062) "commit_fence_lo"):
+#0  internal_usleep () at .llvm/build/runtimes/runtimes-bins/.compiler-rt/lib/sanitizer_common/sanitizer_linux.cpp:602
+#1  0x0000555555663acb in BackgroundThread () at .llvm/build/runtimes/runtimes-bins/.compiler-rt/lib/tsan/rtl/tsan_rtl.cpp:481
+#2  0x00007ffff7d1fb7b in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:448
+#3  0x00007ffff7d9d7f8 in __GI___clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 1 (Thread 0x7ffff7c890c0 (LWP 1971002) "commit_fence_lo"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000555555c9f080 in std::sys::sync::futex::unix::futex_wait (futex=0x720c000000b8, expected=4294967295, timeout=...) at src/sys/sync/futex/unix.rs:63
+#2  0x0000555555c43994 in std::sys::sync::thread_parking::futex::Parker::park (self=...) at src/sys/sync/thread_parking/futex.rs:55
+#3  0x0000555555c9ac70 in std::thread::thread::Thread::park (self=0x720c00000070) at src/thread/thread.rs:121
+#4  0x000055555577ef41 in std::sync::mpmc::context::Context::wait_until (self=0x7fffffff8a78, deadline=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/context.rs:143
+#5  0x000055555577c795 in std::sync::mpmc::list::{impl#3}::recv::{closure#1}<test::event::CompletedTest> (cx=0x7fffffff8a78) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/list.rs:453
+#6  0x000055555577a9cf in std::sync::mpmc::context::{impl#0}::with::{closure#0}<std::sync::mpmc::list::{impl#3}::recv::{closure_env#1}<test::event::CompletedTest>, ()> (cx=0x7fffffff8a78) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/context.rs:49
+#7  0x000055555577ac24 in std::sync::mpmc::context::{impl#0}::with::{closure#1}<std::sync::mpmc::list::{impl#3}::recv::{closure_env#1}<test::event::CompletedTest>, ()> (cell=0x7ffff7c89080) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/context.rs:57
+#8  0x00005555557ad166 in std::thread::local::LocalKey<core::cell::Cell<core::option::Option<std::sync::mpmc::context::Context>>>::try_with<core::cell::Cell<core::option::Option<std::sync::mpmc::context::Context>>, std::sync::mpmc::context::{impl#0}::with::{closure_env#1}<std::sync::mpmc::list::{impl#3}::recv::{closure_env#1}<test::event::CompletedTest>, ()>, ()> (self=0x555556120b00, f=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:464
+#9  0x0000555555778bd4 in std::sync::mpmc::context::Context::with<std::sync::mpmc::list::{impl#3}::recv::{closure_env#1}<test::event::CompletedTest>, ()> (f=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/context.rs:53
+#10 0x00005555557819f8 in std::sync::mpmc::list::Channel<test::event::CompletedTest>::recv<test::event::CompletedTest> (self=0x725000000000, deadline=...) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/list.rs:442
+#11 0x0000555555727ef8 in std::sync::mpmc::Receiver<test::event::CompletedTest>::recv<test::event::CompletedTest> (self=0x7fffffff9d28) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpmc/mod.rs:1025
+#12 0x000055555581bf42 in std::sync::mpsc::Receiver<test::event::CompletedTest>::recv<test::event::CompletedTest> (self=0x7fffffff9d28) at /home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sync/mpsc.rs:890
+#13 0x00005555557d0c7b in test::run_tests<test::console::run_tests_console::{closure_env#2}> (opts=0x7fffffffd1b8, tests=..., notify_about_test_event=...) at src/lib.rs:445
+#14 0x00005555557f77d3 in test::console::run_tests_console (opts=0x7fffffffd1b8, tests=...) at src/console.rs:328
+#15 0x00005555557ce78b in test::test_main_inner<test::test_main_static::{closure_env#0}> (args=..., tests=..., options=..., exit_callback=...) at src/lib.rs:170
+#16 0x00005555557d9799 in test::test_main_static (tests=...) at src/lib.rs:195
+#17 0x00005555556a0c76 in commit_fence_loom::main () at mako-cache/tests/commit_fence_loom.rs:1
+rax            0x7ffff6700000      140737327923200
+rbx            0x0                 0
+rcx            0x7ffff6d2afc0      140737334390720
+rdx            0x1555556fe409a     375299996795034
+rsi            0x555555bf9026      93824999198758
+rdi            0x7ffff3dfdec0      140737284923072
+rbp            0x7ffff6727ba0      0x7ffff6727ba0
+rsp            0x7ffff6727b88      0x7ffff6727b88
+r8             0xffff6727de0       17592025775584
+r9             0x1                 1
+r10            0x7ffff6d2af28      140737334390568
+r11            0x1400              5120
+r12            0x0                 0
+r13            0x7ffff6728f30      140737328090928
+r14            0x555555b7d740      93824998692672
+r15            0x0                 0
+rip            0x55555566d4c6      0x55555566d4c6 <__tsan_func_entry()+54>
+eflags         0x10206             [ PF IF RF ]
+cs             0x33                51
+ss             0x2b                43
+ds             0x0                 0
+es             0x0                 0
+fs             0x0                 0
+gs             0x0                 0
+fs_base        0x7ffff3dfe6c0      140737284925120
+gs_base        0x0                 0
+process 1971002
+Mapped address spaces:
+
+Start Addr         End Addr           Size               Offset             Perms File 
+0x0000020000000000 0x0000100000000000 0xe0000000000      0x0                ---p   
+0x0000100000000000 0x00001aaaaab9c000 0xaaaaab9c000      0x0                rw-p   
+0x00001aaaaab9c000 0x00001aaaaac1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaac1c000 0x00001aaaaac9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaac9c000 0x00001aaaaad1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaad1c000 0x00001aaaaad9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaad9c000 0x00001aaaaae1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaae1c000 0x00001aaaaae9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaae9c000 0x00001aaaaaf1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaaf1c000 0x00001aaaaaf9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaaf9c000 0x00001aaaab01c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab01c000 0x00001aaaab09c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab09c000 0x00001aaaab11c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab11c000 0x00001aaaab19c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab19c000 0x00001aaaab21c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab21c000 0x00001aaaab29c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab29c000 0x00001aaaab31c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab31c000 0x00001aaaab39c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab39c000 0x00001aaaab41c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab41c000 0x00001aaaab49c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab49c000 0x00001aaaab51c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab51c000 0x00001aaaab59c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab59c000 0x00001aaaab61c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab61c000 0x00001aaaab69c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab69c000 0x00001aaaab71c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab71c000 0x00001aaaab79c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab79c000 0x00001aaaab81c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab81c000 0x00001aaaab89c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab89c000 0x00001aaaab91c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab91c000 0x00001aaaab99c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaab99c000 0x00001aaaaba1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaba1c000 0x00001aaaaba9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaaba9c000 0x00001aaaabb1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabb1c000 0x00001aaaabb9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabb9c000 0x00001aaaabc1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabc1c000 0x00001aaaabc9c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabc9c000 0x00001aaaabd1c000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabd1c000 0x00001aaaabd32000 0x16000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00001aaaabd32000 0x00002fffe77ff000 0x15553bacd000     0x0                rw-p   
+0x00002fffe77ff000 0x00002fffe7bfa000 0x3fb000           0x0                rw-p   
+0x00002fffe7bfa000 0x00002fffec6b7000 0x4abd000          0x0                rw-p   
+0x00002fffec6b7000 0x00002fffec7fe000 0x147000           0x0                rw-p   
+0x00002fffec7fe000 0x00002fffef96a000 0x316c000          0x0                rw-p   
+0x00002fffef96a000 0x00002fffef9ea000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffef9ea000 0x00002fffefa6a000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefa6a000 0x00002fffefaea000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefaea000 0x00002fffefb6a000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefb6a000 0x00002fffefbea000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefbea000 0x00002fffefc30000 0x46000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefc30000 0x00002fffefd24000 0xf4000            0x0                rw-p   
+0x00002fffefd24000 0x00002fffefda4000 0x80000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefda4000 0x00002fffefe1e000 0x7a000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffefe1e000 0x00002fffefeea000 0xcc000            0x0                rw-p   
+0x00002fffefeea000 0x00002fffeff30000 0x46000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffeff30000 0x00002fffeff90000 0x60000            0x0                rw-p   
+0x00002fffeff90000 0x00002fffeffe0000 0x50000            0x0                r--p  /tmp/tsan.rodata.1971002 (deleted) 
+0x00002fffeffe0000 0x000037fffb390000 0x8000b3b0000      0x0                rw-p   
+0x000037fffb390000 0x000037fffb394000 0x4000             0x0                rw-p   
+0x000037fffb394000 0x000037fffb395000 0x1000             0x0                rw-p   
+0x000037fffb395000 0x000037fffb399000 0x4000             0x0                rw-p   
+0x000037fffb399000 0x000037fffb683000 0x2ea000           0x0                rw-p   
+0x000037fffb683000 0x000037fffb687000 0x4000             0x0                rw-p   
+0x000037fffb687000 0x000037fffbe00000 0x779000           0x0                rw-p   
+0x000037fffbe00000 0x000037fffbe04000 0x4000             0x0                rw-p   
+0x000037fffbe04000 0x0000380000000000 0x41fc000          0x0                rw-p   
+0x0000380000000000 0x0000550000000000 0x1d0000000000     0x0                ---p   
+0x0000555555554000 0x00005555555ce000 0x7a000            0x0                r--p  /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a 
+0x00005555555ce000 0x0000555555e99000 0x8cb000           0x7a000            r-xp  /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a 
+0x0000555555e99000 0x0000555556118000 0x27f000           0x945000           r--p  /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a 
+0x0000555556118000 0x000055555615d000 0x45000            0xbc3000           r--p  /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a 
+0x000055555615d000 0x0000555556165000 0x8000             0xc08000           rw-p  /var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a 
+0x0000555556165000 0x00005555570b1000 0xf4c000           0x0                rw-p   
+0x00005a0000000000 0x0000720400000000 0x180400000000     0x0                ---p   
+0x0000720400000000 0x0000720400040000 0x40000            0x0                rw-p   
+0x0000720400040000 0x0000720780000000 0x37ffc0000        0x0                ---p   
+0x0000720780000000 0x0000720780040000 0x40000            0x0                rw-p   
+0x0000720780040000 0x0000720800000000 0x7ffc0000         0x0                ---p   
+0x0000720800000000 0x0000720800040000 0x40000            0x0                rw-p   
+0x0000720800040000 0x0000720b80000000 0x37ffc0000        0x0                ---p   
+0x0000720b80000000 0x0000720b80040000 0x40000            0x0                rw-p   
+0x0000720b80040000 0x0000720c00000000 0x7ffc0000         0x0                ---p   
+0x0000720c00000000 0x0000720c00040000 0x40000            0x0                rw-p   
+0x0000720c00040000 0x0000720f80000000 0x37ffc0000        0x0                ---p   
+0x0000720f80000000 0x0000720f80040000 0x40000            0x0                rw-p   
+0x0000720f80040000 0x0000721000000000 0x7ffc0000         0x0                ---p   
+0x0000721000000000 0x0000721000040000 0x40000            0x0                rw-p   
+0x0000721000040000 0x0000721380000000 0x37ffc0000        0x0                ---p   
+0x0000721380000000 0x0000721380040000 0x40000            0x0                rw-p   
+0x0000721380040000 0x0000721400000000 0x7ffc0000         0x0                ---p   
+0x0000721400000000 0x0000721400040000 0x40000            0x0                rw-p   
+0x0000721400040000 0x0000721780000000 0x37ffc0000        0x0                ---p   
+0x0000721780000000 0x0000721780040000 0x40000            0x0                rw-p   
+0x0000721780040000 0x0000721800000000 0x7ffc0000         0x0                ---p   
+0x0000721800000000 0x0000721800040000 0x40000            0x0                rw-p   
+0x0000721800040000 0x0000721b80000000 0x37ffc0000        0x0                ---p   
+0x0000721b80000000 0x0000721b80040000 0x40000            0x0                rw-p   
+0x0000721b80040000 0x0000722000000000 0x47ffc0000        0x0                ---p   
+0x0000722000000000 0x0000722000040000 0x40000            0x0                rw-p   
+0x0000722000040000 0x0000722380000000 0x37ffc0000        0x0                ---p   
+0x0000722380000000 0x0000722380040000 0x40000            0x0                rw-p   
+0x0000722380040000 0x0000722400000000 0x7ffc0000         0x0                ---p   
+0x0000722400000000 0x0000722400040000 0x40000            0x0                rw-p   
+0x0000722400040000 0x0000722780000000 0x37ffc0000        0x0                ---p   
+0x0000722780000000 0x0000722780040000 0x40000            0x0                rw-p   
+0x0000722780040000 0x0000722800000000 0x7ffc0000         0x0                ---p   
+0x0000722800000000 0x0000722800040000 0x40000            0x0                rw-p   
+0x0000722800040000 0x0000722b80000000 0x37ffc0000        0x0                ---p   
+0x0000722b80000000 0x0000722b80040000 0x40000            0x0                rw-p   
+0x0000722b80040000 0x0000723000000000 0x47ffc0000        0x0                ---p   
+0x0000723000000000 0x0000723000040000 0x40000            0x0                rw-p   
+0x0000723000040000 0x0000723380000000 0x37ffc0000        0x0                ---p   
+0x0000723380000000 0x0000723380040000 0x40000            0x0                rw-p   
+0x0000723380040000 0x0000723400000000 0x7ffc0000         0x0                ---p   
+0x0000723400000000 0x0000723400040000 0x40000            0x0                rw-p   
+0x0000723400040000 0x0000723780000000 0x37ffc0000        0x0                ---p   
+0x0000723780000000 0x0000723780040000 0x40000            0x0                rw-p   
+0x0000723780040000 0x0000723800000000 0x7ffc0000         0x0                ---p   
+0x0000723800000000 0x0000723800040000 0x40000            0x0                rw-p   
+0x0000723800040000 0x0000723b80000000 0x37ffc0000        0x0                ---p   
+0x0000723b80000000 0x0000723b80040000 0x40000            0x0                rw-p   
+0x0000723b80040000 0x0000724000000000 0x47ffc0000        0x0                ---p   
+0x0000724000000000 0x0000724000040000 0x40000            0x0                rw-p   
+0x0000724000040000 0x0000724380000000 0x37ffc0000        0x0                ---p   
+0x0000724380000000 0x0000724380040000 0x40000            0x0                rw-p   
+0x0000724380040000 0x0000724400000000 0x7ffc0000         0x0                ---p   
+0x0000724400000000 0x0000724400040000 0x40000            0x0                rw-p   
+0x0000724400040000 0x0000724780000000 0x37ffc0000        0x0                ---p   
+0x0000724780000000 0x0000724780040000 0x40000            0x0                rw-p   
+0x0000724780040000 0x0000724c00000000 0x47ffc0000        0x0                ---p   
+0x0000724c00000000 0x0000724c00040000 0x40000            0x0                rw-p   
+0x0000724c00040000 0x0000724f80000000 0x37ffc0000        0x0                ---p   
+0x0000724f80000000 0x0000724f80040000 0x40000            0x0                rw-p   
+0x0000724f80040000 0x0000725000000000 0x7ffc0000         0x0                ---p   
+0x0000725000000000 0x0000725000040000 0x40000            0x0                rw-p   
+0x0000725000040000 0x0000725380000000 0x37ffc0000        0x0                ---p   
+0x0000725380000000 0x0000725380040000 0x40000            0x0                rw-p   
+0x0000725380040000 0x0000725400000000 0x7ffc0000         0x0                ---p   
+0x0000725400000000 0x0000725400040000 0x40000            0x0                rw-p   
+0x0000725400040000 0x0000725780000000 0x37ffc0000        0x0                ---p   
+0x0000725780000000 0x0000725780040000 0x40000            0x0                rw-p   
+0x0000725780040000 0x0000725800000000 0x7ffc0000         0x0                ---p   
+0x0000725800000000 0x0000725800040000 0x40000            0x0                rw-p   
+0x0000725800040000 0x0000725b80000000 0x37ffc0000        0x0                ---p   
+0x0000725b80000000 0x0000725b80040000 0x40000            0x0                rw-p   
+0x0000725b80040000 0x0000725c00000000 0x7ffc0000         0x0                ---p   
+0x0000725c00000000 0x0000725c00040000 0x40000            0x0                rw-p   
+0x0000725c00040000 0x0000725f80000000 0x37ffc0000        0x0                ---p   
+0x0000725f80000000 0x0000725f80040000 0x40000            0x0                rw-p   
+0x0000725f80040000 0x0000726000000000 0x7ffc0000         0x0                ---p   
+0x0000726000000000 0x0000726000040000 0x40000            0x0                rw-p   
+0x0000726000040000 0x0000726380000000 0x37ffc0000        0x0                ---p   
+0x0000726380000000 0x0000726380040000 0x40000            0x0                rw-p   
+0x0000726380040000 0x0000726400000000 0x7ffc0000         0x0                ---p   
+0x0000726400000000 0x0000726400040000 0x40000            0x0                rw-p   
+0x0000726400040000 0x0000726780000000 0x37ffc0000        0x0                ---p   
+0x0000726780000000 0x0000726780040000 0x40000            0x0                rw-p   
+0x0000726780040000 0x0000726800000000 0x7ffc0000         0x0                ---p   
+0x0000726800000000 0x0000726800040000 0x40000            0x0                rw-p   
+0x0000726800040000 0x0000726b80000000 0x37ffc0000        0x0                ---p   
+0x0000726b80000000 0x0000726b80040000 0x40000            0x0                rw-p   
+0x0000726b80040000 0x0000726c00000000 0x7ffc0000         0x0                ---p   
+0x0000726c00000000 0x0000726c00040000 0x40000            0x0                rw-p   
+0x0000726c00040000 0x0000726f80000000 0x37ffc0000        0x0                ---p   
+0x0000726f80000000 0x0000726f80040000 0x40000            0x0                rw-p   
+0x0000726f80040000 0x0000727000000000 0x7ffc0000         0x0                ---p   
+0x0000727000000000 0x0000727000040000 0x40000            0x0                rw-p   
+0x0000727000040000 0x0000727380000000 0x37ffc0000        0x0                ---p   
+0x0000727380000000 0x0000727380040000 0x40000            0x0                rw-p   
+0x0000727380040000 0x0000727400000000 0x7ffc0000         0x0                ---p   
+0x0000727400000000 0x0000727400040000 0x40000            0x0                rw-p   
+0x0000727400040000 0x0000727780000000 0x37ffc0000        0x0                ---p   
+0x0000727780000000 0x0000727780040000 0x40000            0x0                rw-p   
+0x0000727780040000 0x0000727c00000000 0x47ffc0000        0x0                ---p   
+0x0000727c00000000 0x0000727c00040000 0x40000            0x0                rw-p   
+0x0000727c00040000 0x0000727f80000000 0x37ffc0000        0x0                ---p   
+0x0000727f80000000 0x0000727f80040000 0x40000            0x0                rw-p   
+0x0000727f80040000 0x0000728c00000000 0xc7ffc0000        0x0                ---p   
+0x0000728c00000000 0x0000728c00040000 0x40000            0x0                rw-p   
+0x0000728c00040000 0x0000728f80000000 0x37ffc0000        0x0                ---p   
+0x0000728f80000000 0x0000728f80040000 0x40000            0x0                rw-p   
+0x0000728f80040000 0x0000729000000000 0x7ffc0000         0x0                ---p   
+0x0000729000000000 0x0000729000040000 0x40000            0x0                rw-p   
+0x0000729000040000 0x0000729380000000 0x37ffc0000        0x0                ---p   
+0x0000729380000000 0x0000729380040000 0x40000            0x0                rw-p   
+0x0000729380040000 0x0000729c00000000 0x87ffc0000        0x0                ---p   
+0x0000729c00000000 0x0000729c00040000 0x40000            0x0                rw-p   
+0x0000729c00040000 0x0000729f80000000 0x37ffc0000        0x0                ---p   
+0x0000729f80000000 0x0000729f80040000 0x40000            0x0                rw-p   
+0x0000729f80040000 0x000072b000000000 0x107ffc0000       0x0                ---p   
+0x000072b000000000 0x000072b000040000 0x40000            0x0                rw-p   
+0x000072b000040000 0x000072b380000000 0x37ffc0000        0x0                ---p   
+0x000072b380000000 0x000072b380040000 0x40000            0x0                rw-p   
+0x000072b380040000 0x0000730000000000 0x4c7ffc0000       0x0                ---p   
+0x0000730000000000 0x0000730000002000 0x2000             0x0                rw-p   
+0x0000730000002000 0x00007a0000000000 0x6ffffffe000      0x0                ---p   
+0x00007fffbfa00000 0x00007ffff3a00000 0x34000000         0x0                rw-p   
+0x00007ffff3bfe000 0x00007ffff3bff000 0x1000             0x0                ---p   
+0x00007ffff3bff000 0x00007ffff3dff000 0x200000           0x0                rw-p   
+0x00007ffff3dff000 0x00007ffff3e00000 0x1000             0x0                ---p   
+0x00007ffff3e00000 0x00007ffff4600000 0x800000           0x0                rw-p   
+0x00007ffff4600000 0x00007ffff4e00000 0x800000           0x0                rw-p   
+0x00007ffff4e00000 0x00007ffff4f00000 0x100000           0x0                rw-p   
+0x00007ffff5000000 0x00007ffff5100000 0x100000           0x0                rw-p   
+0x00007ffff5200000 0x00007ffff5300000 0x100000           0x0                rw-p   
+0x00007ffff5400000 0x00007ffff5500000 0x100000           0x0                rw-p   
+0x00007ffff5600000 0x00007ffff6300000 0xd00000           0x0                rw-p   
+0x00007ffff635a000 0x00007ffff6500000 0x1a6000           0x0                rw-p   
+0x00007ffff6540000 0x00007ffff6580000 0x40000            0x0                rw-p   
+0x00007ffff6580000 0x00007ffff6600000 0x80000            0x0                rw-p   
+0x00007ffff6600000 0x00007ffff6700000 0x100000           0x0                rw-p   
+0x00007ffff6720000 0x00007ffff6721000 0x1000             0x0                ---p   
+0x00007ffff6721000 0x00007ffff6729000 0x8000             0x0                rw-p   
+0x00007ffff6729000 0x00007ffff672a000 0x1000             0x0                ---p   
+0x00007ffff672a000 0x00007ffff6732000 0x8000             0x0                rw-p   
+0x00007ffff6732000 0x00007ffff6d00000 0x5ce000           0x0                rw-p   
+0x00007ffff6d06000 0x00007ffff6d07000 0x1000             0x0                ---p   
+0x00007ffff6d07000 0x00007ffff6d0f000 0x8000             0x0                rw-p   
+0x00007ffff6d0f000 0x00007ffff6dcf000 0xc0000            0x0                rw-p   
+0x00007ffff6dcf000 0x00007ffff6e4f000 0x80000            0x0                rw-p   
+0x00007ffff6e4f000 0x00007ffff7420000 0x5d1000           0x0                rw-p   
+0x00007ffff7420000 0x00007ffff7c00000 0x7e0000           0x0                ---p   
+0x00007ffff7c00000 0x00007ffff7c01000 0x1000             0x0                ---p   
+0x00007ffff7c01000 0x00007ffff7c09000 0x8000             0x0                rw-p   
+0x00007ffff7c09000 0x00007ffff7c8d000 0x84000            0x0                rw-p   
+0x00007ffff7c8d000 0x00007ffff7cb5000 0x28000            0x0                r--p  /usr/lib/x86_64-linux-gnu/libc.so.6 
+0x00007ffff7cb5000 0x00007ffff7e18000 0x163000           0x28000            r-xp  /usr/lib/x86_64-linux-gnu/libc.so.6 
+0x00007ffff7e18000 0x00007ffff7e6e000 0x56000            0x18b000           r--p  /usr/lib/x86_64-linux-gnu/libc.so.6 
+0x00007ffff7e6e000 0x00007ffff7e72000 0x4000             0x1e0000           r--p  /usr/lib/x86_64-linux-gnu/libc.so.6 
+0x00007ffff7e72000 0x00007ffff7e74000 0x2000             0x1e4000           rw-p  /usr/lib/x86_64-linux-gnu/libc.so.6 
+0x00007ffff7e74000 0x00007ffff7e81000 0xd000             0x0                rw-p   
+0x00007ffff7e81000 0x00007ffff7e92000 0x11000            0x0                r--p  /usr/lib/x86_64-linux-gnu/libm.so.6 
+0x00007ffff7e92000 0x00007ffff7f0f000 0x7d000            0x11000            r-xp  /usr/lib/x86_64-linux-gnu/libm.so.6 
+0x00007ffff7f0f000 0x00007ffff7f6f000 0x60000            0x8e000            r--p  /usr/lib/x86_64-linux-gnu/libm.so.6 
+0x00007ffff7f6f000 0x00007ffff7f70000 0x1000             0xed000            r--p  /usr/lib/x86_64-linux-gnu/libm.so.6 
+0x00007ffff7f70000 0x00007ffff7f71000 0x1000             0xee000            rw-p  /usr/lib/x86_64-linux-gnu/libm.so.6 
+0x00007ffff7f71000 0x00007ffff7f75000 0x4000             0x0                r--p  /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 
+0x00007ffff7f75000 0x00007ffff7f98000 0x23000            0x4000             r-xp  /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 
+0x00007ffff7f98000 0x00007ffff7f9c000 0x4000             0x27000            r--p  /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 
+0x00007ffff7f9c000 0x00007ffff7f9d000 0x1000             0x2b000            r--p  /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 
+0x00007ffff7f9d000 0x00007ffff7f9e000 0x1000             0x2c000            rw-p  /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 
+0x00007ffff7f9e000 0x00007ffff7fa5000 0x7000             0x0                rw-p   
+0x00007ffff7fa5000 0x00007ffff7fa6000 0x1000             0x0                rw-p   
+0x00007ffff7fa6000 0x00007ffff7fbf000 0x19000            0x0                rw-p   
+0x00007ffff7fbf000 0x00007ffff7fc3000 0x4000             0x0                r--p  [vvar] 
+0x00007ffff7fc3000 0x00007ffff7fc5000 0x2000             0x0                r--p  [vvar_vclock] 
+0x00007ffff7fc5000 0x00007ffff7fc7000 0x2000             0x0                r-xp  [vdso] 
+0x00007ffff7fc7000 0x00007ffff7fc8000 0x1000             0x0                r--p  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 
+0x00007ffff7fc8000 0x00007ffff7ff0000 0x28000            0x1000             r-xp  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 
+0x00007ffff7ff0000 0x00007ffff7ffb000 0xb000             0x29000            r--p  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 
+0x00007ffff7ffb000 0x00007ffff7ffd000 0x2000             0x34000            r--p  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 
+0x00007ffff7ffd000 0x00007ffff7ffe000 0x1000             0x36000            rw-p  /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 
+0x00007ffff7ffe000 0x00007ffff7fff000 0x1000             0x0                rw-p   
+0x00007ffffffde000 0x00007ffffffff000 0x21000            0x0                rw-p  [stack] 
+0xffffffffff600000 0xffffffffff601000 0x1000             0x0                --xp  [vsyscall] 

@@ -65,7 +65,21 @@ if [ "$is_replicated" == "1" ]; then
         exit 1
     fi
 
-    CMD="$CMD -F $REPLICATION_CONFIG -F $MODE_CONFIG --is-replicated --replication=$replication_type_normalized"
+    # Combined leaders and their standalone followers share identical ordered
+    # site/partition IDs. Ordinary separate-process runs keep one shard file.
+    if [ "${MAKO_FULL_REPLICATION_TOPOLOGY:-0}" = "1" ]; then
+        for ((replication_shard=0; replication_shard<nshard; ++replication_shard)); do
+            topology_config="${REPLICATION_CONFIG_DIR}/${replication_type_normalized}${trd}_shardidx${replication_shard}.yml"
+            if [ ! -f "$topology_config" ]; then
+                echo "Error: replication topology config not found: $topology_config"
+                exit 1
+            fi
+            CMD="$CMD -F $topology_config"
+        done
+    else
+        CMD="$CMD -F $REPLICATION_CONFIG"
+    fi
+    CMD="$CMD -F $MODE_CONFIG --is-replicated --replication=$replication_type_normalized"
 fi
 
 # Print configuration

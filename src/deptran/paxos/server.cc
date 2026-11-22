@@ -189,7 +189,6 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // if(req_leader != es->machine_id)
   // es->set_state(0);
   // es->state_unlock();
-  vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
   for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
@@ -240,44 +239,50 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
     cb();
     return;
   }
-  slotid_t tmpx = max_executed_slot_ + 1;
-  for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
-      auto next_instance = GetInstance(id);
-      if (next_instance->committed_cmd_.has_value()) {
-          commit_exec.push_back(std::make_pair(id,next_instance));
-          max_executed_slot_++;
-          n_commit_++;
-      }else{
-        //Log_info("wait for the id:{}, par_id:{}, max:{}", id, partition_id_, max_committed_slot_);
-        // if (max_committed_slot_ - tmpx>20){
-        //   max_executed_slot_++;
-        //   n_commit_++;
-        // }
-        break;
-      }
-   }
-  for(int i = 0; i < commit_exec.size(); i++){
-      app_next_(commit_exec[i].first,commit_exec[i].second->committed_cmd_);
-  }
+  ApplyCommittedPrefix();
 
   *valid = 1;
   cb();
 }
 
+// @unsafe - Application delivery is serialized on this scheduler's poll thread.
+void PaxosServer::ApplyCommittedPrefix() {
+  if (in_applying_logs_)
+    return;
+  in_applying_logs_ = true;
+  while (max_executed_slot_ < max_committed_slot_) {
+    auto next = logs_.find(max_executed_slot_ + 1);
+    if (next == logs_.end() || !next->second->committed_cmd_.has_value())
+      break;
+    ++max_executed_slot_;
+    ++n_commit_;
+    // Keep the latch set if application delivery throws: a later decision
+    // must not skip failed delivery and falsely acknowledge the terminal log.
+    app_next_(max_executed_slot_, next->second->committed_cmd_);
+  }
+  in_applying_logs_ = false;
+}
+
+// @unsafe - Legacy log ownership keeps deferred replay bytes alive. Concurrent
+// forwarding fibers may reach this learner out of order; apply only a prefix.
 void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
                                     const janus::Command& cmd,
                                     rusty::Function<void()> cb) {
-  //Log_info("received slot:{}",slot);
-  max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // app_next_ takes janus::Command directly.
-  int status=app_next_(slot,cmd);
-  cb();
-  if (status==janus::PaxosStatus::STATUS_NOOPS){// if noops
-    Log_info("Noops received on the learner side");
+  if (slot > max_executed_slot_) {
+    auto instance = GetInstance(slot);
+    instance->max_ballot_seen_ = ballot;
+    instance->max_ballot_accepted_ = ballot;
+    instance->accepted_cmd_ = cmd;
+    instance->committed_cmd_ = cmd;
+    if (slot > max_committed_slot_)
+      max_committed_slot_ = slot;
+    ApplyCommittedPrefix();
+    max_committed_slot_learner_ = max_executed_slot_;
   }
+  cb();
 }
 
 // removed `PaxosServer::OnSyncNoOps`

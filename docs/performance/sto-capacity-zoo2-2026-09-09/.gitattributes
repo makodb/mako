@@ -1,0 +1,11 @@
+# Preserve raw evidence bytes and their recorded hashes.
+* -text
+*.log -text -whitespace linguist-generated=true
+*.json -text linguist-generated=true
+# CTest's raw JSON formatting includes trailing spaces before nested values.
+diagnostic-fix/cmake-*-inventory.json -whitespace
+final-relink/ctest-descriptor.json -whitespace
+# Preserve the archived controller's original extra EOF newline.
+performance-diagnostic-2g-incomplete/orchestrator-20260909T073538Z.py whitespace=-blank-at-eof
+*.jsonl -text linguist-generated=true
+*.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol linguist-generated=true

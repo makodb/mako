@@ -20,12 +20,6 @@ public:
         txn_obj_buf.resize(db->sizeof_txn_object(0));
     }
 
-    void initialize() {
-        scoped_db_thread_ctx ctx(db, false);
-        // force multiversion
-        TThread::enable_multiverison();
-    }
-
     void test_basic_transactions() {
         printf("\n--- Testing Basic Transactions ---\n");
         static abstract_ordered_index *table = db->open_index("customer_0");
@@ -258,12 +252,12 @@ protected:
 };
 
 void run_tests(abstract_db *db) {
-    auto worker = new TransactionWorker(db);
-    worker->initialize();
-    worker->test_basic_transactions();
-    worker->test_overwritten_operations();
-    worker->test_different_length_overwrites();
-    delete worker;
+    scoped_db_thread_ctx thread_context(db, false);
+    TThread::enable_multiverison();
+    TransactionWorker worker(db);
+    worker.test_basic_transactions();
+    worker.test_overwritten_operations();
+    worker.test_different_length_overwrites();
 }
 
 int main() {

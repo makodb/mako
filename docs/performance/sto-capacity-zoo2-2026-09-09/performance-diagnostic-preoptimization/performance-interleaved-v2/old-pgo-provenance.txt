@@ -1,0 +1,144 @@
+started_utc=2026-09-07T19:11:35Z
+host=zoo-002
+kernel=Linux 6.8.0-137-generic #137-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 17 20:28:23 UTC 2026 x86_64 GNU/Linux
+repo_root=/var/tmp/sto-exact-94db4374-20260907
+git_head=2770f9d0dd95bd0430d5e4d2ab7062dda6ba852a
+git_branch=(detached)
+build_mode=reuse-native
+source_state_sha256=21d17c947d09f20c60b9756b950822cc50f125f39d3116cfb5967c64522ecba0
+toolchain_sha256=56de43221de2a2d23f64c549aad6fd94acba0df56f07ba1a532cf2875a05f57d
+config_sha256=3324428f7b8767c74d93041f500126e6b5721f0d7eb05fbc6b907b6a9d9c9a24
+cmake=/var/tmp/sto-cmake-3.31.6/bin/cmake
+cargo=/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo
+rustc=/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc
+llvm_profdata=/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata
+rustc_llvm_version=22.1.2
+llvm_profdata_version=22.1.2
+profiler_builtins=/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libprofiler_builtins-a3355e49a89815f3.rlib
+profiler_builtins_sha256=57347233d0c2b5f2fdf2d9ab7ead7f83b7831d846edb5164019a24e2d6d7bc94
+taskset=/usr/bin/taskset
+python=/home/users/shuai/.linuxbrew/bin/python3
+path=/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin:/home/users/shuai/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+pythonpath=''
+ld_library_path=''
+rustup_toolchain=1.95.0-x86_64-unknown-linux-gnu
+rustup_toolchain_origin=inherited
+rustup=unavailable
+cargo_home=''
+rustup_home=''
+cc=''
+cxx=''
+cmake_generator=''
+pkg_config=caller-selected
+pkg_config_path=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+pkg_config_libdir=''
+pkg_config_sysroot_dir=''
+train_cpu=10
+train_seconds=60
+train_mix=45,43,4,4,4
+train_allocator_memory=2G
+tpcc_fallback_overrides=all-unset
+train_config=/var/tmp/sto-exact-94db4374-20260907/config/mako_sto_tpcc_local.yml
+train_site=local_s0
+build_jobs=8
+common_rustflags=-C\ target-cpu=native\ -C\ force-frame-pointers=yes
+generate_rustflags=-C\ target-cpu=native\ -C\ force-frame-pointers=yes\ -Cprofile-generate=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/profile-raw
+use_rustflags=-C\ target-cpu=native\ -C\ force-frame-pointers=yes\ -Cprofile-use=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/merged.profdata\ -Cllvm-args=-pgo-warn-missing-function
+generate_profile_runtime_link_flags=-Wl\,-u\,__llvm_profile_runtime\ -Wl\,--whole-archive\ /home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libprofiler_builtins-a3355e49a89815f3.rlib\ -Wl\,--no-whole-archive
+native_build=/var/tmp/sto-build-94db4374-20260907
+native_source=/var/tmp/sto-exact-94db4374-20260907
+native_generator=Ninja
+native_build_type=Release
+native_ninja=/home/users/shuai/.linuxbrew/bin/ninja
+native_cxx=/home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/bin/clang++
+native_cached_rust_archive=/var/tmp/sto-build-94db4374-20260907/rust-sto-tpcc-target/release/libsto_tpcc_ffi.a
+--- native C++ compiler --version ---
+Homebrew clang version 22.1.8
+Target: x86_64-unknown-linux-gnu
+Thread model: posix
+InstalledDir: /home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/bin
+--- cmake --version ---
+cmake version 3.31.6
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+--- cargo -Vv ---
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+release: 1.95.0
+commit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850
+commit-date: 2026-03-21
+host: x86_64-unknown-linux-gnu
+libgit2: 1.9.2 (sys:0.20.4 vendored)
+libcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:OpenSSL/3.5.4)
+ssl: OpenSSL 3.5.4 30 Sep 2025
+os: Ubuntu 24.4.0 (noble) [64-bit]
+--- rustc -vV ---
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-unknown-linux-gnu
+release: 1.95.0
+LLVM version: 22.1.2
+--- llvm-profdata --version ---
+LLVM (http://llvm.org/):
+  LLVM version 22.1.2-rust-1.95.0-stable
+  Optimized build.
+--- lscpu ---
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           43 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  128
+On-line CPU(s) list:                     0-127
+Vendor ID:                               AuthenticAMD
+BIOS Vendor ID:                          Advanced Micro Devices, Inc.
+Model name:                              AMD EPYC 7702P 64-Core Processor
+BIOS Model name:                         AMD EPYC 7702P 64-Core Processor                Unknown CPU @ 2.0GHz
+BIOS CPU family:                         107
+CPU family:                              23
+Model:                                   49
+Thread(s) per core:                      2
+Core(s) per socket:                      64
+Socket(s):                               1
+Stepping:                                0
+Frequency boost:                         disabled
+CPU(s) scaling MHz:                      91%
+CPU max MHz:                             2183.5930
+CPU min MHz:                             1500.0000
+BogoMIPS:                                4000.17
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 cqm rdt_a rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local clzero irperf xsaveerptr rdpru wbnoinvd arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif v_spec_ctrl umip rdpid overflow_recov succor smca sev sev_es ibpb_exit_to_user
+Virtualization:                          AMD-V
+L1d cache:                               2 MiB (64 instances)
+L1i cache:                               2 MiB (64 instances)
+L2 cache:                                32 MiB (64 instances)
+L3 cache:                                256 MiB (16 instances)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-127
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Mitigation; untrained return thunk; SMT enabled with STIBP protection
+Vulnerability Spec rstack overflow:      Mitigation; Safe RET
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace
+--- user CMake arguments ---
+''
+native_graph_sha256=5a5f19305cf891ab57d3a239d7df1c68ffcdcf1d7034a2aac690409b459b1fe5
+completed_utc=2026-09-07T19:15:01Z
+training_profile_count=1
+build_profile_count=8
+instrumented_archive=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/cargo-generate/release/libsto_tpcc_ffi.a
+instrumented_binary=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/sto_tpcc_bench-generate
+merged_profile=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/merged.profdata
+optimized_archive=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/cargo-use/release/libsto_tpcc_ffi.a
+optimized_binary=/var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/sto_tpcc_bench

@@ -1,0 +1,316 @@
+diff --git a/crates/Cargo.lock b/crates/Cargo.lock
+index b3635b72e..4a1bc9095 100644
+--- a/crates/Cargo.lock
++++ b/crates/Cargo.lock
+@@ -217,10 +217,13 @@ version = "0.1.0"
+ dependencies = [
+  "mako-cache",
+  "mako-engine",
++ "masstree",
+  "mrx",
+  "mrx-core",
+  "mrx-rocks",
+  "nix",
++ "sto-core",
++ "sto-masstree",
+ ]
+ 
+ [[package]]
+diff --git a/crates/mako-cache-bench/Cargo.toml b/crates/mako-cache-bench/Cargo.toml
+index 48c8378bb..04e9db3ef 100644
+--- a/crates/mako-cache-bench/Cargo.toml
++++ b/crates/mako-cache-bench/Cargo.toml
+@@ -20,6 +20,9 @@ allocation-profile = []
+ [dependencies]
+ mako-cache = { path = "../mako-cache", default-features = false }
+ mako-engine = { path = "../mako-engine", default-features = false }
++masstree = { path = "../masstree" }
++sto-core = { path = "../sto-core" }
++sto-masstree = { path = "../sto-masstree" }
+ mrx = { path = "../mrx" }
+ mrx-core = { path = "../mrx-core" }
+ mrx-rocks = { path = "../mrx-rocks" }
+diff --git a/crates/mako-cache-bench/src/bin/engine_compare.rs b/crates/mako-cache-bench/src/bin/engine_compare.rs
+index 4342c5abf..b9dc9e9ac 100644
+--- a/crates/mako-cache-bench/src/bin/engine_compare.rs
++++ b/crates/mako-cache-bench/src/bin/engine_compare.rs
+@@ -4,6 +4,8 @@
+ //! capacity for every admitted write and discards the unapplied tail after
+ //! checking visibility and accounting. Use gc_soak for drained storage rates.
+ 
++mod raw_sto_attribution;
++
+ use std::collections::BTreeMap;
+ use std::num::NonZeroU64;
+ use std::path::PathBuf;
+@@ -192,9 +194,15 @@ fn run() -> Result<()> {
+     let mut args = std::env::args().skip(1);
+     let mode = args
+         .next()
+-        .ok_or("expected engine, engine-logged, or cache-ack")?;
+-    if !matches!(mode.as_str(), "engine" | "engine-logged" | "cache-ack") {
+-        return Err("expected engine, engine-logged, or cache-ack".into());
++        .ok_or("expected engine, raw-sto, engine-logged, or cache-ack")?;
++    if !matches!(
++        mode.as_str(),
++        "engine" | "raw-sto" | "engine-logged" | "cache-ack"
++    ) {
++        return Err("expected engine, raw-sto, engine-logged, or cache-ack".into());
++    }
++    if !cfg!(feature = "engine-sto") {
++        return Err("private raw-STO attribution requires engine-sto in both arms".into());
+     }
+     let mut flags = BTreeMap::new();
+     while let Some(flag) = args.next() {
+@@ -213,6 +221,9 @@ fn run() -> Result<()> {
+         return Err("invalid arguments, workers must be 1..32 and warmup at least 256".into());
+     }
+     let total_per_worker = warmup.checked_add(iterations).ok_or("iteration overflow")?;
++    total_per_worker
++        .checked_mul(workers as u64)
++        .ok_or("total count overflow")?;
+     let queue_capacity = usize::try_from(total_per_worker)?
+         .checked_next_power_of_two()
+         .ok_or("queue overflow")?;
+@@ -236,7 +247,12 @@ fn run() -> Result<()> {
+     } else {
+         None
+     };
+-    let engine = if cache.is_none() {
++    let raw = if mode == "raw-sto" {
++        Some(raw_sto_attribution::RawDb::open()?)
++    } else {
++        None
++    };
++    let engine = if cache.is_none() && raw.is_none() {
+         let db = LocalDb::open()?;
+         db.bind_trusted_table("compare", 1)?;
+         // SAFETY: this fresh facade has no transactions or other owners yet.
+@@ -253,17 +269,21 @@ fn run() -> Result<()> {
+         let measured_done = Arc::clone(&measured_done);
+         let cache = cache.clone();
+         let engine = engine.clone();
++        let raw = raw.clone();
+         let logged = mode == "engine-logged";
+         handles.push(std::thread::spawn(move || {
+             let result = (|| -> Result<_> {
+                 pin(worker)?;
+                 let perf = use_perf.then(Perf::open).transpose()?;
++                let mut raw_worker = raw.as_ref().map(|db| db.attach()).transpose()?;
+                 let mut record = [0u8; 256];
+                 let mut put = |iteration| -> Result<()> {
+                     let key = key(worker, iteration);
+                     let value = value(worker, iteration);
+                     if let Some(db) = &cache {
+                         db.put(&key, &value)?;
++                    } else if let Some(worker) = &mut raw_worker {
++                        worker.put(&key, &value)?;
+                     } else {
+                         let (table, mut tx) =
+                             engine.as_ref().unwrap().trusted_bound_transaction()?;
+@@ -331,6 +351,8 @@ fn run() -> Result<()> {
+                     let expected = value(worker, expected_iteration(index, total_per_worker));
+                     let actual = if let Some(db) = &cache {
+                         db.get(&key(worker, index))?
++                    } else if let Some(raw_worker) = &mut raw_worker {
++                        raw_worker.get(&key(worker, index))?
+                     } else {
+                         let (table, mut tx) =
+                             engine.as_ref().unwrap().trusted_bound_transaction()?;
+@@ -372,6 +394,10 @@ fn run() -> Result<()> {
+         allocation_bytes += allocated.1;
+     }
+     let commits = iterations * workers as u64;
++    if let Some(raw) = &raw {
++        raw.ensure_healthy()?;
++    }
++    let implementation = if mode == "raw-sto" { "raw" } else { "facade" };
+     let (acknowledged, applied, queued) = if let Some(db) = &cache {
+         let status = db.status()?;
+         if !status.is_healthy()
+@@ -387,7 +413,7 @@ fn run() -> Result<()> {
+     } else {
+         (total_per_worker * workers as u64, 0, 0)
+     };
+-    println!("{{\"mode\":\"{mode}\",\"engine\":\"{}\",\"workers\":{workers},\"iterations_per_worker\":{iterations},\"warmup_per_worker\":{warmup},\"keys_per_worker\":{KEYS},\"value_bytes\":{VALUE_BYTES},\"checksum\":\"none\",\"queue_capacity_per_worker\":{queue_capacity},\"commits\":{commits},\"max_worker_nanoseconds\":{nanoseconds},\"transactions_per_second\":{:.3},\"cycles_per_commit\":{:.3},\"instructions_per_commit\":{:.3},\"pmu_min_running_ratio\":{min_running_ratio:.8},\"perf_enabled\":{use_perf},\"allocation_profile\":{},\"rust_allocations_per_commit\":{:.3},\"rust_allocated_bytes_per_commit\":{:.3},\"acknowledged\":{acknowledged},\"applied_before_abort\":{applied},\"queued_before_abort\":{queued},\"verified_keys\":{},\"drained\":false}}",
++    println!("{{\"protocol\":\"raw-sto-attribution-v1\",\"implementation\":\"{implementation}\",\"mode\":\"{mode}\",\"engine\":\"{}\",\"workers\":{workers},\"iterations_per_worker\":{iterations},\"warmup_per_worker\":{warmup},\"keys_per_worker\":{KEYS},\"value_bytes\":{VALUE_BYTES},\"checksum\":\"none\",\"queue_capacity_per_worker\":{queue_capacity},\"commits\":{commits},\"max_worker_nanoseconds\":{nanoseconds},\"transactions_per_second\":{:.3},\"cycles_per_commit\":{:.3},\"instructions_per_commit\":{:.3},\"pmu_min_running_ratio\":{min_running_ratio:.8},\"perf_enabled\":{use_perf},\"allocation_profile\":{},\"rust_allocations_per_commit\":{:.3},\"rust_allocated_bytes_per_commit\":{:.3},\"acknowledged\":{acknowledged},\"applied_before_abort\":{applied},\"queued_before_abort\":{queued},\"verified_keys\":{},\"drained\":false}}",
+         mako_cache::engine_name(), commits as f64 * 1e9 / nanoseconds as f64,
+         cycles as f64 / commits as f64, instructions as f64 / commits as f64,
+         cfg!(feature = "allocation-profile"), allocation_count as f64 / commits as f64,
+diff --git a/crates/mako-cache-bench/src/bin/raw_sto_attribution/mod.rs b/crates/mako-cache-bench/src/bin/raw_sto_attribution/mod.rs
+new file mode 100644
+index 000000000..45e18fef6
+--- /dev/null
++++ b/crates/mako-cache-bench/src/bin/raw_sto_attribution/mod.rs
+@@ -0,0 +1,171 @@
++//! Private raw-core attribution only. No facade API or engine source changes.
++
++use std::sync::Arc;
++
++use mako_engine::{MAX_WORKERS, TRANSACTION_ITEM_BUDGET};
++use sto_core::{CommitOutcome, Runtime, RuntimeConfig, RuntimeHealth, WorkerContext};
++use sto_masstree::{RegistryBudget, Table, TableConfig};
++
++use super::Result;
++
++fn core_config() -> RuntimeConfig {
++    RuntimeConfig::new()
++        .with_max_workers(MAX_WORKERS)
++        .with_max_items_per_transaction(4 * TRANSACTION_ITEM_BUDGET)
++        .with_max_locks_per_transaction(4 * TRANSACTION_ITEM_BUDGET)
++}
++
++fn table_config() -> TableConfig {
++    TableConfig::new()
++        .with_max_retained_records(1 << 40)
++        .with_max_retained_key_bytes(1 << 44)
++        .with_max_consumed_record_ids(1 << 32)
++        .with_blocking_structural_admission(true)
++        .with_bounded_atomic_values(true)
++        .with_record_local_versions(true)
++}
++
++pub(super) struct RawDb {
++    core: Arc<Runtime>,
++    native: masstree::Runtime,
++    table: Table,
++}
++
++impl RawDb {
++    pub(super) fn open() -> Result<Arc<Self>> {
++        let core = Runtime::new(core_config())?;
++        let native = masstree::Runtime::new(
++            masstree::RuntimeConfig::new().with_max_threads(u32::try_from(MAX_WORKERS)?),
++        )?;
++        // Mirror LocalDb's cold, process-lifetime main-thread attachment.
++        // Keeping owner zero occupied also preserves the worker owner IDs.
++        let main_native = Box::leak(Box::new(native.attach()?));
++        let _main_core = Box::leak(Box::new(core.attach()?));
++        let table = Table::new_direct_with_budget(
++            &core,
++            &native,
++            main_native,
++            table_config(),
++            RegistryBudget::new(u64::MAX),
++        )?;
++        Ok(Arc::new(Self {
++            core,
++            native,
++            table,
++        }))
++    }
++
++    pub(super) fn attach(&self) -> Result<RawWorker<'_>> {
++        // These are cold allocations, before warmup and PMU start, just as
++        // facade attachment retains boxed native and core workers. The unique
++        // mutable reference is owned by this thread; no raw alias is created.
++        let native = Box::leak(Box::new(self.native.attach()?));
++        let core = Box::leak(Box::new(self.core.attach()?));
++        Ok(RawWorker {
++            db: self,
++            native,
++            core,
++        })
++    }
++
++    pub(super) fn ensure_healthy(&self) -> Result<()> {
++        if self.core.health() != RuntimeHealth::Healthy
++            || self.native.health()? != masstree::RuntimeHealth::Healthy
++        {
++            return Err("raw STO runtime is not healthy".into());
++        }
++        Ok(())
++    }
++}
++
++pub(super) struct RawWorker<'db> {
++    db: &'db RawDb,
++    native: &'static masstree::Worker,
++    core: &'static mut WorkerContext,
++}
++
++impl RawWorker<'_> {
++    pub(super) fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
++        let mut transaction = self.core.begin()?;
++        // Same ordinary directory admission and owned staging API as the
++        // production facade. No resolved cache, borrowed bytes, or session.
++        let _previous_presence =
++            self.db
++                .table
++                .put_with_previous_presence(&mut transaction, self.native, key, value)?;
++        match transaction.commit()? {
++            CommitOutcome::Committed(_) => Ok(()),
++            outcome => Err(format!("raw commit failed: {outcome:?}").into()),
++        }
++    }
++
++    pub(super) fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
++        let mut transaction = self.core.begin()?;
++        let value = self.db.table.get(&mut transaction, self.native, key)?;
++        match transaction.commit()? {
++            CommitOutcome::Committed(_) => Ok(value.map(|value| value.as_ref().to_vec())),
++            outcome => Err(format!("raw verification commit failed: {outcome:?}").into()),
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn raw_configuration_matches_facade_local_policy() {
++        let config = core_config();
++        assert_eq!(
++            config.default_isolation(),
++            sto_core::IsolationMode::Serializable
++        );
++        assert_eq!(config.max_workers(), 460);
++        assert_eq!(config.max_items_per_transaction(), 2048);
++        assert_eq!(config.max_locks_per_transaction(), 2048);
++        let table = table_config();
++        assert_eq!(table.max_retained_records(), 1 << 40);
++        assert_eq!(table.max_retained_key_bytes(), 1 << 44);
++        assert_eq!(table.max_consumed_record_ids(), 1 << 32);
++        assert!(table.blocking_structural_admission());
++        assert!(table.bounded_atomic_values());
++        assert!(table.record_local_versions());
++        assert!(!table.trusted_scan_value_generation());
++    }
++
++    #[test]
++    fn raw_ordinary_owned_path_preserves_presence_abort_and_local_commit() {
++        let db = RawDb::open().unwrap();
++        let owner = Arc::clone(&db);
++        std::thread::spawn(move || {
++            let mut worker = owner.attach().unwrap();
++            let mut transaction = worker.core.begin().unwrap();
++            assert!(!owner
++                .table
++                .put_with_previous_presence(&mut transaction, worker.native, b"key", &[1; 128],)
++                .unwrap());
++            assert!(owner
++                .table
++                .put_with_previous_presence(&mut transaction, worker.native, b"key", &[2; 128],)
++                .unwrap());
++            transaction.abort();
++            assert_eq!(worker.get(b"key").unwrap(), None);
++            let mut transaction = worker.core.begin().unwrap();
++            assert!(!owner
++                .table
++                .put_with_previous_presence(&mut transaction, worker.native, b"key", &[3; 128],)
++                .unwrap());
++            let CommitOutcome::Committed(info) = transaction.commit().unwrap() else {
++                panic!("raw fixture did not commit");
++            };
++            assert_eq!(info.occ_commit_id(), None);
++            assert_eq!(worker.get(b"key").unwrap(), Some(vec![3; 128]));
++            worker.put(b"key", &[4; 128]).unwrap();
++            assert_eq!(worker.get(b"key").unwrap(), Some(vec![4; 128]));
++            owner.ensure_healthy().unwrap();
++        })
++        .join()
++        .unwrap();
++        db.ensure_healthy().unwrap();
++    }
++}

@@ -155,6 +155,11 @@ class Config {
   map<string, string> proc_host_map_;
   map<string, string> site_proc_map_;
 
+  // @unsafe - Set once by Mako before Config::Create and worker startup.
+  static inline uint32_t mako_partitions_per_shard_ = 0;
+  static inline uint32_t mako_shard_count_ = 0;
+  static inline vector<int> mako_hosted_shards_;
+
  protected:
 
   Config() = default;
@@ -184,8 +189,8 @@ class Config {
 
   void LoadYML(std::string &);
   void LoadSiteYML(YAML::Node config);
-  void LoadProcYML(YAML::Node config);
-  void LoadHostYML(YAML::Node config);
+  void LoadProcYML(YAML::Node config, uint32_t first_site);
+  void LoadHostYML(YAML::Node config, uint32_t first_site);
   void LoadModeYML(YAML::Node config);
   void LoadClientYML(YAML::Node client);
   void LoadFailoverYML(YAML::Node config);
@@ -219,7 +224,8 @@ class Config {
   int GetPartitionSize(parid_t par_id);
   void UpgradeFromLearnerToLeader();
   void UpgradeFromP1ToLeader();
-  vector<SiteInfo> GetMyServers() { return SitesByProcessName(this->proc_name_, SERVER); }
+  // @unsafe - Filters local ownership without renumbering the shared topology.
+  vector<SiteInfo> GetMyServers();
   vector<SiteInfo> GetMyClients() { return SitesByProcessName(this->proc_name_, CLIENT); }
   int NumClients() {
     return par_clients_.size();

@@ -1,0 +1,7 @@
+# Preserve the exact source and output of this private ordering proof.
+!*.json
+!*.log
+!*.patch
+!Cargo.lock
+/target/
+/integration-model/target/

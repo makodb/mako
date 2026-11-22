@@ -1,0 +1,175 @@
+{
+  "kind": "functional-only",
+  "positive_cases": 24,
+  "rejections": 11,
+  "cases": [
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 1,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 257,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 4096,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 1,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 257,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 4096,
+      "verified_keys": 256
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 1,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 257,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 4096,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 1,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 257,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "engine",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 4096,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 1,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 257,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 256,
+      "iterations": 4096,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 1,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 257,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 1,
+      "warmup": 769,
+      "iterations": 4096,
+      "verified_keys": 256
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 1,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 257,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 256,
+      "iterations": 4096,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 1,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 257,
+      "verified_keys": 1024
+    },
+    {
+      "mode": "raw-sto",
+      "workers": 4,
+      "warmup": 769,
+      "iterations": 4096,
+      "verified_keys": 1024
+    }
+  ]
+}

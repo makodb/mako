@@ -1,0 +1,73 @@
+TPC-C Sharding: Initialized policy with 16 warehouses across 1 shards (version 1788940978)
+D [<unknown>:0] 2026-09-09 08:02:58.894 | Server: generated instance_id=4097233619995211221
+D [<unknown>:0] 2026-09-09 08:02:58.894 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:02:58.895 | Server: generated instance_id=6684081572945340281
+start worker:58145
+D [<unknown>:0] 2026-09-09 08:02:58.895 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:02:58.896 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:02:58.896 | create a fiber scheduler
+--------------Finish loading data and wait for others completing load phase ------------
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 08:03:20.994 | Server: generated instance_id=6959466356186030063
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 08:03:20.995 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.995 | Server: generated instance_id=6785801962894016179
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 08:03:20.996 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:20.999 | Server: generated instance_id=7658878049153822146
+D [<unknown>:0] 2026-09-09 08:03:20.999 | Server: generated instance_id=2982485543084101410
+D [<unknown>:0] 2026-09-09 08:03:20.999 | Server: generated instance_id=3812078474377755804
+D [<unknown>:0] 2026-09-09 08:03:20.999 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.999 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.999 | Server: generated instance_id=2069756871595410599
+D [<unknown>:0] 2026-09-09 08:03:20.999 | Server: generated instance_id=4577306596085082306
+D [<unknown>:0] 2026-09-09 08:03:20.999 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.000 | Server: generated instance_id=1828746226645344660
+D [<unknown>:0] 2026-09-09 08:03:20.000 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.000 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:20.000 | Server: generated instance_id=2666697920802334929
+D [<unknown>:0] 2026-09-09 08:03:20.000 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:20.000 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.000 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.001 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.001 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.017 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.017 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.017 | Server: generated instance_id=5524406460770321562
+D [<unknown>:0] 2026-09-09 08:03:21.017 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.017 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.018 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.018 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.018 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.018 | Server: generated instance_id=8121866308624986113
+D [<unknown>:0] 2026-09-09 08:03:21.018 | Server: generated instance_id=2722029625395578141
+D [<unknown>:0] 2026-09-09 08:03:21.018 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.018 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.019 | Server: generated instance_id=8134210022236989236
+D [<unknown>:0] 2026-09-09 08:03:21.019 | Server: generated instance_id=2442210337904371233
+D [<unknown>:0] 2026-09-09 08:03:21.019 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.019 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.020 | Server: generated instance_id=7807580708662175034
+D [<unknown>:0] 2026-09-09 08:03:21.020 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.020 | Server: generated instance_id=1601003245943258680
+D [<unknown>:0] 2026-09-09 08:03:21.020 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.020 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.020 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.021 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.021 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 08:03:21.021 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.022 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 08:03:21.022 | create a fiber scheduler

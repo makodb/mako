@@ -31,10 +31,15 @@ public:
 #endif
 
   ticker()
-    : current_tick_(1), last_tick_inclusive_(0)
+    : current_tick_(1), last_tick_inclusive_(0), running_(true),
+      worker_(&ticker::tickerloop, this)
+  {}
+
+  ~ticker()
   {
-    std::thread thd(&ticker::tickerloop, this);
-    thd.detach();
+    running_.store(false, std::memory_order_release);
+    if (worker_.joinable())
+      worker_.join();
   }
 
   inline uint64_t
@@ -94,13 +99,31 @@ public:
     return ticks_[core_id].lock_;
   }
 
+  // The caller has already proved this immutable slot belongs to the current
+  // thread/runtime assignment. No epoch or lifetime is extended by this query.
+  inline bool is_guarded_at(uint64_t core_id) const {
+    INVARIANT(core_id < ticks_.size());
+    return ticks_[core_id].depth_.load(std::memory_order_acquire) != 0;
+  }
+
   // a guard is re-entrant within a single thread
   class guard {
   public:
 
-    guard(ticker &impl)
-      : impl_(&impl), core_(coreid::core_id()), start_us_(0)
+    // capture_start_time=false is restricted to internal scopes whose complete
+    // nested call tree never consumes start_us(). Epoch protection is exactly
+    // the same. The default preserves precise legacy logger latency timing.
+    guard(ticker &impl, bool capture_start_time = true)
+      : guard(impl, coreid::core_id(), capture_start_time)
+    {}
+
+    // Only a prevalidated current-thread handle may supply the cached core.
+    // The default constructor above retains ordinary runtime discovery.
+    guard(ticker &impl, uint64_t resolved_core, bool capture_start_time)
+      : impl_(&impl), core_(resolved_core), start_us_(0)
     {
+      INVARIANT(core_ == coreid::core_id());
+      INVARIANT(core_ < impl_->ticks_.size());
       tickinfo &ti = impl_->ticks_[core_];
       // bump the depth first
       const uint64_t prev_depth =
@@ -112,7 +135,7 @@ public:
         tick_ = impl_->global_current_tick();
         INVARIANT(ti.current_tick_.load(std::memory_order_acquire) <= tick_);
         ti.current_tick_.store(tick_, std::memory_order_release);
-        start_us_ = util::timer::cur_usec();
+        start_us_ = capture_start_time ? util::timer::cur_usec() : 0;
         ti.start_us_.store(start_us_, std::memory_order_release);
       } else {
         tick_ = ti.current_tick_.load(std::memory_order_acquire);
@@ -172,7 +195,9 @@ public:
       return *impl_;
     }
 
-    // refers to the start time of the *outermost* scope
+    // Refers to the start time of the outermost scope. Zero means that an
+    // explicitly untimed internal scope owns this nesting chain; that chain
+    // must never feed legacy logger latency accounting.
     inline uint64_t
     start_us() const
     {
@@ -197,7 +222,7 @@ private:
     // runs as daemon
     util::timer loop_timer;
     struct timespec t;
-    for (;;) {
+    while (running_.load(std::memory_order_acquire)) {
 
       const uint64_t last_loop_usec = loop_timer.lap();
       const uint64_t delay_time_usec = tick_us;
@@ -224,8 +249,17 @@ private:
                   thread_cur_tick == cur_tick);
         if (thread_cur_tick == cur_tick)
           continue;
-        ::lock_guard<spinlock> lg(ti.lock_);
+        // An epoch guard can span a complete transaction.  If the ticker and
+        // its owner are scheduled on the same CPU, an unconditional spin here
+        // can consume the owner's whole time slice and prevent the guard from
+        // ever making progress.  Briefly sleep while waiting: this path runs
+        // only once per tick, so a small scheduling delay is immaterial to the
+        // 40 ms epoch while guaranteeing that an oversubscribed owner runs.
+        const struct timespec guard_wait = {0, 1000};
+        while (!ti.lock_.try_lock())
+          nanosleep(&guard_wait, nullptr);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
+        ti.lock_.unlock();
       }
 
       last_tick_inclusive_.store(last_tick, std::memory_order_release);
@@ -238,7 +272,7 @@ private:
     std::atomic<uint64_t> current_tick_; // last RCU epoch this thread has seen
                                          // (implies completion through current_tick_ - 1)
     std::atomic<uint64_t> depth_; // 0 if not in RCU section
-    std::atomic<uint64_t> start_us_; // 0 if not in RCU section
+    std::atomic<uint64_t> start_us_; // 0 if outside RCU or explicitly untimed
 
     tickinfo()
       : current_tick_(1), depth_(0), start_us_(0)
@@ -253,4 +287,6 @@ private:
   std::atomic<uint64_t> last_tick_inclusive_;
     // all threads have *completed* ticks <= last_tick_inclusive_
     // (< current_tick_)
+  std::atomic<bool> running_;
+  std::thread worker_;
 };

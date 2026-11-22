@@ -114,6 +114,10 @@ public:
     // Get the default global runtime (for backward compatibility)
     static SiloRuntime* GlobalDefault();
 
+    // @safe - Borrow the process-lifetime owner; clone to retain shared ownership.
+    // Native Masstree ABI users must share this runtime, not a Create() instance.
+    static const rusty::Arc<SiloRuntime>& GlobalDefaultOwner();
+
     // @safe
     // Accessors - const methods for reading state
     int id() const { return runtime_id_; }
@@ -262,23 +266,18 @@ private:
 
     // Per-runtime ticker (lazily created)
     std::unique_ptr<ticker> ticker_;
+    std::atomic<ticker*> ticker_ptr_{nullptr};
     std::mutex ticker_mutex_;
 
     // Per-runtime RCU (lazily created)
     std::unique_ptr<rcu> rcu_;
+    std::atomic<rcu*> rcu_ptr_{nullptr};
     std::mutex rcu_mutex_;
 
     // Static members for global state management
     // Atomic counter for generating unique runtime IDs
     static std::atomic<int> s_next_runtime_id_;
 
-    // @lifetime: 'static
-    // Global default runtime (lazily initialized, lives for program duration)
-    // Using rusty::Arc for thread-safe access
-    static rusty::Arc<SiloRuntime> s_global_default_;
-
-    // Mutex for thread-safe lazy initialization of global default
-    static std::mutex s_global_mutex_;
 };
 
 // Thread-local runtime pointer

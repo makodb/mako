@@ -1,0 +1,10 @@
+python3 scripts/run_sto_tpcc_compare.py \
+  --binary /var/tmp/mako-sto-tpcc-20260828.lXHJ1Y/build/sto_tpcc_bench \
+  --config config/mako_sto_tpcc_local.yml \
+  --site local_s0 \
+  --output-dir /var/tmp/mako-sto-tpcc-20260828.lXHJ1Y/results-tpcc-r5 \
+  --threads 1,4,8,16 \
+  --repetitions 3 \
+  --runtime-seconds 3 \
+  --physical-cpus 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
+  --align-after-lxd-restart

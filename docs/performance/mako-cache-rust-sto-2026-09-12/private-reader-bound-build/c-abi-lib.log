@@ -1,0 +1,504 @@
+   Compiling cfg-if v1.0.4
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling glob v0.3.4
+   Compiling libc v0.2.189
+   Compiling prettyplease v0.2.37
+   Compiling clang-sys v1.9.1
+   Compiling memchr v2.8.3
+   Compiling regex-syntax v0.8.11
+   Compiling minimal-lexical v0.2.1
+   Compiling nom v7.1.3
+   Compiling syn v2.0.119
+   Compiling regex-automata v0.4.18
+   Compiling libloading v0.8.9
+   Compiling either v1.18.0
+   Compiling bindgen v0.72.1
+   Compiling bitflags v2.13.1
+   Compiling itertools v0.13.0
+   Compiling cexpr v0.6.0
+   Compiling regex v1.13.1
+   Compiling rustversion v1.0.23
+   Compiling log v0.4.34
+   Compiling rustc-hash v2.1.3
+   Compiling shlex v1.3.0
+   Compiling once_cell v1.21.4
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.4
+   Compiling tracing-core v0.1.36
+   Compiling generator v0.8.9
+   Compiling pin-project-lite v0.2.17
+   Compiling lazy_static v1.5.0
+   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-local)
+   Compiling cfg_aliases v0.2.2
+   Compiling nix v0.30.1
+   Compiling sharded-slab v0.1.7
+   Compiling tracing v0.1.44
+   Compiling tracing-log v0.2.0
+   Compiling matchers v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling mako-engine-api v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-engine-api)
+   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mrx-rocks)
+   Compiling smallvec v1.15.2
+   Compiling nu-ansi-term v0.50.3
+   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-local-sys)
+   Compiling tracing-subscriber v0.3.23
+   Compiling mako-cache v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-cache)
+   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mrx-core)
+   Compiling scoped-tls v1.0.1
+   Compiling loom v0.7.2
+   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-history)
+   Compiling mako-engine v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-read-bound-crates/mako-engine)
+warning: field `slot` is never read
+   --> mako-cache/src/lib.rs:289:5
+    |
+288 | struct CommitWriterGuard<'a> {
+    |        ----------------- field in this struct
+289 |     slot: usize,
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `slot` is never used
+   --> mako-cache/src/lib.rs:296:8
+    |
+294 | impl CommitWriterGuard<'_> {
+    | -------------------------- method in this implementation
+295 |     #[inline(always)]
+296 |     fn slot(&self) -> usize {
+    |        ^^^^
+
+warning: function `finish_trusted_one_put_concurrent` is never used
+    --> mako-cache/src/lib.rs:1887:4
+     |
+1887 | fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `finish_trusted_one_put_arena_single` is never used
+    --> mako-cache/src/lib.rs:2287:4
+     |
+2287 | fn finish_trusted_one_put_arena_single<'cache, 'db, B: Blobs + 'static>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `finish_unwritten_native_arena` is never used
+    --> mako-cache/src/lib.rs:2510:4
+     |
+2510 | fn finish_unwritten_native_arena<B: Blobs>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `post_native_commit_observer_installed` is never used
+   --> mako-cache/src/failpoint.rs:168:15
+    |
+168 | pub(crate) fn post_native_commit_observer_installed() -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `install_post_native_holder_ready_observer` is never used
+   --> mako-cache/src/failpoint.rs:178:15
+    |
+178 | pub(crate) fn install_post_native_holder_ready_observer(observer: impl FnOnce() + 'static) {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `observe_post_native_holder_ready` is never used
+   --> mako-cache/src/failpoint.rs:188:15
+    |
+188 | pub(crate) fn observe_post_native_holder_ready() {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `post_native_holder_ready_observer_installed` is never used
+   --> mako-cache/src/failpoint.rs:196:15
+    |
+196 | pub(crate) fn post_native_holder_ready_observer_installed() -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_armed` is never used
+   --> mako-cache/src/failpoint.rs:218:15
+    |
+218 | pub(crate) fn is_armed(point: Point) -> bool {
+    |               ^^^^^^^^
+
+warning: method `backend_op_count` is never used
+   --> mako-cache/src/record.rs:998:19
+    |
+807 | impl CommitRecord {
+    | ----------------- method in this implementation
+...
+998 |     pub(crate) fn backend_op_count(&self) -> usize {
+    |                   ^^^^^^^^^^^^^^^^
+
+warning: function `native_holder_record_supported` is never used
+   --> mako-cache/src/writeback.rs:136:21
+    |
+136 | pub(crate) const fn native_holder_record_supported(exact_record_bytes: usize) -> bool {
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `tagged_native_holder_extent` is never used
+   --> mako-cache/src/writeback.rs:141:4
+    |
+141 | fn tagged_native_holder_extent(exact_record_bytes: usize) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `attach_holder_ready` and `attach_holder_written` are never used
+    --> mako-cache/src/writeback.rs:1857:8
+     |
+1623 | impl PublicationCell {
+     | -------------------- methods in this implementation
+...
+1857 |     fn attach_holder_ready(
+     |        ^^^^^^^^^^^^^^^^^^^
+...
+1888 |     fn attach_holder_written(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `atomic` is never used
+    --> mako-cache/src/writeback.rs:2461:14
+     |
+2407 | impl CacheLineAtomicU64 {
+     | ----------------------- method in this implementation
+...
+2461 |     const fn atomic(&self) -> &AtomicU64 {
+     |              ^^^^^^
+
+warning: methods `native_ordering_words`, `native_ordered_arena_control`, `native_ordered_holder_control`, `native_holder_pool`, and `bind_single_reserved_sequence_after_acceptance` are never used
+    --> mako-cache/src/writeback.rs:3284:19
+     |
+2922 | impl<B: Blobs> Writeback<B> {
+     | --------------------------- methods in this implementation
+...
+3284 |     pub(crate) fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
+     |                   ^^^^^^^^^^^^^^^^^^^^^
+...
+3304 |     pub(crate) unsafe fn native_ordered_arena_control(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3343 |     pub(crate) unsafe fn native_ordered_holder_control(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3372 |     pub(crate) fn native_holder_pool(&self) -> Option<&TrustedOnePutHolderPool> {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+4407 |     unsafe fn bind_single_reserved_sequence_after_acceptance(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `native` is never read
+    --> mako-cache/src/writeback.rs:5788:5
+     |
+5787 | pub(crate) struct NativeArenaPreselectedTarget {
+     |                   ---------------------------- field in this struct
+5788 |     native: CommitRecordTarget,
+     |     ^^^^^^
+     |
+     = note: `NativeArenaPreselectedTarget` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: method `native` is never used
+    --> mako-cache/src/writeback.rs:5795:25
+     |
+5793 | impl NativeArenaPreselectedTarget {
+     | --------------------------------- method in this implementation
+5794 |     #[inline(always)]
+5795 |     pub(crate) const fn native(self) -> CommitRecordTarget {
+     |                         ^^^^^^
+
+warning: methods `bind_preselected_after_native` and `acknowledge_native_holder_ready_concurrent_nonblocking` are never used
+    --> mako-cache/src/writeback.rs:5856:26
+     |
+5800 | impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
+     | ------------------------------------------- methods in this implementation
+...
+5856 |     pub(crate) unsafe fn bind_preselected_after_native(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+6162 |     pub(crate) unsafe fn acknowledge_native_holder_ready_concurrent_nonblocking(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `native_record_target`, `publish_holder_completed_concurrent_nonblocking`, and `pin_holder_completed_unknown` are never used
+    --> mako-cache/src/writeback.rs:6223:26
+     |
+6211 | impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
+     | ------------------------------------------------- methods in this implementation
+...
+6223 |     pub(crate) unsafe fn native_record_target(&mut self) -> CommitRecordTarget {
+     |                          ^^^^^^^^^^^^^^^^^^^^
+...
+6294 |     pub(crate) unsafe fn publish_holder_completed_concurrent_nonblocking(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+6340 |     pub(crate) unsafe fn pin_holder_completed_unknown(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `max_record_bytes` is never used
+   --> mako-cache/src/writeback_set.rs:249:19
+    |
+106 | impl<B: Blobs + 'static> WritebackSet<B> {
+    | ---------------------------------------- method in this implementation
+...
+249 |     pub(crate) fn max_record_bytes(&self) -> usize {
+    |                   ^^^^^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1147:17
+     |
+1147 |                 drop(read_only_fence.take());
+     |                 ^^^^^----------------------^
+     |                      |
+     |                      argument has type `Option<()>`
+     |
+     = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+1147 -                 drop(read_only_fence.take());
+1147 +                 let _ = read_only_fence.take();
+     |
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1164:5
+     |
+1164 |     drop(read_only_fence.take());
+     |     ^^^^^----------------------^
+     |          |
+     |          argument has type `Option<()>`
+     |
+help: use `let _ = ...` to ignore the expression or result
+     |
+1164 -     drop(read_only_fence.take());
+1164 +     let _ = read_only_fence.take();
+     |
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1165:5
+     |
+1165 |     drop(read_only_fence);
+     |     ^^^^^---------------^
+     |          |
+     |          argument has type `Option<()>`
+     |
+help: use `let _ = ...` to ignore the expression or result
+     |
+1165 -     drop(read_only_fence);
+1165 +     let _ = read_only_fence;
+     |
+
+warning: `mako-cache` (lib test) generated 24 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 21s
+     Running unittests src/lib.rs (/var/tmp/mako-read-bound.ueR48K/target-c-abi/debug/deps/mako_cache-46a6e2efe5d53a34)
+
+running 205 tests
+test application_history_tests::application_transcript_decodes_every_record_in_a_physical_batch ... ok
+test application_history_tests::application_transcript_projects_atomic_failure_to_front_then_full_retry ... ok
+test application_history_tests::application_transcript_rejects_a_mismatched_materialized_operation - should panic ... ok
+test application_history_tests::post_cut_conflicting_writer_is_validated_before_read_only_success ... ok
+test application_history_tests::real_cache_history_connects_visibility_acknowledgement_and_ordered_application ... ok
+test application_history_tests::real_concurrent_cache_history_allows_independent_lane_acknowledgement ... ok
+test checkpoint::tests::canonical_decoders_reject_semantically_invalid_rechecksummed_rows ... ok
+test checkpoint::tests::checkpoint_keys_are_disjoint_and_reject_legacy_layout ... ok
+test checkpoint::tests::checkpoint_rows_preserve_put_empty_put_and_tombstone ... ok
+test checkpoint::tests::every_checkpoint_byte_and_truncation_is_checked ... ok
+test checkpoint::tests::lane_decoder_rejects_invalid_frontiers_hlc_and_byte_accounting ... ok
+test checkpoint::tests::lane_metadata_covers_empty_partial_and_fully_reclaimed_lanes ... ok
+test crash_tests::crash_role ... ok
+test crash_tests::gc_process_crashes_keep_checkpoint_and_frontiers_atomic ... ok
+test crash_tests::process_crash_matrix_recovers_only_whole_transactions ... ok
+test crash_tests::recovery_process_crash_matrix_converges_after_restart ... ok
+test milestone1_acceptance_tests::ambiguous_gc_blocks_later_application_and_retries_identical_checkpoint_bytes ... ok
+test milestone1_acceptance_tests::bounded_writeback_backpressures_sustained_concurrent_writers_then_recovers ... ok
+test milestone1_acceptance_tests::clean_cache_close_drains_every_acknowledged_transaction ... ok
+test milestone1_acceptance_tests::forced_cache_stop_preserves_applied_prefix_and_discards_only_unapplied_tail ... ok
+test milestone1_acceptance_tests::gc_and_checkpoint_reopen_support_both_native_checksum_policies ... ok
+test milestone1_acceptance_tests::gc_default_retention_uses_strict_five_minute_hlc_age ... ok
+test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... ok
+test milestone1_acceptance_tests::gc_recovery_rejects_extra_row_not_written_by_its_retained_source ... ok
+test milestone1_acceptance_tests::gc_recovery_rejects_tagged_lane_maximum_with_wrong_source_position ... ok
+test milestone1_acceptance_tests::gc_recovery_rejects_two_timestamps_claiming_one_reclaimed_transaction ... ok
+test milestone1_acceptance_tests::gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records ... ok
+test milestone1_acceptance_tests::idle_background_writer_collects_expired_logs_without_new_transactions ... ok
+test milestone1_acceptance_tests::recovered_checkpoint_filters_delayed_put_and_delete_after_all_logs_are_gone ... ok
+test milestone1_acceptance_tests::recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state ... ok
+test milestone1_acceptance_tests::recovery_near_timestamp_exhaustion_mints_maximum_once_then_fails_closed ... ok
+test milestone1_acceptance_tests::stopping_after_ambiguous_gc_recovers_checkpoint_and_drops_only_queued_transactions ... ok
+test record::tests::arena_record_timestamp_mismatch_fails_during_background_materialization ... ok
+test record::tests::binary_empty_and_delete_round_trip_and_batch ... ok
+test record::tests::bind_and_finalize_reuse_every_preallocated_buffer ... ok
+test record::tests::crc32c_matches_standard_check_vector ... ok
+test record::tests::deferred_holder_materializes_canonical_unchecked_one_put ... ok
+test record::tests::deferred_holder_rejects_a_mismatched_scalar_extent ... ok
+test record::tests::duplicate_targets_are_rejected_on_prepare_and_decode ... ok
+test record::tests::empty_transaction_record_is_canonical ... ok
+test record::tests::every_truncation_and_payload_corruption_is_rejected ... ok
+test record::tests::exact_key_sequence_magic_version_tag_and_trailing_bytes_are_checked ... ok
+test record::tests::integrity_mode_magic_blocks_a_structurally_valid_downgrade ... ok
+test record::tests::key_mapping_is_injective_and_classifier_is_strict ... ok
+test record::tests::max_size_includes_header_operations_and_checksum ... ok
+test record::tests::native_record_defers_materialization_without_changing_v5_bytes ... ok
+test record::tests::physical_log_ids_round_trip_legacy_and_worker_lanes ... ok
+test record::tests::timestamp_field_has_the_canonical_big_endian_layout ... ok
+test record::tests::unchecked_v6_is_self_describing_and_replays_beside_v5 ... ok
+test runtime::tests::abort_stops_without_draining_a_failing_tail ... ok
+test runtime::tests::abort_wakes_a_worker_parked_for_a_long_retry ... ok
+test runtime::tests::affinity_helper_pins_only_the_calling_thread ... ok
+test runtime::tests::background_worker_polls_without_registering_an_activity_waiter ... ok
+test runtime::tests::clean_shutdown_drains_acknowledged_records ... ok
+test runtime::tests::clean_shutdown_rejects_unknown_after_applying_safe_prefix ... ok
+test runtime::tests::drop_uses_abort_semantics ... ok
+test runtime::tests::invalid_affinity_fails_runtime_start_synchronously ... ok
+test runtime::tests::retry_metrics_count_each_failure_class_and_clear_only_the_streak ... ok
+test runtime::tests::runtime_recovers_from_backend_panic_and_unblocks_capacity ... ok
+test runtime::tests::shutdown_prioritizes_apply_error_over_worker_panic ... ok
+test tests::anomalous_accepted_holder_pins_before_cold_decode ... ok
+test tests::anomalous_accepted_holder_stays_pinned_if_decoder_panics ... ok
+test tests::bound_unwritten_completion_is_typed_and_pins_its_dense_slot ... ok
+test tests::cache_rejects_wal_disabled_before_opening_any_files ... ok
+test tests::cache_status_observes_backend_call_without_coordinator_lock ... ok
+test tests::cache_status_reports_background_retry_and_recovery ... ok
+test tests::cache_status_retains_caller_driven_apply_failure_and_stopped_writer ... ok
+test tests::capacity_one_native_holder_survives_retry_and_wraps_three_generations ... ok
+test tests::commit_fence_exact_generation_does_not_bridge_worker_reuse ... ok
+test tests::commit_fence_read_only_closer_drains_an_enrolled_writer ... ok
+test tests::commit_fence_readers_take_independent_cuts_and_drain_the_same_writer ... ok
+test tests::commit_fence_scan_bound_includes_registration_completed_inside_cut ... ok
+test tests::commit_fence_writer_after_validation_cut_is_not_blocked ... ok
+test tests::concurrent_mode_rejects_a_single_producer_lease ... ok
+test tests::default_profile_requires_read_your_writes ... ok
+test tests::fused_put_then_general_commit_uses_the_next_lane_sequence ... ok
+test tests::gc_options_reject_invalid_time_ranges_and_allow_zero_retention ... ok
+test tests::native_mako_timestamp_is_carried_into_the_backend_record ... ok
+test tests::pinned_unknown_fail_stops_new_and_in_flight_read_only_transactions ... ok
+test tests::preparation_failure_surfaces_native_abort_cleanup_quarantine ... 
+running 1 test
+test tests::preparation_failure_surfaces_native_abort_cleanup_quarantine ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 204 filtered out; finished in 0.00s
+
+ok
+test tests::recovery_accepts_cross_lane_physical_reordering_and_replays_by_timestamp ... ok
+test tests::recovery_accepts_sequence_order_opposite_timestamp_order ... ok
+test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... ok
+test tests::recovery_hydrates_only_current_rows_without_replaying_history ... ok
+test tests::recovery_reconstructs_the_in_memory_applied_frontier ... ok
+test tests::recovery_rejects_a_cache_sequence_gap ... ok
+test tests::recovery_rejects_an_exhausted_recovered_mako_timestamp ... ok
+test tests::recovery_rejects_duplicate_mako_timestamps ... ok
+test tests::recovery_rejects_timestamp_reversal_within_a_worker_lane ... ok
+test tests::recovery_replays_delete_against_an_already_absent_local_key ... ok
+test tests::single_producer_mode_requires_and_exclusively_reuses_its_lease ... ok
+test tests::two_readers_drain_one_pinned_writer_and_reject_unknown_outcome ... ok
+test tests::unaccepted_native_holder_contract_violation_aborts_process ... 
+running 1 test
+ok
+test tests::unbound_native_record_contract_violation_aborts_process ... 
+running 1 test
+ok
+test tests::unchecked_one_put_cache_path_emits_and_recovers_v6 ... ok
+test writeback::tests::allocation_failure_remains_retryable_and_does_not_poison_health ... ok
+test writeback::tests::ambiguous_apply_blocks_gc_and_retries_full_row_log_metadata_bytes ... ok
+test writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once ... ok
+test writeback::tests::apply_progress_wait_does_not_sleep_past_ready_publication ... ok
+test writeback::tests::backend_panic_is_caught_and_retries_the_exact_ready_record ... ok
+test writeback::tests::barrier_snapshot_ignores_a_later_permanent_record_failure ... ok
+test writeback::tests::barrier_snapshot_ignores_a_later_retryable_allocation_failure ... ok
+test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... ok
+test writeback::tests::bind_rejects_unknown_health_that_arose_after_detached_reserve ... ok
+test writeback::tests::cache_sequence_is_assigned_by_bind_order_not_reserve_order ... ok
+test writeback::tests::concurrent_capacity_claim_ignores_stale_legacy_tail_and_drop_releases ... ok
+test writeback::tests::concurrent_queue_does_not_allocate_single_producer_descriptors ... ok
+test writeback::tests::construction_and_spsc_capacity_stop_at_the_legacy_lane_limit ... ok
+test writeback::tests::consumer_sweeps_two_trusted_nonblocking_publications ... ok
+test writeback::tests::contiguous_ready_prefix_uses_one_backend_call ... ok
+test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... ok
+test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... ok
+test writeback::tests::direct_native_bound_adoption_transfers_the_detached_claim_once ... ok
+test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... ok
+test writeback::tests::exhausted_retry_continues_when_concurrent_consumer_completed_failed_sequence ... ok
+test writeback::tests::explicit_apply_progress_waiter_remains_notification_driven ... ok
+test writeback::tests::external_arena_and_concurrent_general_binders_interoperate ... ok
+test writeback::tests::externally_serialized_arena_bind_preserves_sequence_exhaustion ... ok
+test writeback::tests::externally_serialized_arena_bind_wraps_and_reuses_exact_turns ... ok
+test writeback::tests::externally_serialized_arena_binders_assign_unique_dense_sequences ... ok
+test writeback::tests::failed_batch_is_retained_whole_and_retried ... ok
+test writeback::tests::failed_ready_prefix_retires_none_and_retries_the_same_operations ... ok
+test writeback::tests::full_queue_backpressures_until_front_advances ... ok
+test writeback::tests::fused_control_saturates_oversized_record_cap_without_rejecting_queue ... ok
+test writeback::tests::gc_applied_then_panicked_keeps_the_exact_retry ... ok
+test writeback::tests::gc_batches_rotate_across_recovered_idle_lanes_and_finish_large_sweeps ... ok
+test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... ok
+test writeback::tests::gc_preserves_winners_against_delayed_put_and_delete_after_recovery ... ok
+test writeback::tests::gc_rejects_early_iterator_end_without_deleting_the_valid_prefix ... ok
+test writeback::tests::gc_rejects_missing_or_corrupt_log_without_advancing_frontier ... ok
+test writeback::tests::gc_status_remains_available_while_backend_write_is_blocked ... ok
+test writeback::tests::gc_success_in_another_lane_does_not_clear_unresolved_corruption ... ok
+test writeback::tests::gc_uses_bounded_seeks_without_point_reads_or_rescanning_reclaimed_history ... ok
+test writeback::tests::healthy_claim_and_bind_do_not_take_the_queue_state_mutex ... ok
+test writeback::tests::healthy_publication_uses_the_registered_activity_waiter_handshake ... ok
+test writeback::tests::huge_page_advice_never_extends_beyond_the_allocation ... ok
+test writeback::tests::later_bind_does_not_wait_for_front_backend_io ... ok
+test writeback::tests::later_unknown_does_not_block_acknowledging_an_earlier_delayed_publication ... ok
+test writeback::tests::native_arena_exposes_disjoint_concurrent_block_targets ... ok
+test writeback::tests::native_reservation_handles_stay_compact ... ok
+test writeback::tests::non_power_of_two_capacity_reuses_publication_ring_without_aliasing ... ok
+test writeback::tests::one_transaction_is_exactly_one_backend_batch ... ok
+test writeback::tests::one_worker_marker_tracks_repeated_trusted_commits ... ok
+test writeback::tests::out_of_order_publications_wait_for_one_dense_acknowledgement_prefix ... ok
+test writeback::tests::oversized_native_vector_is_recycled_without_moving_its_allocation ... ok
+test writeback::tests::oversized_ready_front_is_submitted_alone ... ok
+test writeback::tests::packed_bound_suffix_imports_without_legacy_tail_updates ... ok
+test writeback::tests::packed_credit_exclusive_shutdown_reclaims_and_cache_allocations_are_isolated ... ok
+test writeback::tests::packed_credit_general_oversized_and_single_producer_paths_are_isolated ... ok
+test writeback::tests::packed_credit_owner_consumption_races_reclamation_without_capacity_loss ... ok
+test writeback::tests::packed_credit_pressure_rescans_a_refill_published_after_its_first_scan ... ok
+test writeback::tests::packed_credit_scalar_capacity_pressure_reclaims_idle_rights ... ok
+test writeback::tests::packed_occupancy_batch_preserves_partial_tail_capacity ... ok
+test writeback::tests::packed_occupancy_credit_batch_is_bounded_and_scalar_for_small_queues ... ok
+test writeback::tests::packed_occupancy_credit_reuses_one_shared_batch_claim ... ok
+test writeback::tests::packed_oversized_adoption_keeps_legacy_tail_stale ... ok
+test writeback::tests::permanent_native_record_failure_latches_exact_health_error ... ok
+test writeback::tests::permanent_record_failure_wakes_capacity_and_acknowledgement_waiters ... ok
+test writeback::tests::permanent_record_latch_retains_the_earliest_sequence ... ok
+test writeback::tests::prepared_and_pinned_slots_cut_the_ready_prefix ... ok
+test writeback::tests::prepared_hole_blocks_later_ready_transaction_and_acknowledgement ... ok
+test writeback::tests::publication_during_backend_io_is_not_retired_with_captured_prefix ... ok
+test writeback::tests::publishing_a_later_slot_does_not_wake_a_waiter_blocked_on_the_front ... ok
+test writeback::tests::queue_tokens_track_current_vecdeque_offsets_after_front_retirement ... ok
+test writeback::tests::ready_prefix_respects_encoded_byte_cap ... ok
+test writeback::tests::ready_prefix_respects_record_count_cap ... ok
+test writeback::tests::record_preparation_failure_releases_detached_capacity ... ok
+test writeback::tests::retiring_final_legacy_sequence_wakes_waiter_which_rejects_at_bind ... ok
+test writeback::tests::same_key_updates_coalesce_to_the_newest_timestamp_inside_one_batch ... ok
+test writeback::tests::single_producer_abort_before_bind_reuses_the_unpublished_turn ... ok
+test writeback::tests::single_producer_accepts_consumer_ack_between_ready_and_foreground_ack ... ok
+test writeback::tests::single_producer_all_record_paths_share_logical_capacity_accounting ... ok
+test writeback::tests::single_producer_capacity_one_and_three_wrap_exact_turns ... ok
+test writeback::tests::single_producer_direct_and_cold_records_reuse_one_ring_position ... ok
+test writeback::tests::single_producer_direct_batch_publishes_and_retires_dense_frontiers ... ok
+test writeback::tests::single_producer_general_reserve_imports_a_native_fused_ack ... ok
+test writeback::tests::single_producer_preserves_permanent_record_fail_stop ... ok
+test writeback::tests::single_producer_preserves_sequence_exhaustion ... ok
+test writeback::tests::single_producer_preserves_unknown_fail_stop ... ok
+test writeback::tests::single_producer_reacquisition_accounts_for_an_unapplied_tail ... ok
+test writeback::tests::small_native_arena_survives_backend_retry_and_reuses_the_same_block ... ok
+test writeback::tests::structural_failure_caps_consumer_before_trusted_ready_suffix ... ok
+test writeback::tests::telemetry_transitions_are_coherent_across_same_sequence_retry ... ok
+test writeback::tests::timestamp_coordinator_coalesces_one_batch_by_highest_timestamp ... ok
+test writeback::tests::timestamp_coordinator_rejects_late_stale_puts_and_deletes ... ok
+test writeback::tests::trusted_ready_suffix_stays_blocked_behind_unknown_predecessor ... ok
+test writeback::tests::trusted_ready_suffix_wakes_parked_dense_apply_barrier ... ok
+test writeback::tests::unbound_and_bound_unwritten_native_buffers_are_recycled ... ok
+test writeback::tests::unknown_outcome_pins_queue_and_rejects_new_reservations ... ok
+test writeback::tests::unknown_outcome_wakes_a_backpressured_reserver ... ok
+test writeback::tests::wait_applied_covers_safe_acknowledged_prefix_before_later_unknown ... ok
+test writeback::tests::wait_applied_targets_acknowledged_not_reserved_tail ... ok
+test writeback::tests::watermark_advances_only_after_a_successful_backend_call_returns ... ok
+test writeback_set::tests::apply_then_error_retries_exact_physical_batch_before_same_local_other_lane ... ok
+test writeback_set::tests::apply_then_panic_retries_exact_batch_before_other_lane_or_ready_suffix ... ok
+test writeback_set::tests::changing_retention_on_reopen_uses_persisted_frontiers_and_cannot_restore_logs ... ok
+test writeback_set::tests::exact_uncertain_retry_may_cross_an_older_barrier_target ... ok
+test writeback_set::tests::fifty_minute_clock_model_bounds_retention_independently_of_lifetime_updates ... ok
+test writeback_set::tests::lanes_publish_independently_and_late_stale_apply_cannot_win ... ok
+test writeback_set::tests::one_lane_failure_blocks_an_already_prepared_commit_in_another_lane ... ok
+test writeback_set::tests::one_lane_failure_rejects_every_lane_with_the_same_physical_id ... ok
+test writeback_set::tests::persistent_enospc_gc_blocks_apply_and_capacity_until_exact_retry_succeeds ... ok
+test writeback_set::tests::scheduled_gc_alternates_with_apply_and_finishes_pending_retry_on_drain ... ok
+test writeback_set::tests::set_wait_drives_the_retry_lane_after_an_earlier_lane_is_blocked ... ok
+test writeback_set::tests::worker_lane_stops_before_the_next_tag_and_local_zero ... ok
+
+test result: ok. 205 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.16s
+

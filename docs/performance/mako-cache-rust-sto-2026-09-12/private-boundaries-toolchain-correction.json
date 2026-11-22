@@ -1,0 +1,10 @@
+{
+  "scope": "The rejected private begin/terminal ownership experiment only; no production, pooled, thin-LTO, or record-local candidate result is relabeled.",
+  "rustc_release": "1.97.1",
+  "rustc_commit": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+  "evidence": "All four private target .rustc_info.json records identify rustc 1.97.1; executable std source paths embed the matching rustc commit.",
+  "variants": ["base", "begin", "terminal", "combined"],
+  "private_root": "/var/tmp/mako-boundary-private.0fsXez",
+  "reason": "Outer build cwd selected the default compiler because build.sh had no explicit RUSTUP_TOOLCHAIN override.",
+  "interpretation": "Internally paired under one compiler; not matched to frozen Rust 1.95 policy. All four experiments were rejected and no source change was promoted. Do not attribute the cross-binary 22-instruction baseline difference solely to source ownership changes."
+}

@@ -79,7 +79,10 @@ unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Saf
 # fibers and suspend mid-frame. No unwind may cross the fiber's assembly
 # context switch, so a panic must abort rather than unwind. This crate is
 # part of the runtime (libraft_rt.a), and this is the one place rustc
-# enforces the constraint.
+# enforces the constraint. One exception: the mako-local TSan gate
+# (CMake option MAKO_LOCAL_TSAN_RUST_STATICLIBS) overrides the dev profile to
+# panic = "unwind" so that its -Zbuild-std std matches the TSan test
+# executables'; that lane alone does not enforce this rule.
 [profile.dev]
 panic = "abort"
 

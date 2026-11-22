@@ -1,0 +1,24 @@
+[package]
+name = "sto-core"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Test-only rendezvous after individual writes, absent from production builds.
+test-install-observer = []
+
+[dependencies]
+arc-swap = "1.7"
+mako-clock = { path = "../mako-clock" }
+
+[dev-dependencies]
+trybuild = "=1.0.120"
+
+[lints.rust]
+unsafe_code = "deny"

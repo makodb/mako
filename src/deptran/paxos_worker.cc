@@ -80,10 +80,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
           rep_commo_->ForwardToLearner(
               site_info_->partition_id_, slot_id,
               cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
-              md,
-              [](uint64_t slot, ballot_t ballot) {
-                //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
-              });
+              md);
         }
       }
 
@@ -230,9 +227,14 @@ void PaxosWorker::WaitForShutdown() {
   }
 }
 
+// @unsafe - Join callback owners before destroying their server and scheduler.
 void PaxosWorker::ShutDown() {
   Log_info("site {} shutting down, n_current: {}, n_tot: {}", site_info_->name.c_str(), (int)n_current, (int)n_tot);
   verify(rpc_server_ != nullptr);
+  if (svr_poll_thread_worker_.is_some())
+    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+  if (svr_hb_poll_thread_worker_g.is_some())
+    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
   // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
   rpc_server_ = nullptr;

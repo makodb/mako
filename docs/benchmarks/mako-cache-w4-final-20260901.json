@@ -1,0 +1,108 @@
+{
+  "date_utc": "2026-09-01",
+  "host": "zoo-002",
+  "scope": "four-worker foreground acknowledgement throughput; RocksDB writeback is asynchronous and is not drained before teardown",
+  "source": {
+    "base_git_head": "aaff9ff8b",
+    "native_build_fingerprint": "ad6a6be8730145b85aee1d9f4c771172fdcdac3d46dd76794b32317ae7b534a2",
+    "cache_binary_sha256": "7223a8c226c9873b4d799fa8dd7913ffa700d964f6fa4d4dc5d4f9f86e83ef1a",
+    "raw_binary_sha256": "9b5eb361db7934ebc83a54fb07e75cd4e45426da6bc290e9c58ec19955836dc8",
+    "pure_binary_sha256": "164934353d8d417ed7f7540f8052aa371a7b5ee9022443ba83691b387fa836f2",
+    "cache_wrapper_sha256": "ea6dc0d20aa6c68859c80ad9727d88fd86a7d27fd7a2196a3bf991d0c0e4a2f4"
+  },
+  "protocol": {
+    "allocator": "jemalloc via LD_PRELOAD; MALLOC_CONF unset",
+    "workers": 4,
+    "worker_cpus": "0-3",
+    "helper_affinity": "33-63",
+    "writeback_cpu": 32,
+    "warmup_per_worker": 65536,
+    "transaction_ramp_per_worker": 1048576,
+    "measured_per_worker": 2097152,
+    "measured_total": 8388608,
+    "key_bytes": 8,
+    "value_bytes": 128,
+    "window_keys_per_worker": 256,
+    "queue_capacity": 16777216,
+    "record_checksum": "none",
+    "rocks_wal_enabled": true,
+    "rocks_sync": false,
+    "writeback_batch_records": 64,
+    "writeback_batch_bytes": 1048576,
+    "teardown": "abort_without_flush_after_invariant_checks",
+    "repetitions": 5,
+    "pmu_scope": "per-worker-thread measured region",
+    "pmu_running_ratio_min": 0.995,
+    "all_conflicts_zero": true,
+    "all_commit_and_watermark_invariants_passed": true
+  },
+  "artifacts": {
+    "original_three_arm": "/var/tmp/mako-w4-aaff9ff8b.FEWrO9/results/w4-three-arm-20260901T154106Z-g1zxe91h",
+    "final_three_arm": "/var/tmp/mako-w4-aaff9ff8b.FEWrO9/results/w4-three-arm-20260901T174422Z-zc_18xud",
+    "final_clean_raw": "/var/tmp/mako-w4-aaff9ff8b.FEWrO9/results/w4-three-arm-20260901T174626Z-8pha891t",
+    "final_cache_profile": "/var/tmp/mako-w4-aaff9ff8b.FEWrO9/profile-final-cache-20260901T171952Z-tk2enp0q"
+  },
+  "original_cache_baseline": {
+    "median_ack_tx_per_s": 7004027.498,
+    "median_cycles_per_commit": 1605.046927,
+    "median_instructions_per_commit": 3373.624184,
+    "median_average_ghz": 2.814
+  },
+  "final_results": {
+    "pure_cpp": {
+      "ack_tx_per_s": [14847616.415, 14677047.61, 14711534.875, 14913560.058, 14872048.682],
+      "cycles_per_commit": [893.409786, 902.673358, 903.597416, 893.067133, 891.238488],
+      "instructions_per_commit": [2282.102942, 2282.102944, 2282.10297, 2282.101981, 2282.102953],
+      "average_ghz": [3.332452346, 3.332368392, 3.33360517, 3.336551053, 3.331009471],
+      "median_ack_tx_per_s": 14847616.415,
+      "median_cycles_per_commit": 893.409786,
+      "median_instructions_per_commit": 2282.102944,
+      "rate_cv_pct": 0.7019960075505172
+    },
+    "raw_c_abi_clean_rerun": {
+      "ack_tx_per_s": [14198084.03, 13949987.515, 14213692.619, 14036665.577, 14242939.35],
+      "cycles_per_commit": [934.95869, 947.476512, 935.164381, 945.482574, 930.016439],
+      "instructions_per_commit": [2410.101989, 2410.102092, 2410.101145, 2410.100689, 2410.102072],
+      "average_ghz": [3.333208334, 3.333168355, 3.334828128, 3.334942497, 3.328903479],
+      "median_ack_tx_per_s": 14198084.03,
+      "median_cycles_per_commit": 935.164381,
+      "median_instructions_per_commit": 2410.101989,
+      "rate_cv_pct": 0.9057088508151804
+    },
+    "rust_cache": {
+      "ack_tx_per_s": [7290354.152, 6944955.134, 7246176.608, 7290957.536, 7298512.786],
+      "cycles_per_commit": [1517.675639, 1604.026756, 1533.419272, 1523.896937, 1522.018735],
+      "instructions_per_commit": [3276.638892, 3276.629713, 3276.635005, 3276.640572, 3276.635186],
+      "average_ghz": [2.777872154, 2.808555776, 2.786726729, 2.779865553, 2.779979322],
+      "median_ack_tx_per_s": 7290354.152,
+      "median_cycles_per_commit": 1523.896937,
+      "median_instructions_per_commit": 3276.635186,
+      "rate_cv_pct": 2.1058080184520427
+    }
+  },
+  "deltas": {
+    "final_cache_vs_original_cache": {
+      "ack_tx_per_s_pct": 4.088028696086088,
+      "cycles_per_commit_pct": -5.055926318096993,
+      "instructions_per_commit_pct": -2.8749200477037995
+    },
+    "final_cache_vs_clean_raw_c_abi": {
+      "ack_tx_per_s_pct": -48.65254962151396,
+      "cycles_per_commit_pct": 62.954980745786116,
+      "instructions_per_commit_pct": 35.95421276588973,
+      "extra_cycles_per_commit": 588.732556,
+      "extra_instructions_per_commit": 866.533197
+    }
+  },
+  "memory_observation": {
+    "rss_kib": 4065104,
+    "anonymous_kib": 4049460,
+    "anon_huge_pages_kib": 3143680,
+    "note": "Observed two seconds into the final no-MALLOC_CONF cache process; removing the unused concurrent SPSC descriptor ring reduced RSS by about one GiB."
+  },
+  "interpretation": {
+    "raw_three_arm_outliers": "The rotated three-arm run had two externally slowed raw samples and an 18.63% raw rate CV. The immediately following raw-only run used the identical binary and protocol and is the reported raw control.",
+    "remaining_profile": "The remaining cache overhead is dominated by required holder binding/publication and packed ordering, not generic Rust allocation or CRC.",
+    "not_a_durability_measurement": "Acknowledgement does not wait for RocksDB apply or fsync; queued records are deliberately abandoned after invariant checks."
+  }
+}

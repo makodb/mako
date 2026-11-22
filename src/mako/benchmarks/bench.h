@@ -3,12 +3,14 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <map>
 #include <vector>
 #include <utility>
 #include <string>
 
 #include "storage/abstract_db.h"
+#include "storage/resource_exhausted.hh"
 #include "../macros.h"
 #include "../thread.h"
 #include "../util.h"
@@ -17,9 +19,17 @@
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
 #include "lib/configuration.h"
+#include "benchmark_output.h"
 #include "benchmark_config.h"
 
 class bench_runner;
+
+inline void report_benchmark_resource_exhaustion(
+    const char *phase, const storage_resource_exhausted &error) {
+  if (BenchmarkConfig::getInstance().requestResourceExhaustion()) {
+    ALWAYS_ASSERT(mako::emit_benchmark_resource_exhaustion(phase, error.what()));
+  }
+}
 
 extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 extern bench_runner* tpcc_do_test(abstract_db *db, int argc, char **argv, int, bench_runner *);
@@ -103,8 +113,14 @@ public:
     // ALWAYS_ASSERT(b);
     // b->count_down();
     // b->wait_for();
-    scoped_db_thread_ctx ctx(db, true);
-    load();
+    try {
+      scoped_db_thread_ctx ctx(db, true);
+      load();
+    } catch (const storage_resource_exhausted &error) {
+      // Unwinding the context ends any remaining attempt on this loader's
+      // own thread before the runner joins and closes table facades.
+      report_benchmark_resource_exhaustion("load", error);
+    }
   }
 protected:
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
@@ -171,7 +187,13 @@ public:
 
   virtual void run();
 
-  inline size_t get_ntxn_commits() const { return ntxn_commits; }
+  inline size_t get_ntxn_commits() const {
+#if defined(COCO)
+    return ntxn_commits.load(std::memory_order_relaxed);
+#else
+    return ntxn_commits;
+#endif
+  }
   inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
 
   inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
@@ -180,7 +202,7 @@ public:
   inline double
   get_avg_latency_us() const
   {
-    return double(latency_numer_us) / double(ntxn_commits);
+    return double(latency_numer_us) / double(get_ntxn_commits());
   }
 
   std::map<std::string, size_t> get_txn_counts() const;
@@ -203,6 +225,7 @@ public:
 protected:
 
   virtual void on_run_setup() {}
+  void run_body(bool &startup_barrier_entered);
 
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
@@ -216,7 +239,13 @@ protected:
   int shard_index_;  // Shard index for multi-shard mode (-1 = use default)
 
 private:
+#if defined(COCO)
+  // COCO samples this counter before workers join; ordinary benchmark builds
+  // keep the hot counter non-atomic and perform only post-join reads.
+  std::atomic<size_t> ntxn_commits;
+#else
   size_t ntxn_commits;
+#endif
   size_t ntxn_aborts;
   uint64_t latency_numer_us;  // for all transactions
   uint64_t latency_numer_us_remote; // only for remote
@@ -253,9 +282,20 @@ public:
   bench_runner(abstract_db *db, int shard_index)
     : db(db), shard_index_(shard_index), barrier_a(BenchmarkConfig::getInstance().getNthreads()), barrier_b(1) {}
 
-  virtual ~bench_runner() {}
+  virtual ~bench_runner() {
+    if (!worker_barriers_in_use_) {
+      // Table construction and loading may fail before any worker exists.
+      // Release unused barriers even when a derived constructor unwinds.
+      for (size_t i = 0; i < barrier_participants_; ++i)
+        barrier_a.count_down();
+      barrier_b.count_down();
+    }
+  }
   void run();
   void stop();
+  // Multi-shard slow exit calls this only after every shard runner has
+  // stopped and destroyed its workers, which may hold cross-shard pointers.
+  void clear_and_close_open_tables();
   int f_mode;  // failure mode: default 0, 1 => without load phase(failover)
 
   // Get shard index for this runner
@@ -274,6 +314,9 @@ protected:
   std::map<std::string, abstract_ordered_index *> open_tables;
 
   // barriers for actual benchmark execution
+  const size_t barrier_participants_ =
+      BenchmarkConfig::getInstance().getNthreads();
+  bool worker_barriers_in_use_{false};
   spin_barrier barrier_a;
   spin_barrier barrier_b;
 };
@@ -297,6 +340,11 @@ public:
     return (limit == -1) || (++n < size_t(limit));
   }
 
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
+
   typedef std::pair<std::string, std::string> kv_pair;
   std::vector<kv_pair> values;
 
@@ -318,16 +366,32 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
+    return invoke_key(keyp, keylen);
+  }
+
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *,
+                    size_t) override
+  {
+    return invoke_key(keyp, keylen);
+  }
+
+  inline size_t size() const { return n; }
+  inline std::string &kstr() { return *k; }
+
+  size_t max_records_hint() const override {
+    return limit == -1 ? std::numeric_limits<size_t>::max()
+                       : static_cast<size_t>(limit);
+  }
+
+private:
+  bool invoke_key(const char *keyp, size_t keylen)
+  {
     INVARIANT(limit == -1 || n < size_t(limit));
     k->assign(keyp, keylen);
     ++n;
     return (limit == -1) || (n < size_t(limit));
   }
 
-  inline size_t size() const { return n; }
-  inline std::string &kstr() { return *k; }
-
-private:
   ssize_t limit;
   size_t n;
   std::string *k;
@@ -353,6 +417,30 @@ public:
       const char *keyp, size_t keylen,
       const std::string &value)
   {
+    return invoke_value(keyp, keylen, value.data(), value.size());
+  }
+
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen) override
+  {
+    return invoke_value(keyp, keylen, valuep, valuelen);
+  }
+
+  inline size_t
+  size() const
+  {
+    return values.size();
+  }
+
+  size_t max_records_hint() const override { return N; }
+
+  typedef std::pair<const std::string *, const std::string *> kv_pair;
+  typename util::vec<kv_pair, N>::type values;
+
+private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen)
+  {
     INVARIANT(n < N);
     INVARIANT(arena);
 
@@ -360,7 +448,10 @@ public:
     // to transient strings owned by lower-level scan implementations.
     std::string *const v_px = arena->next();
     INVARIANT(v_px && v_px->empty());
-    v_px->assign(value);
+    if (valuelen == 0)
+      v_px->clear();
+    else
+      v_px->assign(valuep, valuelen);
 
     if (ignore_key) {
       values.emplace_back(nullptr, v_px);
@@ -373,16 +464,6 @@ public:
     return ++n < N;
   }
 
-  inline size_t
-  size() const
-  {
-    return values.size();
-  }
-
-  typedef std::pair<const std::string *, const std::string *> kv_pair;
-  typename util::vec<kv_pair, N>::type values;
-
-private:
   size_t n;
   str_arena *arena;
   bool ignore_key;

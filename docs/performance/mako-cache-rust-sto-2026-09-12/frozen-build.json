@@ -1,0 +1,22 @@
+{
+  "base_revision": "9cd856c18107db33c868ee4e57f631e2577e6d4f",
+  "source_policy": "shared integration worktree snapshot, pooled owned-value adapter, no borrowed staging",
+  "source_archive": "/var/tmp/mako-engine-perf-20260912.trsFuD/source-pooled-final.tar.gz",
+  "source_archive_sha256": "924f73dfd0eeaf9c41197267abcb7f2a69d1e8596ec76f174003ed29fe4af9bb",
+  "native_fingerprint": "0679b55eee9e5d643b70149cff0641609d677e3f565f3fee6e1b6a5928f385af",
+  "libmako_sha256": "d86b8d0afc0c49b3ada2b9ad6a3fbdb2385275ee38430ffe8f6a639591ce8340",
+  "libmasstree_sha256": "d0470b6005b62b741198b1143ba82807bdcd6c9e2cadb274a6dad5d11b5ed613",
+  "rustc": "1.95.0",
+  "rustflags": "-C target-cpu=znver1 -C force-frame-pointers=yes -C debuginfo=1 -C linker=/var/tmp/mako-engine-perf-20260912.trsFuD/linker.sh",
+  "release_profile": {"opt_level": 3, "codegen_units": 1, "lto": false, "panic": "abort"},
+  "native_profile": {"compiler": "Clang 22", "opt_level": 2, "cpu_target": "znver1", "rmw": true, "opacity": false, "test_hooks": false},
+  "rocksdb": "8.9.1, copied from zoo-002 before local link",
+  "jemalloc_sha256": "51952ffe97354b56197c9b765582023d435cfbe1930b0c03b778bdb5faa1fff5",
+  "remote_artifact_directory": "/var/tmp/mako-engine-perf-20260912.iz63eX",
+  "executables": {
+    "engine-compare-c-abi-final": "77bd53626442a4a6dc2557efd268ea22cd37b663da783c05f2f4aff68571d5e8",
+    "engine-compare-sto-final": "9e2c48d30903958357e2a248ec111f093c5ac99e11bf701df961036dff926f5c",
+    "gc-soak-c-abi-final": "34b78a98753a1874bf25c6ce62e38f4286c814da28acdbeafacf341f45fb08cd",
+    "gc-soak-sto-final": "9820ebe1c5128ff70492af6170543f52c8616ab4f8a53fe1ec8824526621b86a"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "cpp": "/var/tmp/mako-sto-bench-20260827.J2TZj6/build/sto_masstree_cpp_bench",
+  "duration_ms": 250,
+  "host": "zoo-002",
+  "keyspace": 100000,
+  "physical_cpus": [
+    0
+  ],
+  "repetitions": 1,
+  "rust": "/var/tmp/mako-sto-bench-20260827.J2TZj6/rust-target-final-6936abb30000-fatlto/release/sto_masstree_compare",
+  "scenarios": [
+    {
+      "name": "read10",
+      "ops_per_txn": 10,
+      "write_percent": 0
+    },
+    {
+      "name": "rw50_10",
+      "ops_per_txn": 10,
+      "write_percent": 50
+    }
+  ],
+  "schedule_seed": 24301,
+  "seed": 1,
+  "started_at_utc": "2026-08-28T12:54:34.605674+00:00",
+  "threads": [
+    1
+  ],
+  "warmup_ms": 100
+}

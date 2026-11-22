@@ -1,0 +1,58 @@
+{
+  "complete": true,
+  "foreground_cells": 60,
+  "main_cells": 72,
+  "main_sample_recovery_phases": 144,
+  "source_files_unchanged": 256,
+  "native_inputs_unchanged": 21,
+  "foreground_min_pmu_running_ratio": 1.0,
+  "main_low_contention_conflicts": 0,
+  "measurement_scope": "bounded foreground and separately drained/reopened main; no new sustained GC run",
+  "ratio_policy": "ratio of per-arm medians, three independent fresh-process repetitions each"
+}
+foreground
+{'mode': 'engine', 'workers': 1, 'arm': 'c-abi'} tps 1913474.659
+{'mode': 'engine', 'workers': 1, 'arm': 'sto'} tps 1111819.302
+{'mode': 'engine', 'workers': 4, 'arm': 'c-abi'} tps 7486355.117
+{'mode': 'engine', 'workers': 4, 'arm': 'sto'} tps 4117394.529
+{'mode': 'engine', 'workers': 8, 'arm': 'c-abi'} tps 14622684.819
+{'mode': 'engine', 'workers': 8, 'arm': 'sto'} tps 7606623.687
+{'mode': 'engine', 'workers': 16, 'arm': 'c-abi'} tps 29374099.35
+{'mode': 'engine', 'workers': 16, 'arm': 'sto'} tps 15178963.987
+{'mode': 'engine', 'workers': 32, 'arm': 'c-abi'} tps 57203822.201
+{'mode': 'engine', 'workers': 32, 'arm': 'sto'} tps 28065858.368
+{'mode': 'cache-ack', 'workers': 1, 'arm': 'c-abi'} tps 1159497.681
+{'mode': 'cache-ack', 'workers': 1, 'arm': 'sto'} tps 732452.732
+{'mode': 'cache-ack', 'workers': 4, 'arm': 'c-abi'} tps 4488224.809
+{'mode': 'cache-ack', 'workers': 4, 'arm': 'sto'} tps 2798998.68
+{'mode': 'cache-ack', 'workers': 8, 'arm': 'c-abi'} tps 8123190.232
+{'mode': 'cache-ack', 'workers': 8, 'arm': 'sto'} tps 5440407.768
+{'mode': 'cache-ack', 'workers': 16, 'arm': 'c-abi'} tps 14640486.892
+{'mode': 'cache-ack', 'workers': 16, 'arm': 'sto'} tps 10200304.479
+{'mode': 'cache-ack', 'workers': 32, 'arm': 'c-abi'} tps 20142011.539
+{'mode': 'cache-ack', 'workers': 32, 'arm': 'sto'} tps 16869122.081
+main
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 1, 'arm': 'c-abi'} tps 850690.6705190568
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 1, 'arm': 'sto'} tps 704473.5443302509
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 4, 'arm': 'c-abi'} tps 2234098.36953022
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 4, 'arm': 'sto'} tps 1721253.4124617623
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 32, 'arm': 'c-abi'} tps 5184084.9756531445
+{'workload': 'read', 'tx': 1, 'contention': 'low', 'workers': 32, 'arm': 'sto'} tps 3253105.8220287953
+{'workload': 'read', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'c-abi'} tps 385941.9127151872
+{'workload': 'read', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'sto'} tps 330951.3043012417
+{'workload': 'read', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'c-abi'} tps 1307048.4144119592
+{'workload': 'read', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'sto'} tps 1144413.2387216836
+{'workload': 'write', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'c-abi'} tps 224480.43548327606
+{'workload': 'write', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'sto'} tps 129319.82806209012
+{'workload': 'write', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'c-abi'} tps 487760.30576176464
+{'workload': 'write', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'sto'} tps 306955.47878598113
+{'workload': 'rmw', 'tx': 1, 'contention': 'low', 'workers': 1, 'arm': 'c-abi'} tps 371082.915367717
+{'workload': 'rmw', 'tx': 1, 'contention': 'low', 'workers': 1, 'arm': 'sto'} tps 230081.02474470937
+{'workload': 'rmw', 'tx': 1, 'contention': 'low', 'workers': 4, 'arm': 'c-abi'} tps 860157.6369856916
+{'workload': 'rmw', 'tx': 1, 'contention': 'low', 'workers': 4, 'arm': 'sto'} tps 530095.1360250702
+{'workload': 'rmw', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'c-abi'} tps 147806.84733984843
+{'workload': 'rmw', 'tx': 4, 'contention': 'low', 'workers': 1, 'arm': 'sto'} tps 98540.43476588334
+{'workload': 'rmw', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'c-abi'} tps 380116.82084503665
+{'workload': 'rmw', 'tx': 4, 'contention': 'low', 'workers': 4, 'arm': 'sto'} tps 259980.87488713558
+{'workload': 'rmw', 'tx': 4, 'contention': 'high', 'workers': 4, 'arm': 'c-abi'} tps 143082.56170559375
+{'workload': 'rmw', 'tx': 4, 'contention': 'high', 'workers': 4, 'arm': 'sto'} tps 95732.2270511566

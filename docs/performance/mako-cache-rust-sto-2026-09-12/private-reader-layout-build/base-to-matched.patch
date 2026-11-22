@@ -1,0 +1,198 @@
+--- a/mako-cache/src/lib.rs
++++ b/mako-cache/src/lib.rs
+@@ -52,7 +52,7 @@
+ use std::path::Path;
+ use std::rc::Rc;
+ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+-use std::sync::{Arc, Mutex, MutexGuard};
++use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ 
+ use mako_engine::{CommitDisposition, LocalDb};
+@@ -181,6 +181,8 @@
+ /// read-only transaction or rejects read-only validation on a conflicting
+ /// lock, version, or predicate.
+ struct CommitFence {
++    // Private object-layout control. This is never acquired or consulted.
++    #[allow(dead_code)]
+     read_only_serial: Mutex<()>,
+     writers: Box<[CommitWriterSlot]>,
+ }
+@@ -239,14 +241,11 @@
+         }
+     }
+ 
+-    fn close_for_read_only(
+-        &self,
+-        order_validation_prefix: impl FnOnce(),
+-    ) -> CommitReadOnlyGuard<'_> {
+-        let serial = self
+-            .read_only_serial
+-            .lock()
+-            .unwrap_or_else(|poisoned| poisoned.into_inner());
++    fn close_for_read_only(&self, order_validation_prefix: impl FnOnce()) {
++        // Each reader owns its cut and its observed generations. Readers
++        // neither change a writer slot nor consume another reader's result.
++        // Their Acquire RMWs remain members of the packed word's release
++        // sequence, so overlapping readers preserve the same prefix proof.
+         // A writer's odd-generation Release publication precedes its packed
+         // assignment or general-lock Release RMW. The callback's Acquire RMW
+         // reads that modification or a later member of its release sequence.
+@@ -267,7 +266,6 @@
+             let observed = writer.generation.load(Ordering::Acquire);
+             writer.drain_observed(observed, &mut spins);
+         }
+-        CommitReadOnlyGuard { _serial: serial }
+     }
+ }
+ 
+@@ -309,10 +307,6 @@
+     }
+ }
+ 
+-struct CommitReadOnlyGuard<'a> {
+-    _serial: MutexGuard<'a, ()>,
+-}
+-
+ /// Foreground transaction concurrency accepted by one cache instance.
+ #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+ pub enum ForegroundMode {
+@@ -1686,7 +1680,7 @@
+                 // writer ordered before it. A later writer may proceed: STO
+                 // either orders it after this read-only transaction or makes
+                 // the read-set/predicate validation reject this commit.
+-                let _fence = self.cache.commit_fence.close_for_read_only(|| {
++                self.cache.commit_fence.close_for_read_only(|| {
+                     self.cache.local.order_record_validation_prefix();
+                 });
+                 if let Err(error) = self.cache.writeback.ensure_no_unknown() {
+@@ -2614,7 +2608,7 @@
+         let (cut_tx, cut_rx) = channel();
+         let (entered_tx, entered_rx) = channel();
+         let reader = std::thread::spawn(move || {
+-            let _reader = reader_fence.close_for_read_only(|| {
++            reader_fence.close_for_read_only(|| {
+                 reader_validation_next.fetch_add(0, Ordering::Acquire);
+                 cut_tx.send(()).unwrap();
+             });
+@@ -2686,7 +2680,7 @@
+     fn commit_fence_writer_after_validation_cut_is_not_blocked() {
+         let fence = CommitFence::new();
+         let validation_next = AtomicUsize::new(0);
+-        let reader = fence.close_for_read_only(|| {
++        fence.close_for_read_only(|| {
+             validation_next.fetch_add(0, Ordering::Acquire);
+         });
+ 
+@@ -2697,7 +2691,6 @@
+             "a post-cut writer should enter without waiting for the reader"
+         );
+         drop(writer);
+-        drop(reader);
+     }
+ 
+     #[test]
+@@ -4172,6 +4165,103 @@
+         ));
+     }
+ 
++    #[cfg(have_mako)]
++    #[test]
++    fn two_readers_drain_one_pinned_writer_and_reject_unknown_outcome() {
++        use std::sync::mpsc::{channel, TryRecvError};
++
++        use mrx_core::fakes::MemBlobs;
++
++        let cache = Arc::new(
++            Cache::from_backend(Arc::new(MemBlobs::new()), CacheOptions::default()).unwrap(),
++        );
++        // Attach the owner and allocate its physical lane without publishing
++        // a committed record. This fixture drives the same pin_unknown path
++        // as the single-reader test, not a simulated native core panic.
++        drop(cache.transaction().unwrap());
++        let slot = CommitFence::current_thread_slot();
++        let writer = cache.commit_fence.enter_writer_slot(slot);
++        let lane = cache.writeback.lane(slot).unwrap();
++        let mut reserved = lane
++            .writeback()
++            .reserve_single(
++                lane.producer(),
++                vec![Mutation::Put {
++                    table_id: DEFAULT_TABLE_ID,
++                    key: b"uncertain-two-readers".to_vec(),
++                    value: b"value".to_vec(),
++                }],
++            )
++            .unwrap()
++            .bind(test_timestamp(1))
++            .unwrap();
++
++        let (cut_tx, cut_rx) = channel();
++        let (done_tx, done_rx) = channel();
++        let mut readers = Vec::new();
++        for reader_id in 0..2 {
++            let cache = Arc::clone(&cache);
++            let cut_tx = cut_tx.clone();
++            let done_tx = done_tx.clone();
++            readers.push(std::thread::spawn(move || {
++                let in_flight = cache.transaction().unwrap();
++                // Drive the real fence explicitly so both cuts are observable
++                // without adding a process-global test hook. The following
++                // public commit also executes its own fence and health check.
++                cache.commit_fence.close_for_read_only(|| {
++                    cache.local.order_record_validation_prefix();
++                    cut_tx.send(reader_id).unwrap();
++                });
++                let result = in_flight.commit();
++                done_tx.send(reader_id).unwrap();
++                result
++            }));
++        }
++        drop(cut_tx);
++        drop(done_tx);
++        let first_cut = cut_rx.recv_timeout(Duration::from_secs(5));
++        let second_cut = cut_rx.recv_timeout(Duration::from_secs(5));
++        let blocked_before_pin = matches!(done_rx.try_recv(), Err(TryRecvError::Empty));
++        let pinned = reserved.pin_unknown().unwrap();
++        drop(reserved);
++        let blocked_until_release = matches!(done_rx.try_recv(), Err(TryRecvError::Empty));
++        assert!(matches!(
++            cache.transaction(),
++            Err(Error::Apply(ApplyError::UnknownOutcome { sequence })) if sequence == pinned
++        ));
++        // Release and join before checking rendezvous assertions. Restoring
++        // the old reader mutex must fail without leaving blocked children.
++        drop(writer);
++        let outcomes: Vec<_> = readers
++            .into_iter()
++            .map(|reader| reader.join().unwrap())
++            .collect();
++        assert!(first_cut.is_ok() && second_cut.is_ok());
++        assert_ne!(first_cut.unwrap(), second_cut.unwrap());
++        assert!(blocked_before_pin && blocked_until_release);
++        for outcome in outcomes {
++            assert!(matches!(
++                outcome,
++                Err(Error::Apply(ApplyError::UnknownOutcome { sequence })) if sequence == pinned
++            ));
++        }
++        let status = cache.status().unwrap();
++        assert_eq!(status.health, CacheHealth::Unhealthy);
++        assert_eq!(status.applied_watermark.sequence(), 0);
++        assert_eq!(status.acknowledged_transactions, 0);
++        assert_eq!(status.queued_transactions, 1);
++        assert!(matches!(
++            status.writeback_error,
++            Some(ApplyError::UnknownOutcome { sequence }) if sequence == pinned
++        ));
++        let cache = Arc::try_unwrap(cache).ok().unwrap();
++        assert!(matches!(
++            cache.close(),
++            Err(Error::Runtime(RuntimeError::Apply(ApplyError::UnknownOutcome { sequence })))
++                if sequence == pinned
++        ));
++    }
++
+     #[cfg(all(have_mako, feature = "engine-sto-test-hooks", panic = "unwind"))]
+     #[test]
+     fn poisoned_sto_runtime_makes_cache_unhealthy_from_another_worker() {

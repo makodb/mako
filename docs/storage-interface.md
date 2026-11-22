@@ -21,11 +21,17 @@ transpiler-lowered pure-virtual C++ classes:
   implements: `get / put / insert / remove / scan / rscan` (+ `size`,
   `clear`, `get_table_id`, `get_is_remote`). Each op is
   self-contained and immediately visible; on STO/MassTrans-backed tables it is
-  an internal one-op OCC transaction, so writes replicate through the
-  normal commit path. `put` returns "newly inserted"; `insert` is
-  put-if-absent; `remove` returns "existed" (and is a direct raw
-  write on mbta — a documented asymmetry). Must not be called from a
-  thread with an open transaction.
+  an internal one-op OCC transaction and uses that backend's normal commit
+  machinery. The trait alone does not certify distributed or replicated
+  publication. `put` returns "newly inserted"; `insert` is
+  put-if-absent; `remove` returns "existed". On mbta, `remove` is a one-op OCC
+  delete like the other point ops (`MassTrans::erase` stages `transDelete` and
+  commits it); it is no longer a direct raw MassTrans write. Local mbta point
+  ops retry in place on an OCC conflict. An mbta scan is one attempt: a
+  conflict surfaces as `abstract_abort_exception` instead of replaying
+  callbacks. Must not be called from a thread with an open transaction. The
+  owned attempt is aborted during stack unwinding, including when a scan
+  callback throws, before the exception escapes the operation.
 - **`TxnOrderedIndex: OrderedIndex`** — the transactional ops, all
   prefixed: `tx_get / tx_put / tx_insert / tx_remove / tx_scan /
   tx_rscan / tx_scan_remote_one`, taking the opaque txn handle from
@@ -60,7 +66,7 @@ no `using`-declarations and may carry defaults.
 | class | layer | authored | notes |
 |---|---|---|---|
 | `masstree_ordered_index` | plain Masstree (L1) | DSL struct | implements `OrderedIndex` ONLY — "no transactions" is a type fact. Owns value buffers in the RCU arena (`[u32 len][bytes]`), frees RCU-deferred, every op pins a `scoped_rcu_region`. |
-| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | DSL entrypoints call narrow engine kernels; governed point dispatch borrows canonical native handles, not startup remote flags. Kernels own the exception boundary (`STD_OP` catch of `Transaction::Abort`, non-txn retry loops, RPC retries) and `UPDATE_VS` bookkeeping. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
+| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | DSL entrypoints call narrow engine kernels; governed point dispatch borrows canonical native handles, not startup remote flags. Kernels own the exception boundary (`STD_OP` translation, conflict-only retry loops for non-txn point ops, RPC retries) and `UPDATE_VS` bookkeeping. Non-txn `scan`/`rscan` do not retry: they abort the owned attempt and rethrow. Terminal failures such as timestamp exhaustion are not retryable conflicts. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
 | `mbta_sharded_ordered_index` | Mako routing | DSL struct | FNV-1a per-key routing over `abstract_ordered_index*` shards; txn'd range reads visit every shard; non-txn scans are local-shard-only. |
 
 Backends are chosen at construction; callers hold the narrowest
@@ -367,6 +373,12 @@ than executing again, and abort/unlock also retry uncertain transport outcomes.
 The origin uses `transDeleteRemote` to stage an initialized delete carrier even
 with `READ_MY_WRITES` disabled. Aborted carriers are removed; put-then-delete
 keeps delete write-data instead of transmitting an empty value as a put.
+A later write over the transaction's own remote proxy intent is re-staged
+(`MassTrans::restageRemoteWrite`) rather than aborted: a put over an own staged
+put or delete replaces it, so the last write is the one sent; an insert-if-absent
+over an own staged put keeps the first payload; an update-only write after an
+own delete is a no-op. Remote tables have no read-your-writes overlay: the
+staged intent is never read back locally.
 
 Governed same-process peers use the same SRPC envelope and participant engine
 path as separate processes. Their helper queues, transports, allocator/RCU
@@ -569,6 +581,65 @@ abort decision and private Ready state; resumption deletes that private copy
 without changing source ownership or the retained nonce outcome.
 See [the proof scopes and interfaces](../tla/mako/README.md).
 
+## Bounded facade and catalog profile
+
+The RocksDB-shaped local `mako::DB` facade selects only the C++
+STO/MassTrans backend: `DB::Open` rejects any `Options::storage_engine` other
+than `"cpp"`. Rust STO is reachable only through the closed TPC-C comparison
+adapter. The `sto_tpcc_bench` target compiles `dbtest.cc` with
+`MAKO_RUST_STO_TPCC=1` and links `sto-tpcc-ffi`; there `--storage-engine rust`
+constructs `rust_sto_tpcc_wrapper` in place of `mbta_wrapper`. The ordinary
+`dbtest` binary rejects `rust`. The adapter is an `abstract_db` for that
+benchmark, not an `IDatabase` backend.
+
+The adapter is no longer limited to one local, non-replicated shard. With more
+than one configured shard, or with replication, it switches to its participant
+protocol mode: remote proxies, shard-RPC participants and replay tables. It is
+not a native-sharding participant. `sharding_mark_proxy` accepts only an
+`mbta_ordered_index`, the adapter registers its tables without an engine handle,
+and native admission reads the C++ STO transaction state, so run the Rust
+adapter without `MAKO_CLUSTER_CONFIG`. Its `open_index` throws on a bad shard
+index or an exhausted ID window instead of returning null. See
+[Rust STO](architecture/rust-sto.md) for its scope and qualification status.
+
+`mbta_wrapper` has a fixed catalog budget of `NUM_TABLES_PER_SHARD` (currently
+200) table IDs per shard, preallocated by `init()` and never reclaimed. Opening
+a new `(name, shard)` pair with `open_index(name, shard)` takes the next ID in
+that shard's window `[shard * N + 1, shard * N + N]`. `open_sharded_index`
+takes one ID on every configured shard and preflights all of them first, so a
+capacity failure cannot leave a partially registered logical table. A catalog
+mutex serializes both. Callers must treat a null open result as ordinary
+capacity or backend failure: the window is exhausted, the shard index is out of
+range, or the caller used the retired hint-based `open_index` overload.
+
+Two profiles draw on that budget:
+
+- **Static profile (no `MAKO_CLUSTER_CONFIG`).** Peers address a table by its
+  numeric ID, and IDs follow open order. In sharded or replicated use, every
+  process must therefore construct the complete identical schema in
+  deterministic order before helper, transport-serving, or worker threads
+  start. There is no synchronized cross-process ID protocol, so live schema
+  mutation is unsupported in this profile.
+- **Native sharding (`MAKO_CLUSTER_CONFIG=1`).** Governed indexes are opened
+  lazily at run time, as [TPC-C warehouse handles](#tpc-c-warehouse-handles)
+  describes: one physical index per `(table, warehouse, physical owner)` and
+  one proxy on each origin participant that reaches a remote owner, including
+  while a migration adopts destination storage. Each open takes one ID from
+  the window of the shard index passed to `open_index`: the physical owner for
+  bytes, the origin for a proxy. The native warehouse directory's exclusive
+  guard and then the catalog mutex serialize these opens. On the shard-RPC
+  path a receiver resolves its own canonical binding rather than a peer's
+  numeric ID, so that path does not depend on cross-process open order. Replay
+  still resolves each log record by its numeric table ID
+  (`get_index_by_table_id`). The budget is still 200 IDs per shard and nothing
+  returns an ID, so it bounds how many governed `(table, warehouse)` handles
+  one participant can open.
+
+`mako::setup_update_table` publishes a newly opened index to the helper
+receivers that already run for the calling thread's shard. It holds the helper
+lifecycle lock, and each receiver's table map is mutex-guarded, so publication
+no longer needs external quiescence. A request that names an index its receiver
+has not yet learned fails as an aborted request.
 
 ## Authoring & regenerating the DSL blocks
 

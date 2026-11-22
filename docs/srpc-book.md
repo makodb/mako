@@ -727,9 +727,9 @@ timeout coverage) that previously had to rely on TCP timing.
 |------|---------|
 | 0 | Success |
 | ENOENT | RPC method not found |
-| EINVAL | Bad packet format |
+| EINVAL | Invalid call context/arguments or bad packet format |
 | ETIMEDOUT | Request timed out |
-| EAGAIN | Request rejected by queue policy (overflow/fail-fast) |
+| EAGAIN | Request rejected by queue policy, or `request_with_admission` not admitted to a full channel queue before its deadline (a plain `request` refused by a full channel queue reports `EIO`) |
 
 ---
 
@@ -737,8 +737,8 @@ timeout coverage) that previously had to rely on TCP timing.
 
 ### Client (Single Connection)
 
-`Client` is the public single-connection API (`ClientConnection` is an internal
-pollable implementation detail):
+`Client` is the public single-connection API. Its retained `ClientConnection`
+also exposes lower-level channel-admission control:
 
 ```cpp srpc-no-compile
 auto poll_thread = PollThread::create();
@@ -775,6 +775,58 @@ if (fu_result.is_ok()) {
     fu->wait();  // Block only when result is needed
 }
 ```
+
+### Bounded channel admission
+
+`ClientConnection::request_with_admission(rpc_id, attr, admission_timeout_us,
+write_fn)` serializes the request once and retains the same frame and request ID
+while a full channel returns `WouldBlock`. That result means **no frame bytes
+were accepted**. The method yields cooperatively until admission or its deadline;
+it never resubmits a frame after the channel accepts it.
+
+A positive deadline requires a running SRPC fiber. Retain the connection using
+`Client::connection()`, then release any `Client`/peer lock before calling this
+method. In Mako, `RpcPeer::WithClient` is used only to take that snapshot—not to
+enclose a yielding request. Calls outside a fiber return `EINVAL`; disconnected
+connections fail rather than entering the disconnected-request queue.
+
+Pre-admission validation errors return `Err` without a callback. Once a future
+exists, terminal admission failure completes that future and its callback;
+deadline exhaustion reports `EAGAIN`. Connection closure owns completion if it
+already removed the future from the pending map, preventing double notification.
+`Ok(future)` therefore does not prove successful admission or a successful RPC:
+consume the future's error/reply. A zero deadline preserves ordinary nonblocking
+`request` behavior.
+
+This is queue admission, not response-timeout retry. Mako's Paxos sender uses it
+for accepts, decisions and learner forwarding. Learner forwarding waits in a
+separate fiber so it cannot suspend an application-delivery batch; the learner
+applies only a contiguous slot prefix.
+
+Poll-worker dispatch processes one finite ready-event generation and one
+snapshot of the stackless ready queue per turn. Newly ready events and
+self-woken tasks remain queued for the next turn, so they cannot indefinitely
+prevent TCP polling or pending writable-interest updates. Creating a nested
+fiber still starts it inline, but does not recursively drain the reactor on a
+poll worker. Explicit non-poll `run_loop(false, true)` retains its full
+event-chain drain behavior. A Reactor the poll worker's driver does not drain
+(the disk reactor, or one constructed directly) keeps the full drain and the
+inline pump even on a poll thread. A Shutdown command restores the full drain
+for the driver's last poll, so work readied by a close job queued just before
+`PollThread::shutdown()` still runs.
+
+The native `test_mako_nontxn_distributed` executable includes real socketpair
+regressions for queue drain, deadline rejection without transmission, and close
+during admission, plus ordered learner delivery across gaps and duplicates.
+Its production-poller loopback cases exercise timed/ready-event pressure and
+stackless self-wakes while requiring ordered data/terminal frames and exactly
+one completion per request. These cases connect through `srpc::Client::connect`
+and pad each request to the transport's default outbound high-water mark
+(4 MiB), because a factory-created connection does not expose
+`set_outbound_high_water`. `src/srpc/tests/mako_bounded_turn_rust.rs` covers the
+bounded turn and the shutdown drain in Rust. The separate
+`test_srpc_reactor_manual_compatibility` CTest retains the existing manual
+event-chain and nested-fiber contracts; it does not run the standalone load test.
 
 ### ClientPool (Connection Pool)
 

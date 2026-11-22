@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+    Start 62: test_silo_runtime_concurrency_lifecycle
+1/1 Test #62: test_silo_runtime_concurrency_lifecycle ...   Passed    0.44 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+concurrency    =   0.44 sec*proc (1 test)
+masstree       =   0.44 sec*proc (1 test)
+silo           =   0.44 sec*proc (1 test)
+
+Total Test time (real) =   0.44 sec

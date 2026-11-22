@@ -1,0 +1,11 @@
+     Locking 30 packages to latest compatible versions
+   Compiling private-mako-bound-integration-model v0.0.0 (/var/tmp/mako-fence-bound-model.deVBaQ/integration-model)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.99s
+     Running unittests ../integration-additions.rs (/var/tmp/mako-fence-bound-model.deVBaQ/target/debug/deps/private_mako_bound_integration_model-be4f43a1a4ff9646)
+
+running 2 tests
+test registered_scan_bound::post_cut_bound_covers_opposite_registration_and_publication_orders ... ok
+test registered_scan_bound::post_cut_bound_includes_relaxed_registration_and_completed_outcome ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.03s
+

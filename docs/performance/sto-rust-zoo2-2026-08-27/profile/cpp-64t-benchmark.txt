@@ -1,0 +1,1 @@
+BENCH_RESULT={"engine":"cpp-sto-masstree","threads":64,"keyspace":100000,"ops_per_txn":10,"write_percent":0,"warmup_ms":5000,"duration_ms":1000,"seed":1064,"commits":23014296,"attempts":23014296,"aborts":0,"logical_ops":230142960,"elapsed_ns":1000063267,"txn_per_sec":23012840.046649,"ops_per_sec":230128400.466488,"checksum":11505044223246}

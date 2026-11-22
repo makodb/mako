@@ -1,0 +1,54 @@
+schema: spec-driven
+
+context: |
+  Mako and Janus: distributed transaction systems in C++23 (Janus =
+  OSDI'16 concurrency-control/consensus paper; Mako = OSDI'25
+  speculative geo-replicated transactions).
+
+  Layout: src/deptran (protocols - janus, 2pl, occ, rcc, paxos, raft,
+  tapir), src/mako (Masstree storage + speculative execution),
+  src/bench (TPC-C, TPC-A, RW, micro), src/srpc (RPC framework),
+  src/cluster (sharding/config, a C++23 named module), config/*.yml.
+
+  Conventions that matter more than usual here:
+  - New code is authored in the inline-Rust DSL, not hand-written C++.
+    The `#if RUSTYCPP_RUST` block is the source of truth; the
+    RUSTYCPP:GEN block is generated via scripts/regen_storage_dsl.sh
+    (never bare `inline-rust --rewrite`). Hand C++ is for bridges and
+    for `@unsafe` kernels doing raw-pointer/RCU/threading/third-party
+    surgery. See docs/porting-cpp-to-rust-dsl.md and
+    docs/storage-interface.md.
+  - Prefer rusty:: types over STL (Box/Arc/Cell/RefCell/Option/Vec/
+    Mutex/Function). Exceptions: srpc wire types, third-party APIs
+    (rocksdb, lz4, yaml-cpp), and code outside the change's blast
+    radius.
+  - Every function carries a @safe or @unsafe annotation.
+  - C-style includes (<stdlib.h>, not <cstdlib>); ::abort() not
+    std::abort().
+  - Builds are slow (full 10-30 min). Tests run via Docker:
+    ./docker_build.sh ci <suite>. CLAUDE.md lists the suites.
+
+  Full instructions live in CLAUDE.md - read it before proposing
+  changes that touch build, memory-safety, or protocol code.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

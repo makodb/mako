@@ -1,0 +1,15 @@
+--- a/mako-cache/tests/commit_fence_loom.rs
++++ b/mako-cache/tests/commit_fence_loom.rs
+@@ -88,11 +88,7 @@
+         // Keep one shared owner alive through all joins. Modeling separate Arc
+         // counters only multiplies irrelevant ownership interleavings; the
+         // three protocol atomics remain separate.
+-        let state = Arc::new((
+-            AtomicU64::new(0),
+-            AtomicU64::new(0),
+-            AtomicU64::new(0),
+-        ));
++        let state = Arc::new((AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)));
+         let writer_state = Arc::clone(&state);
+         let writer = thread::spawn(move || {
+             writer_state.1.store(1, Ordering::Release);

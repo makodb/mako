@@ -1,0 +1,1036 @@
+[0/2] Re-checking globbed directories...
+[1/181] Building rusty-cpp-transpiler...
+warning: unnecessary parentheses around `let` scrutinee expression
+    --> transpiler/src/codegen/collect_passes.rs:4225:39
+     |
+4225 |                 if let Some(u_name) = (match fargs.args.first() {
+     |                                       ^
+...
+4230 |                 }) {
+     |                  ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+4225 ~                 if let Some(u_name) = match fargs.args.first() {
+4226 |                     Some(syn::GenericArgument::Type(ty)) if fargs.args.len() == 1 => {
+ ...
+4229 |                     _ => None,
+4230 ~                 }  {
+     |
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/mod.rs:4109:13
+     |
+4109 |         let mut global_rusty_ext = String::new();
+     |             ----^^^^^^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37422:13
+      |
+37289 |             syn::Pat::Reference(r) => {
+      |             ---------------------- matches all the relevant values
+...
+37422 |             syn::Pat::Reference(reference_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+      |
+      = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37425:13
+      |
+37295 |             syn::Pat::Type(pt) => {
+      |             ------------------ matches all the relevant values
+...
+37425 |             syn::Pat::Type(type_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37428:13
+      |
+37292 |             syn::Pat::Paren(paren) => {
+      |             ---------------------- matches all the relevant values
+...
+37428 |             syn::Pat::Paren(paren_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/mod.rs:54902:17
+      |
+54902 |             let mut record = |name: String,
+      |                 ----^^^^^^
+      |                 |
+      |                 help: remove this `mut`
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/collect_passes.rs:11294:31
+      |
+11256 | ...                   | ("write", 0)
+      |                         ------------ matches all the relevant values
+...
+11294 | ...                   | ("write", 0)
+      |                         ^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+   --> transpiler/src/codegen/emit_expr.rs:605:13
+    |
+605 |         let mut block_profile_mark = |label: &str| {
+    |             ----^^^^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/emit_expr.rs:3752:21
+     |
+3752 |                 let mut inner = self.new_inner_for_block();
+     |                     ----^^^^^
+     |                     |
+     |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/emit_expr.rs:3767:21
+     |
+3767 |                 let mut inner = self.new_inner_for_block();
+     |                     ----^^^^^
+     |                     |
+     |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:14004:21
+      |
+14004 |                 let mut inner = self.new_inner_for_block();
+      |                     ----^^^^^
+      |                     |
+      |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:24344:33
+      |
+24344 | ...                   let mut emitted = self
+      |                           ----^^^^^^^
+      |                           |
+      |                           help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:24419:33
+      |
+24419 | ...                   let mut emitted = self
+      |                           ----^^^^^^^
+      |                           |
+      |                           help: remove this `mut`
+
+warning: unreachable pattern
+    --> transpiler/src/codegen/inference.rs:8054:13
+     |
+7809 |             syn::Expr::Field(field) => {
+     |             ----------------------- matches all the relevant values
+...
+8054 |             syn::Expr::Field(field) => match &field.member {
+     |             ^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+  --> transpiler/src/codegen/lookups.rs:85:13
+   |
+85 |         let mut flush = |buf: &mut String, out: &mut Vec<String>| {
+   |             ----^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::const_value_ident_pattern_condition`
+     --> transpiler/src/codegen/mod.rs:33643:5
+      |
+33643 | /     pub(super) fn const_value_ident_pattern_condition(
+33644 | |         &self,
+33645 | |         ident: &syn::Ident,
+33646 | |         source_expr: &str,
+33647 | |         variant_ctx: Option<&VariantTypeContext>,
+33648 | |     ) -> String {
+      | |_______________^ method `codegen::CodeGen::const_value_ident_pattern_condition` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+      = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::runtime_variant_match_condition_for_path`
+     --> transpiler/src/codegen/mod.rs:33670:5
+      |
+33670 | /     pub(super) fn runtime_variant_match_condition_for_path(
+33671 | |         &self,
+33672 | |         path: &syn::Path,
+33673 | |         variant_ctx: Option<&VariantTypeContext>,
+33674 | |         scrutinee_expr: &str,
+33675 | |     ) -> String {
+      | |_______________^ method `codegen::CodeGen::runtime_variant_match_condition_for_path` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::path_is_known_data_enum_variant_with_ctx`
+     --> transpiler/src/codegen/mod.rs:34064:5
+      |
+34064 | /     pub(super) fn path_is_known_data_enum_variant_with_ctx(
+34065 | |         &self,
+34066 | |         path: &syn::Path,
+34067 | |         variant_ctx: Option<&VariantTypeContext>,
+34068 | |     ) -> bool {
+      | |_____________^ method `codegen::CodeGen::path_is_known_data_enum_variant_with_ctx` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `preflight_cpp_abi_whole_dependency_closure` is never used
+    --> transpiler/src/main.rs:1083:4
+     |
+1083 | fn preflight_cpp_abi_whole_dependency_closure(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `validate_rustc_only_runtime_dependencies` is never used
+    --> transpiler/src/main.rs:1690:4
+     |
+1690 | fn validate_rustc_only_runtime_dependencies(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_crate` is never used
+    --> transpiler/src/main.rs:3811:4
+     |
+3811 | fn transpile_crate(
+     |    ^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> transpiler/src/cmake.rs:141:11
+    |
+141 |     Table(toml::value::Table),
+    |     ----- ^^^^^^^^^^^^^^^^^^
+    |     |
+    |     field in this variant
+    |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+141 -     Table(toml::value::Table),
+141 +     Table(()),
+    |
+
+warning: struct `OptionSomeNoneExprCollector` is never constructed
+    --> transpiler/src/codegen/mod.rs:1618:8
+     |
+1618 | struct OptionSomeNoneExprCollector {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `saw_both` is never used
+    --> transpiler/src/codegen/mod.rs:1624:8
+     |
+1623 | impl OptionSomeNoneExprCollector {
+     | -------------------------------- method in this implementation
+1624 |     fn saw_both(&self) -> bool {
+     |        ^^^^^^^^
+
+warning: multiple associated items are never used
+     --> transpiler/src/codegen/mod.rs:4434:8
+      |
+ 3389 | impl CodeGen {
+      | ------------ associated items in this implementation
+...
+ 4434 |     fn relocate_rusty_ext_blocks(wrapped: &str) -> (String, String, String) {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 4500 |     fn globalize_rusty_ext_refs(text: &str, crate_name: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 5259 |     pub fn set_infer_engine(&mut self, enabled: bool) {
+      |            ^^^^^^^^^^^^^^^^
+...
+ 5266 |     pub fn set_print_inference(&mut self, enabled: bool) {
+      |            ^^^^^^^^^^^^^^^^^^^
+...
+ 9831 |     fn module_directly_holds_test_markers(items: &[syn::Item]) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+13257 |     fn module_concrete_type_decl_count_recursive(m: &syn::ItemMod) -> usize {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+13742 |     fn pre_collect_trait_assoc_into(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14682 |     fn cpp_spelling_mentions_import_alias(&self, spelling: &str) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14738 |     fn forward_decl_signature_mentions_unqualified_scope_import_name(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+15354 |     fn apply_parallel_impl_substitutions_to_sig(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+17978 |     fn trait_interface_is_plain_forward_declarable(t: &syn::ItemTrait) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+23664 |     fn hoist_self_before_dependent_defaults(generics: &mut syn::Generics) {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+30778 |     fn rewrite_rust_format_literal_for_cpp(&self, fmt: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+32455 |     fn tuple_pattern_elem_supports_value_match(&self, pat: &syn::Pat) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+34369 |     fn if_let_unwrap_binding_should_preserve_reference(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+39186 |     fn expr_chain_roots_in_type_param(&self, expr: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+40428 |     fn receiver_is_hashmap_like_expr(&self, receiver: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+42508 |     fn block_contains_option_some_and_none_exprs(&self, block: &syn::Block) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+42779 |     fn option_inner_needs_typed_make_optional(&self, inner_ty: &syn::Type) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+46046 |     fn expr_is_noreturn_panic_like(&self, expr: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50639 |     fn expected_type_owner_ident_for_hint(&self, ty: &syn::Type) -> Option<String> {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50646 |     fn seed_block_local_hint_from_expected_type(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50879 |     fn emit_try_macro_invocation(&self, inner: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `spec` is never read
+     --> transpiler/src/codegen/mod.rs:30989:13
+      |
+30987 |         struct Field {
+      |                ----- field in this struct
+30988 |             arg_part: String,
+30989 |             spec: Option<String>,
+      |             ^^^^
+
+warning: methods `emit_match_expr_switch`, `emit_binary_operand_expr`, and `emit_closure_to_string_with_iterator_map_context` are never used
+     --> transpiler/src/codegen/emit_expr.rs:3081:19
+      |
+   19 | impl CodeGen {
+      | ------------ methods in this implementation
+...
+ 3081 |     pub(super) fn emit_match_expr_switch(
+      |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+15803 |     pub(super) fn emit_binary_operand_expr(&self, expr: &syn::Expr) -> String {
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+26443 |     pub(super) fn emit_closure_to_string_with_iterator_map_context(
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `emit_stmt_to_string_with_expected` is never used
+    --> transpiler/src/codegen/emit_stmt.rs:7385:19
+     |
+   3 | impl CodeGen {
+     | ------------ method in this implementation
+...
+7385 |     pub(super) fn emit_stmt_to_string_with_expected(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `maybe_guard_adapt` is never used
+   --> transpiler/src/codegen/guard_flow.rs:412:19
+    |
+ 81 | impl CodeGen {
+    | ------------ method in this implementation
+...
+412 |     pub(super) fn maybe_guard_adapt(&self, expr: &syn::Expr, emitted: String) -> String {
+    |                   ^^^^^^^^^^^^^^^^^
+
+warning: method `try_infer_ternary_arm_type` is never used
+  --> transpiler/src/codegen/inference.rs:92:19
+   |
+67 | impl CodeGen {
+   | ------------ method in this implementation
+...
+92 |     pub(crate) fn try_infer_ternary_arm_type(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `extract_tuple_struct_bindings` is never used
+    --> transpiler/src/codegen/lookups.rs:1423:19
+     |
+   3 | impl CodeGen {
+     | ------------ method in this implementation
+...
+1423 |     pub(super) fn extract_tuple_struct_bindings(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `is_empty` and `cpp_bindings_is_empty` are never used
+  --> transpiler/src/codegen/name_resolver.rs:62:19
+   |
+52 | impl NameResolver {
+   | ----------------- methods in this implementation
+...
+62 |     pub(crate) fn is_empty(&self) -> bool {
+   |                   ^^^^^^^^
+...
+78 |     pub(crate) fn cpp_bindings_is_empty(&self) -> bool {
+   |                   ^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `escape_cpp_qualified_name` is never used
+   --> transpiler/src/codegen/paths.rs:842:19
+    |
+  3 | impl CodeGen {
+    | ------------ associated function in this implementation
+...
+842 |     pub(super) fn escape_cpp_qualified_name(path: &str) -> String {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `has_forward_decl_items` and `should_skip_generic_serialize_extension_overload` are never used
+    --> transpiler/src/codegen/predicates.rs:312:19
+     |
+  37 | impl CodeGen {
+     | ------------ associated items in this implementation
+...
+ 312 |     pub(super) fn has_forward_decl_items(items: &[syn::Item]) -> bool {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+1585 |     pub(super) fn should_skip_generic_serialize_extension_overload(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `type_path_leaf_name` and `map_variant_ctor_param_type` are never used
+   --> transpiler/src/codegen/type_mapping.rs:151:19
+    |
+  3 | impl CodeGen {
+    | ------------ associated items in this implementation
+...
+151 |     pub(super) fn type_path_leaf_name(ty: &syn::Type) -> Option<String> {
+    |                   ^^^^^^^^^^^^^^^^^^^
+...
+449 |     pub(super) fn map_variant_ctor_param_type(&self, ty: &syn::Type, ctor_name: &str) -> String {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `origin` is never read
+   --> transpiler/src/codegen/type_solver.rs:149:16
+    |
+146 | pub(crate) struct Constraint {
+    |                   ---------- field in this struct
+...
+149 |     pub(crate) origin: ConstraintOrigin,
+    |                ^^^^^^
+    |
+    = note: `Constraint` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `0` is never read
+   --> transpiler/src/codegen/type_solver.rs:159:15
+    |
+159 |     Synthetic(&'static str),
+    |     --------- ^^^^^^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ConstraintOrigin` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+159 -     Synthetic(&'static str),
+159 +     Synthetic(()),
+    |
+
+warning: variants `Return` and `StructFieldInit` are never constructed
+   --> transpiler/src/codegen/type_solver.rs:167:5
+    |
+156 | pub(crate) enum ConstraintOrigin {
+    |                 ---------------- variants in this enum
+...
+167 |     Return,
+    |     ^^^^^^
+...
+170 |     StructFieldInit,
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `ConstraintOrigin` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `lookup` is never used
+   --> transpiler/src/codegen/type_solver.rs:191:19
+    |
+182 | impl Substitution {
+    | ----------------- method in this implementation
+...
+191 |     pub(crate) fn lookup(&self, v: TyVarId) -> Option<&TyTerm> {
+    |                   ^^^^^^
+
+warning: associated function `with_binders` is never used
+   --> transpiler/src/codegen/type_solver.rs:650:19
+    |
+637 | impl<'ctx, 'r> ConstraintCollector<'ctx, 'r> {
+    | -------------------------------------------- associated function in this implementation
+...
+650 |     pub(crate) fn with_binders(
+    |                   ^^^^^^^^^^^^
+
+warning: function `infer_branch_merge` is never used
+    --> transpiler/src/codegen/type_solver.rs:1612:15
+     |
+1612 | pub(crate) fn infer_branch_merge(
+     |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `render_tyterm_for_cpp` is never used
+    --> transpiler/src/codegen/type_solver.rs:1652:15
+     |
+1652 | pub(crate) fn render_tyterm_for_cpp(term: &TyTerm) -> Option<String> {
+     |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `element` is never read
+  --> transpiler/src/cpp_abi.rs:42:31
+   |
+42 |     ConstRef { alias: String, element: Type },
+   |     --------                  ^^^^^^^
+   |     |
+   |     field in this variant
+   |
+   = note: `ParamAdapter` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `key` is never read
+  --> transpiler/src/cpp_abi.rs:52:16
+   |
+51 | pub(crate) struct CallableContract {
+   |                   ---------------- field in this struct
+52 |     pub(crate) key: CallableKey,
+   |                ^^^
+   |
+   = note: `CallableContract` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `module` is never read
+  --> transpiler/src/cpp_abi.rs:59:16
+   |
+58 | pub(crate) struct VectorAliasContract {
+   |                   ------------------- field in this struct
+59 |     pub(crate) module: ModulePath,
+   |                ^^^^^^
+   |
+   = note: `VectorAliasContract` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `preflight_crate_sources` is never used
+    --> transpiler/src/cpp_name.rs:1700:15
+     |
+1700 | pub(crate) fn preflight_crate_sources(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `rewrite_content` is never used
+    --> transpiler/src/inline_rust.rs:2544:4
+     |
+2544 | fn rewrite_content(path: &Path, content: &str, blocks: &[ParsedBlock]) -> Result<String, String> {
+     |    ^^^^^^^^^^^^^^^
+
+warning: function `rewrite_content_with_plan` is never used
+    --> transpiler/src/inline_rust.rs:2548:4
+     |
+2548 | fn rewrite_content_with_plan(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `targets` is never read
+   --> transpiler/src/metadata.rs:470:5
+    |
+464 | struct ResolvedPackage {
+    |        --------------- field in this struct
+...
+470 |     targets: Vec<Target>,
+    |     ^^^^^^^
+
+warning: function `inspect_resolved_extern_dependencies_with_context` is never used
+   --> transpiler/src/metadata.rs:860:8
+    |
+860 | pub fn inspect_resolved_extern_dependencies_with_context(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_effective_local_normal_dependency_graph` is never used
+    --> transpiler/src/metadata.rs:1991:8
+     |
+1991 | pub fn resolve_effective_local_normal_dependency_graph(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `discover_local_path_dependencies` is never used
+    --> transpiler/src/metadata.rs:2385:8
+     |
+2385 | pub fn discover_local_path_dependencies(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `collect_concrete_trait_impl_method_owners` is never used
+    --> transpiler/src/transpile.rs:2129:8
+     |
+2129 | pub fn collect_concrete_trait_impl_method_owners(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile` is never used
+    --> transpiler/src/transpile.rs:2796:8
+     |
+2796 | pub fn transpile(rust_source: &str, module_name: Option<&str>) -> Result<String, String> {
+     |        ^^^^^^^^^
+
+warning: function `transpile_with_type_map` is never used
+    --> transpiler/src/transpile.rs:2801:8
+     |
+2801 | pub fn transpile_with_type_map(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_with_type_map_and_extension_hints` is never used
+    --> transpiler/src/transpile.rs:2816:8
+     |
+2816 | pub fn transpile_with_type_map_and_extension_hints(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_full` is never used
+    --> transpiler/src/transpile.rs:2855:8
+     |
+2855 | pub fn transpile_full(
+     |        ^^^^^^^^^^^^^^
+
+warning: `rusty-cpp-transpiler` (bin "rusty-cpp-transpiler") generated 57 warnings (run `cargo fix --bin "rusty-cpp-transpiler" -p rusty-cpp-transpiler` to apply 10 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.56s
+[1/181] Checking remaining inline Rust and canonical rustc crate sources
+
+checked 5 files, 0 with drift
+checked 37 manifest-owned Rust module(s) and lib.rs
+...............................................................................
+----------------------------------------------------------------------
+Ran 79 tests in 6.114s
+
+OK
+checked whole srpc crate (2 modules compiled, partial root compile-only, 0 hand slots), combined importer against generated objects and production library, CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/precondition/wrapping/empty-weight/C-FFI runtime contracts, RequestOptions layout/factory/retry/timeout/jitter runtime contracts, ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, RequestQueue layout/FIFO/config/overflow/expiry/callback-isolation/wrapping runtime contracts, Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, ConnectionState layout/empty-callback/transition runtime contracts, and Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime contracts, LoadBalancer layout/strategy/selection/wrapping runtime contracts, Utils layout/move/teardown/port/hostname/logging runtime contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime contracts, Debugging branch-hint/verify/backtrace-render/panic-tail runtime contracts, and 1961 exact provider-owned strong ABI symbols
+checked whole srpc crate (2 modules compiled, partial root compile-only, 0 hand slots), combined importer against generated objects, CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/precondition/wrapping/empty-weight/C-FFI runtime contracts, RequestOptions layout/factory/retry/timeout/jitter runtime contracts, ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, RequestQueue layout/FIFO/config/overflow/expiry/callback-isolation/wrapping runtime contracts, Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, ConnectionState layout/empty-callback/transition runtime contracts, and Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime contracts, LoadBalancer layout/strategy/selection/wrapping runtime contracts, Utils layout/move/teardown/port/hostname/logging runtime contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime contracts, Debugging branch-hint/verify/backtrace-render/panic-tail runtime contracts, and 1961 exact provider-owned strong ABI symbols
+wrote src/lib.rs
+wrote src/example.rs
+wrote src/lib.rs
+wrote src/example.rs
+wrote src/lib.rs
+wrote src/example.rs
+wrote src/lib.rs
+unchanged src/example.rs
+wrote src/lib.rs
+wrote src/example.rs
+checked 1 manifest-owned Rust module(s) and lib.rs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/rusty-434f7da692073f46)
+
+running 2 tests
+test tests::fn_and_fn_mut_dispatch ... ok
+test tests::empty_and_layout_match_the_cpp_runtime ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/rusty_cpp_markers-3d9664b9ea73eb80)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/srpc-0c868afbc1af997c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/any_message_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/any_message_rust-da498d61ee0d01e6)
+
+running 3 tests
+test alias_decodes_but_the_first_registered_name_remains_canonical ... ok
+test direct_and_free_archive_paths_preserve_independent_wire_bytes ... ok
+test registry_and_pack_preserve_name_type_and_shared_payload_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/basetypes_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/basetypes_rust-ef7b35bf9413b99b)
+
+running 3 tests
+test aliases_layouts_and_traits_match_the_cpp_surface ... ok
+test values_counter_and_time_facades_preserve_behavior ... ok
+test sparse_int_boundaries_and_deterministic_wire_corpus ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/callback_wrapper_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/callback_wrapper_rust-8d0c4024e3798762)
+
+running 3 tests
+test clone_shares_even_a_non_clone_callable ... ok
+test from_callable_exposes_the_original_callable ... ok
+test public_layout_and_traits_match_the_single_field_contract ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/callbacks_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/callbacks_rust-f2d89ce42b9ff12e)
+
+running 6 tests
+test every_event_preserves_arguments_order_and_counts ... ok
+test public_state_is_thread_safe_and_initially_empty ... ok
+test registration_during_dispatch_only_affects_the_next_snapshot ... ok
+test panic_is_swallowed_and_later_callbacks_still_run ... ok
+test concurrent_registration_and_invocation_are_lossless ... ok
+test clear_all_waits_for_a_dispatch_snapshot_to_finish ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/channel_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/channel_rust-30e4e3fe03b994d6)
+
+running 4 tests
+test connection_proxy_forwards_every_method_and_callbacks_are_usable ... ok
+test error_values_and_names_are_stable ... ok
+test listener_and_factory_proxies_preserve_ownership_and_results ... ok
+test value_layouts_match_the_channel_abi ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/circuit_breaker_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/circuit_breaker_rust-6f6f9501ebe413cb)
+
+running 4 tests
+test closed_open_half_open_and_reset_transitions_are_exact ... ok
+test disabled_and_wrapping_boundaries_match_unsigned_cpp ... ok
+test factories_and_names_preserve_the_legacy_values ... ok
+test layouts_discriminants_and_thread_traits_match_the_cpp_surface ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/completion_tracker_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/completion_tracker_rust-7fa8ebfda049f791)
+
+running 5 tests
+test configuration_entry_and_query_contracts_match_production ... ok
+test public_record_enum_and_trait_contracts_are_pinned ... ok
+test relaxed_counters_have_unsigned_wrapping_and_reset_contracts ... ok
+test tracking_expiry_eviction_and_configuration_preserve_behavior ... ok
+test safe_rust_callers_can_repeat_the_mutating_api_across_threads ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/connection_metrics_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/connection_metrics_rust-d0b32e024077a4bc)
+
+running 5 tests
+test fetch_add_has_unsigned_wrapping_parity ... ok
+test public_repr_c_layout_is_eighteen_atomic_u64_fields_in_order ... ok
+test request_and_latency_metrics_preserve_the_production_state_machine ... ok
+test transport_reliability_uptime_and_reset_metrics_preserve_behavior ... ok
+test concurrent_updates_are_atomic_and_in_flight_saturates ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/connection_state_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/connection_state_rust-ef31c36ed7de1296)
+
+running 3 tests
+test default_empty_callback_and_installed_callback_preserve_state_behavior ... ok
+test layout_discriminants_and_callback_type_match_cpp ... ok
+test names_and_transition_table_are_exact ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/debugging_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/debugging_rust-db2f9f9907065ffd)
+
+running 2 tests
+test branch_hints_preserve_boolean_identity ... ok
+test explicit_rust_source_location_drives_the_success_path ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/epoll_wrapper_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/epoll_wrapper_rust-69eb4b9bc6bb98c3)
+
+running 2 tests
+test constants_and_pollable_contract_match_the_cpp_surface ... ok
+test remove_counter_uses_the_established_atomic_increment ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/errors_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/errors_rust-a08328c35568376e)
+
+running 2 tests
+test categories_and_retry_predicates_match_the_numeric_ranges ... ok
+test discriminants_and_names_preserve_the_public_error_contract ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fiber_channel_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/fiber_channel_rust-67e6f3680d8e25cd)
+
+running 7 tests
+test drop_detaches_all_callbacks_before_proxy_teardown ... ok
+test callbacks_copy_frames_fifo_and_drain_before_close ... ok
+test frame_copy_owns_payload_and_null_nonempty_input_is_guarded ... ok
+test send_close_proxy_state_and_test_access_match_the_facade ... ok
+test source_retains_the_load_bearing_lock_and_foreign_event_boundaries ... ok
+test owned_frame_layout_and_pin_contract_are_explicit ... ok
+test parked_receive_wakes_after_cross_thread_delivery ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/fiber_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/fiber_rust-df979b8496c2a175)
+
+running 2 tests
+test context_identity_current_and_yield_preserve_behavior ... ok
+test sleep_helpers_preserve_unsigned_wrapping_and_past_deadlines ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/frame_codec_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/frame_codec_rust-9d027f852ce3f436)
+
+running 2 tests
+test header_boundaries_and_transactional_encode ... ok
+test fragmented_coalesced_and_compacted_streams ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/future_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/future_rust-eb2d10c2a2174b36)
+
+running 4 tests
+test duplicate_handoffs_and_duplicate_sets_are_rejected ... ok
+test factories_preserve_pair_and_ready_value_behavior ... ok
+test invalid_future_reports_invalid_without_waiting ... ok
+test promise_future_delivery_is_one_shot_and_repeatable_to_read ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/heartbeat_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/heartbeat_rust-4688f8a6ffd86cc6)
+
+running 5 tests
+test empty_callback_timeout_is_safe_and_wrapping_elapsed_is_exact ... ok
+test layouts_and_public_callback_type_match_cpp ... ok
+test factories_and_disabled_behavior_are_exact ... ok
+test send_pong_missed_timeout_callback_and_reset_are_exact ... ok
+test set_config_resets_state ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/idempotency_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/idempotency_rust-71bd690c04721dde)
+
+running 6 tests
+test all_legacy_unsigned_arithmetic_wraps_in_debug_rust ... ok
+test keys_hash_generator_and_presets_match_legacy_behavior ... ok
+test byte_helpers_expiry_lru_counters_and_disable_match_legacy_behavior ... ok
+test archive_bytes_match_an_independent_native_endian_oracle ... ok
+test rust_layout_and_auto_traits_match_the_source_contract ... ok
+test truncated_archive_aborts_the_rust_model - should panic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/inmemory_channel_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/inmemory_channel_rust-da74e03c45ee6645)
+
+running 6 tests
+test close_is_peer_only_idempotent_and_kills_both_directions ... ok
+test connect_delivers_copied_bytes_and_peer_addresses_synchronously ... ok
+test direct_listener_without_self_weak_reports_internal ... ok
+test fault_injection_is_per_side_drop_first_and_clearable ... ok
+test listener_lifecycle_collision_and_refusal_match_the_facade ... ok
+test frame_callback_can_reenter_the_peer_without_holding_the_state_lock ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/internal_protocol_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/internal_protocol_rust-790ed7bdac13f4e1)
+
+running 2 tests
+test constants_preserve_the_wire_contract ... ok
+test decode_and_encode_match_the_six_row_boundary_matrix ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/load_balancer_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/load_balancer_rust-a969f51f6fcc3759)
+
+running 2 tests
+test all_selection_strategies_preserve_behavior ... ok
+test state_and_strategy_boundaries_are_exact ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/logging_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/logging_rust-f2bf3e810dc9b169)
+
+running 1 test
+test severity_constants_tags_and_filter_state_are_exact ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/misc_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/misc_rust-09552a2ec801b84a)
+
+running 4 tests
+test heterogeneous_clamp_keeps_the_legacy_template_shape ... ok
+test process_seam_and_homogeneous_clamp_preserve_results ... ok
+test one_time_job_preserves_state_and_trait_dispatch ... ok
+test thousands_formatter_matches_the_legacy_surface ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pollable_proxy_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/pollable_proxy_rust-0c1a99725bba7820)
+
+running 2 tests
+test shim_is_exactly_one_send_sync_arc ... ok
+test proxy_trait_forwards_the_complete_surface ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rand_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/rand_rust-fc0dd931dadb56c5)
+
+running 4 tests
+test byte_string_adapters_preserve_padding_truncation_and_binary_payloads ... ok
+test integer_formatting_matches_the_legacy_decimal_byte_contract ... ok
+test raw_kernel_range_math_and_destroy_have_exact_call_counts ... ok
+test weighted_selection_preserves_boundaries_empty_sentinel_and_draw_counts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reactor_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/reactor_rust-9f1e18eaf950956e)
+
+running 7 tests
+test incumbent_concrete_layouts_are_pinned ... ignored, generated C++ ABI gate: rustc facade containers intentionally have different storage
+test historical_export_surface_is_rust_visible ... ok
+test worker_transfer_types_prove_auto_traits ... ok
+test stackless_cancel_report_stays_a_template ... ok
+test teardown_paths_report_cancelled_waiters_instead_of_silence ... ok
+test janus_placement_markers_cover_the_quorum_surface ... ok
+test stackless_wakers_use_owner_ingress_and_stable_bindings ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/reconnect_policy_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/reconnect_policy_rust-519ab092560cad42)
+
+running 6 tests
+test exponential_backoff_caps_and_peek_does_not_advance_state ... ok
+test factories_preserve_every_legacy_policy_value ... ok
+test jitter_uses_one_raw_draw_and_the_legacy_endpoints ... ok
+test limited_disabled_and_unlimited_retry_boundaries_are_distinct ... ok
+test repr_c_layouts_and_thread_traits_match_the_cpp_surface ... ok
+test retry_counter_wraps_exactly_like_the_unsigned_cpp_cell ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_options_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/request_options_rust-c537a19365d730bb)
+
+running 4 tests
+test factories_retry_and_timeout_boundaries_are_exact ... ok
+test layouts_discriminants_and_traits_match_the_flat_cpp_surface ... ok
+test timeout_strings_cover_every_rust_constructible_variant ... ok
+test backoff_caps_before_jitter_and_draw_counts_are_deterministic ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_queue_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/request_queue_rust-79dca715a1a67dbe)
+
+running 6 tests
+test callbacks_observe_the_legacy_queue_lock_boundaries ... ok
+test constants_factories_and_names_preserve_legacy_values ... ok
+test fifo_capacity_default_ttl_and_config_updates_are_preserved ... ok
+test public_layout_discriminants_and_traits_match_the_cpp_surface ... ok
+test overflow_disabled_expiry_and_clear_callbacks_are_isolated ... ok
+test request_time_expiry_age_and_unsigned_wrap_are_exact ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/serializable_envelope_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/serializable_envelope_rust-1e2f4412ddd921f1)
+
+running 1 test
+test empty_clone_and_pack_state_are_rustc_checked ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/serializable_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/serializable_rust-bc07fc52eb4c86c7)
+
+running 5 tests
+test buffer_source_sink_and_sparse_leaf_impls_match_wire_contract ... ok
+test proxy_factories_keep_the_historical_unconstrained_template_shape ... ok
+test serializable_kind_is_exact_and_nonzero ... ok
+test sparse_facade_matches_independent_wire_oracle ... ok
+test serializable_kind_zero_is_rejected - should panic ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/stat_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/stat_rust-ec14cf309c935e09)
+
+running 2 tests
+test new_sample_and_clear_preserve_the_public_boundary ... ok
+test peek_and_reset_return_snapshots_without_layout_indirection ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tcp_channel_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/tcp_channel_rust-1556982828b0f085)
+
+running 8 tests
+test accept_callback_can_close_its_listener_without_deadlocking ... ok
+test fresh_listener_preserves_the_invalid_fd_and_basic_pollable_contract ... ok
+test listener_bind_close_and_single_use_state_match_the_cpp_contract ... ok
+test connection_constructor_owns_the_fd_and_preserves_initial_state ... ok
+test closed_callback_can_replace_itself_without_deadlocking ... ok
+test concurrent_listener_bind_and_close_never_publish_a_live_fd_after_close ... ok
+test close_return_never_precedes_a_new_accept_callback ... ok
+test close_waits_for_the_whole_accept_driver_with_two_readers ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/threading_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/threading_rust-ad5a0c903820d7f8)
+
+running 2 tests
+test pthread_wrapper_signatures_remain_explicitly_unsafe ... ok
+test spin_lock_layout_traits_and_basic_state_are_pinned ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/utils_rust.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/utils_rust-96f6581359b2a7f2)
+
+running 2 tests
+test addrinfo_layout_empty_state_and_rust_traits_are_pinned ... ok
+test port_contract_and_hostname_facade_are_rustc_exercised ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+[2/181] Fingerprinting the Goal-0 rusty-cpp emitter
+[4/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.internal_protocol.cppm for CXX dependencies
+[5/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.basetypes.cppm for CXX dependencies
+[6/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.callback_wrapper.cppm for CXX dependencies
+[7/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.stat.cppm for CXX dependencies
+[8/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.rand.cppm for CXX dependencies
+[9/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.errors.cppm for CXX dependencies
+[10/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.completion_tracker.cppm for CXX dependencies
+[11/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.connection_metrics.cppm for CXX dependencies
+[12/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.reconnect_policy.cppm for CXX dependencies
+[13/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.request_options.cppm for CXX dependencies
+[14/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.circuit_breaker.cppm for CXX dependencies
+[15/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.connection_state.cppm for CXX dependencies
+[16/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.heartbeat.cppm for CXX dependencies
+[17/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.request_queue.cppm for CXX dependencies
+[18/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.load_balancer.cppm for CXX dependencies
+[19/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.utils.cppm for CXX dependencies
+[20/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.frame_codec.cppm for CXX dependencies
+[21/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.serializable.cppm for CXX dependencies
+[22/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.future.cppm for CXX dependencies
+[23/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.serializable_envelope.cppm for CXX dependencies
+[24/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.logging.cppm for CXX dependencies
+[25/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.idempotency.cppm for CXX dependencies
+[26/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.misc.cppm for CXX dependencies
+[27/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.fiber.cppm for CXX dependencies
+[28/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.channel.cppm for CXX dependencies
+[29/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.epoll_wrapper.cppm for CXX dependencies
+[30/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.pollable_proxy.cppm for CXX dependencies
+[31/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.callbacks.cppm for CXX dependencies
+[32/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.fiber_channel.cppm for CXX dependencies
+[33/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.inmemory_channel.cppm for CXX dependencies
+[34/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.threading.cppm for CXX dependencies
+[35/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.debugging.cppm for CXX dependencies
+[36/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.any_message.cppm for CXX dependencies
+[37/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.tcp_channel.cppm for CXX dependencies
+[38/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.reactor.cppm for CXX dependencies
+[39/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.server.cppm for CXX dependencies
+[40/179] Scanning /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/srpc/goal0-crate-cpp/srpc.client.cppm for CXX dependencies
+[41/179] Generating CXX dyndep file src/srpc/CMakeFiles/srpc.dir/CXX.dd
+[42/125] Building CXX object CMakeFiles/cluster.dir/src/cluster/shard_router.cc.o
+[43/125] Building CXX object CMakeFiles/cluster.dir/src/cluster/cluster_config.cc.o
+[44/125] Building CXX object src/srpc/CMakeFiles/srpc.dir/__/srpc/reactor/epoll_platform_linux.cc.o
+[45/125] Linking CXX static library src/srpc/libsrpc.a
+[46/125] Linking CXX static library libcluster.a
+[47/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/benchmark_control_rpc.cc.o
+[48/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/communicator.cc.o
+[49/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos_main_helper.cc.o
+[50/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/legacy_raft_log_payload.cc.o
+[51/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft_main_helper.cc.o
+[52/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/frame.cc.o
+[53/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config.cc.o
+[54/125] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/commo.cc.o

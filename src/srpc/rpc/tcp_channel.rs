@@ -2143,6 +2143,39 @@ mod native_connect_tests {
     extern "C" {
         fn listen(fd: i32, backlog: i32) -> i32;
         fn bind(fd: i32, address: *const SockaddrIn, length: u32) -> i32;
+        fn fcntl(fd: i32, command: i32, ...) -> i32;
+        fn getrlimit(resource: i32, limit: *mut Rlimit) -> i32;
+        fn setrlimit(resource: i32, limit: *const Rlimit) -> i32;
+    }
+
+    // Linux F_DUPFD: duplicate onto the lowest free descriptor >= the argument.
+    const F_DUPFD: i32 = 0;
+    // Linux RLIMIT_NOFILE (x86_64 and aarch64).
+    const RLIMIT_NOFILE: i32 = 7;
+
+    #[repr(C)]
+    struct Rlimit {
+        cur: u64,
+        max: u64,
+    }
+
+    // Raises the soft descriptor limit so `fd` can be opened. Panics rather
+    // than skipping when the hard limit forbids it: a skip would report the
+    // only guard against the fd_set overflow as passing without testing it.
+    fn allow_descriptor(fd: i32) {
+        let needed = fd as u64 + 1;
+        let mut limit = Rlimit { cur: 0, max: 0 };
+        assert_eq!(unsafe { getrlimit(RLIMIT_NOFILE, &raw mut limit) }, 0);
+        if limit.cur >= needed {
+            return;
+        }
+        assert!(
+            limit.max >= needed,
+            "hard RLIMIT_NOFILE {} cannot hold descriptor {fd}; this test needs at least {needed}",
+            limit.max
+        );
+        let raised = Rlimit { cur: needed.max(limit.max.min(2048)), max: limit.max };
+        assert_eq!(unsafe { setrlimit(RLIMIT_NOFILE, &raw const raised) }, 0);
     }
 
     #[repr(C)]
@@ -2241,5 +2274,35 @@ mod native_connect_tests {
         assert_eq!(unsafe { srpc_tcp_socket_error(raw, &raw mut socket_error) }, 0);
         assert_eq!(socket_error, 0);
         assert!(tcp_socket_is_self_connected(raw, local_address, local_port));
+    }
+
+    // Mako-local: a process with more than FD_SETSIZE (1024) descriptors
+    // (Mako's colocated two-shard replicated leader) connects with fds above
+    // it. The old select()-based wait wrote past its fd_set and let the
+    // kernel rewrite the caller's saved registers and return address.
+    #[test]
+    fn connect_wait_accepts_a_descriptor_above_fd_setsize() {
+        const HIGH_FD: i32 = 1400;
+        allow_descriptor(HIGH_FD);
+        let listener = NativeListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let (address, port) = native_address(&listener);
+        let raw = unsafe { srpc_tcp_socket_open() };
+        assert!(raw >= 0);
+        // SAFETY: socket_open returns a unique descriptor on success.
+        let low = unsafe { OwnedFd::from_raw_fd(raw) };
+        let high = unsafe { fcntl(raw, F_DUPFD, HIGH_FD) };
+        drop(low);
+        assert!(high >= HIGH_FD, "F_DUPFD onto descriptor {HIGH_FD} failed: {high}");
+        // SAFETY: F_DUPFD returned a new descriptor owned only by this test.
+        let socket = unsafe { OwnedFd::from_raw_fd(high) };
+        assert_eq!(set_nonblocking_fd(high), 0);
+        let status = unsafe { srpc_tcp_connect_once(high, address, port) };
+        assert!(status == 0 || tcpconn_last_errno() == unsafe { srpc_tcp_in_progress_errno() });
+        assert_eq!(unsafe { srpc_tcp_wait_writable_once(high, 1000) }, 1);
+        let mut socket_error = 0;
+        assert_eq!(unsafe { srpc_tcp_socket_error(high, &raw mut socket_error) }, 0);
+        assert_eq!(socket_error, 0);
+        let (_accepted, _) = listener.accept().unwrap();
+        drop(socket);
     }
 }

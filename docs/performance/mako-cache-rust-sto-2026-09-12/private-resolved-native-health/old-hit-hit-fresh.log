@@ -1,0 +1,19 @@
+
+running 1 test
+test txn::native_health_proof::global_native_poison_rejects_cross_db_cached_put ... NATIVE_HEALTH_REAL_POISON_BEFORE_RUST_MAPPING hit-fresh
+NATIVE_HEALTH_BYPASS_COMMITTED hit-fresh
+FAILED
+
+failures:
+
+failures:
+    txn::native_health_proof::global_native_poison_rejects_cross_db_cached_put
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s
+
+
+STDERR
+
+thread 'txn::native_health_proof::global_native_poison_rejects_cross_db_cached_put' (1529496) panicked at mako-engine-sto/src/txn_native_health_proof.rs:62:9:
+poisoned native runtime accepted PUT: CommitReport { disposition: Committed, cleanup: Ok(()) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -1,0 +1,15 @@
+diff --git a/crates/mako-engine-sto/src/prefetch.rs b/crates/mako-engine-sto/src/prefetch.rs
+--- a/crates/mako-engine-sto/src/prefetch.rs
++++ b/crates/mako-engine-sto/src/prefetch.rs
+@@ -71,8 +71,9 @@ mod tests {
+         super::restricted_clock(&clock);
+         assert_eq!(clock.current_stamp(), 0);
+         assert!(!clock.general_gate_held());
+-        let stamp = clock.try_allocate_timestamp().unwrap();
+-        assert!(stamp > 0);
++        clock.observe_stamp(42);
++        let stamp = 42;
++        assert_eq!(clock.current_stamp(), stamp);
+         assert_eq!(clock.try_allocate_sequence(), Some(1));
+         super::restricted_clock(&clock);
+         assert_eq!(clock.current_stamp(), stamp);

@@ -1,0 +1,2116 @@
+{
+  "anchor_validation": [
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "d0883774d9a0de40a3427a643047cbf5ea300aaaed3d903d89bcbe11119a717f",
+      "name": "native-replay-drops-put-value",
+      "path": "src/record.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "d6888cd1a604c60cdaa0f1a97573a9729075ad7ea5bc54953396cbd9143c92ed",
+      "name": "early-detached-capacity-discharge",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "3e33505a4c3715689a4a27e13a387d0d4b96bdddf838b4ce5ef53a99882a199e",
+      "name": "hook-time-allocation",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "fab75e41259f2c51141e60ecc98a3f29e6ff657d425cc37ca082bb200e7cdf35",
+      "name": "conflict-cancellation-slot",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "a174de5042bfcd9b4174be299b053339b6679770a87cd98f02ea7631c779bfa7",
+      "name": "missing-ready-publication",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "e7d3403c850a828f34a4ecd59253a7e30fd97ef5e353c86329f617394bdf5455",
+      "name": "premature-ready-publication",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "293a2c63db4f50c83a596511388767d05dc316a9968b5ae88548e5c6cf4fff15",
+      "name": "unpinned-unknown-outcome",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "7e61f206f2eb2eb168fa25e1025f7994da733b25099b06fe9754bd3b5952cb94",
+      "name": "checkpoint-load-omits-values",
+      "path": "src/recovery.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "0fd841b62ed4ce30d332dd88f1f2a02e83efc32acbe17e119ef668640ca56b8e",
+      "name": "checkpoint-hydrates-tombstones",
+      "path": "src/recovery.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "fcb53f319fe853c829e15edcba94840e62665bcd85b540b512bc66821b5626ab",
+      "name": "wrong-mako-timestamp",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "c8a583353e4b2f7b63232783cfe21183e8c15fe20eedb7324208b8604be70fec",
+      "name": "missing-recovery-clock-floor",
+      "path": "src/recovery.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "e88e14a99a1bfbf65b23461e86ffb4a640df905182e01a75bea362c7b034419d",
+      "name": "gc-includes-exact-cutoff",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "89950aa45819b80f2c8c964050246784b46754e53f31f984a8176437bae131b9",
+      "name": "gc-loses-reclaimed-metadata",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    },
+    {
+      "anchor_matches": 1,
+      "anchor_sha256": "5d36963da2ae7dd3e7608a274ce39c8edb17e90814ca2138eedce29e91888106",
+      "name": "gc-drops-exact-retry-exclusion",
+      "path": "src/writeback.rs",
+      "reasons": [],
+      "replacement_matches": 0,
+      "valid": true
+    }
+  ],
+  "baseline": {
+    "compile": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "mako-cache",
+        "--no-default-features",
+        "--features",
+        "engine-sto-test-hooks,test-support",
+        "--no-run"
+      ],
+      "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-86fphc6z",
+      "elapsed_seconds": 33.998,
+      "failed_test_lines": [],
+      "output_sha256": "a5c8e6ff0235babd3873bece8f2277320c99180bd57e9e3f313f2f4e98afefd6",
+      "returncode": 0,
+      "running_test_counts": [],
+      "timed_out": false,
+      "timeout_seconds": 900
+    },
+    "lock_setup": {
+      "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+      "normalization": {
+        "command": [
+          "cargo",
+          "metadata",
+          "--offline",
+          "--format-version",
+          "1"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-86fphc6z",
+        "elapsed_seconds": 0.804,
+        "failed_test_lines": [],
+        "output_sha256": "bddb5342e7c334fd9ea187e625af715f786627058a622a3c2a0246db5becae04",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+      "target_still_absent": true
+    },
+    "path_rewrites": [
+      {
+        "from": "../mako-engine",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+      },
+      {
+        "from": "../mrx-core",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+      },
+      {
+        "from": "../mrx-rocks",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+      },
+      {
+        "from": "../mako-history",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+      },
+      {
+        "from": "../mrx-rocks",
+        "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+      }
+    ],
+    "reason": null,
+    "status": "green",
+    "test_runs": [
+      {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--",
+          "--test-threads=1"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-86fphc6z",
+        "elapsed_seconds": 13.246,
+        "failed_test_lines": [],
+        "output_sha256": "fe21cb46e3d060f5c4b9d2cff0ed8c6e7a90f863ada3856365fd8fed20d16687",
+        "returncode": 0,
+        "running_test_counts": [
+          203,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          1,
+          8,
+          3,
+          5,
+          1,
+          5
+        ],
+        "timed_out": false,
+        "timeout_seconds": 1200
+      }
+    ],
+    "tests": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "mako-cache",
+        "--no-default-features",
+        "--features",
+        "engine-sto-test-hooks,test-support",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-baseline-86fphc6z",
+      "elapsed_seconds": 13.246,
+      "failed_test_lines": [],
+      "output_sha256": "fe21cb46e3d060f5c4b9d2cff0ed8c6e7a90f863ada3856365fd8fed20d16687",
+      "returncode": 0,
+      "running_test_counts": [
+        203,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        1,
+        8,
+        3,
+        5,
+        1,
+        5
+      ],
+      "timed_out": false,
+      "timeout_seconds": 1200
+    },
+    "toolchain": {
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)\nrelease: 1.95.0\ncommit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850\ncommit-date: 2026-03-21\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:OpenSSL/3.5.4)\nssl: OpenSSL 3.5.4 30 Sep 2025\nos: Debian 13.0.0 (trixie) [64-bit]",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2"
+    },
+    "workspace": null
+  },
+  "dependency_source_integrity": {
+    "after_tree_sha256": "4ad4500be65a4db383ced3a226b0090b4d3edd245e8bec7f57d0b23a0899d8c5",
+    "before_tree_sha256": "4ad4500be65a4db383ced3a226b0090b4d3edd245e8bec7f57d0b23a0899d8c5",
+    "changed_paths": [],
+    "file_count": 163,
+    "file_sha256": {
+      "../rust-toolchain.toml": "9507ffc9d1642c1137fd14b8bb6a7f877b9cf5be361f7e9c47604c3e6d9c3dc9",
+      "Cargo.lock": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+      "mako-clock/Cargo.toml": "063c0036acc9969bef562bb6bafa69ffc2bf1a82aa57db8a8e67be16262daf15",
+      "mako-clock/src/lib.rs": "6cdc4d95c07394bf7024995da70d94e451a170ba388f85e2553fa433b710e3b7",
+      "mako-engine-api/Cargo.toml": "df6756de832fdde73f6b222ace0f9d5044f7147d138cd81ea1a77046b6c02a00",
+      "mako-engine-api/src/commit.rs": "acdc320370f46cd6b7633d1978d6d9dba420367c4d8a76d17f4e132b4d9e5f03",
+      "mako-engine-api/src/engine.rs": "b7dddf6f5944caab7d7c1294fe3b3e8bdf651e14cff6720c8cf29b38ec8b3466",
+      "mako-engine-api/src/error.rs": "768db73343df1e8da91257c6f3cf0bd03e28a6b8abdd04a351679b467ec12573",
+      "mako-engine-api/src/features.rs": "a79e93201d0ce620ed76ea19cd73c30fe07d8b65ac4f5f62eb397a4c45bbefea",
+      "mako-engine-api/src/lib.rs": "76991a99d1bd21b4298595cb7dbcb54a473942dbeb4e2f7ce3ca92af26dbec2c",
+      "mako-engine-api/src/limits.rs": "2843bcc422a7531584c3a4c7d24fc64da0bfe56b07d64cc90b837fd6a06f7578",
+      "mako-engine-api/src/modes.rs": "f2855a8674c532bc44d18625be73e7a31d236f0d7001a37cc886ea4c355fd5f2",
+      "mako-engine-api/src/test_hooks.rs": "37f3ee9ab2ccccda37dafb9b827591a89b21d040b48a56d3a4da1c701397941f",
+      "mako-engine-api/src/timestamp.rs": "8bb70374c10e5edd323b09f100f89a38f19936b98345d4c9f233d987bda9eb0e",
+      "mako-engine-sto/Cargo.toml": "91fbcd912ba341d72fa9fbd12bb26b0141a6ff49f731348f03907c0052eb6f1f",
+      "mako-engine-sto/src/db.rs": "40602d64f5c8c03af972e4083ecbcd6b28a5319a40b7b80fd953a6c26485017d",
+      "mako-engine-sto/src/engine.rs": "12b410f83c56278c591df76e68b01f6a9ff670191904ccbf9068e1253d404d7e",
+      "mako-engine-sto/src/holder.rs": "93537e16e8d3da5f48d8378168da54b12e643492dd1fb10ec1d64dd83fc1a48c",
+      "mako-engine-sto/src/lib.rs": "130b363490578e710388d19dfd3ab2b65e47604f80aaaff457f1e294e72f611c",
+      "mako-engine-sto/src/outcome.rs": "4f80a8785730ca106a8cc61dbec748c5b90df7b61b3e2e17ff3d2a7cd26e06ff",
+      "mako-engine-sto/src/record.rs": "a93f0c7878843e447a4f20229d86a4bae7cf4da24f1910265ec6d9c98acdb997",
+      "mako-engine-sto/src/touched.rs": "e12eeb47509dddbd2502f33ecda71f7b99189b1a08a7adb86065434113d9de62",
+      "mako-engine-sto/src/txn.rs": "c940d977f33f03c279f1f136537b03fbcca4a5f82db5e7bc32396f75a0021ea8",
+      "mako-engine-sto/src/txn_local_version_tests.rs": "d2d32694488c7e9a2928fc7c5e84e2d15070279960f8af8938619fd9ce392afd",
+      "mako-engine-sto/src/txn_ownership_tests.rs": "066bdd0f252ca3a73f915267ff761a52be1967a6f8caf9606b89b96bd59c44da",
+      "mako-engine-sto/src/txn_poison_tests.rs": "c44ab1d261bca58066c1616881314b7f183d6bf142dd8dcc942257949695acc6",
+      "mako-engine-sto/src/txn_pool_tests.rs": "a7c65949bbc855af753d00c6c2cb7adfeb345b8696c54b5e89a2936bf4e4702d",
+      "mako-engine-sto/src/worker.rs": "79ab6a1a73d7dd853b75abf79111e6af886c38dfdd0c258a753c458a1c8fdb70",
+      "mako-engine-sto/tests/differential.rs": "a8039445e96bd19aefe7023b6c16d5be18f4e51da903cd4a95c15f9b00d7eec0",
+      "mako-engine-sto/tests/history_oracle.rs": "62de544cf43ed4d5d6a09a931e36a94750b0f13b4dea700b4c2b99b2cd7a4260",
+      "mako-engine-sto/tests/native.rs": "47b46bfd684038299886a7f91800d4c922b3d56bb7e70ba5b4e4fb1bd5ca1137",
+      "mako-engine-sto/tests/value_boundaries.rs": "65ddb4813e74de1e5e3f5e609c24badaf33f9523e0357b0c4ad8a6b5560b77b2",
+      "mako-engine/Cargo.toml": "2637d694da9923b8aefa57fcaf6133771e07c79bea56deefd85c54844d1bd706",
+      "mako-engine/src/lib.rs": "20d5620fec733fa47a4a51a8ac4e611e11b90db89bbdb7da085a4b1d5faf9260",
+      "mako-history/Cargo.toml": "2a031b7aabf440a39382c2457a409e4c4485ca7dffb7fceaefa35963759a8d1d",
+      "mako-history/src/application.rs": "084750038e83c2fae691f757fd69df2873ce0a48a6a0520743191d71a3f23e32",
+      "mako-history/src/checker.rs": "f53bb247b2c9e52b2fd59e3b8738896bc554abe5b195dd381e44a0c5c6d4581b",
+      "mako-history/src/lib.rs": "d42b4ac74c0a1ad080ffab76486bd361e2c02427e3113caf99fd786e7b9f9996",
+      "mako-history/src/replay.rs": "0920f62c131bcaf3f5db3cbd18540e83db2f1d4644bccd7c82aafe2b1bba6200",
+      "mako-history/tests/application.rs": "5984fd0695b596952346504373b5aa102318eca5752b1ae9325471393643745e",
+      "mako-history/tests/oracle.rs": "a99ad3fe34fbfd9c961adc0035bbd1d3803e77729ae2b9035217f67fd651b6ba",
+      "mako-local-sys/Cargo.toml": "8d4743eb57146a4abc9a7e960fda0f30f0efb970a9886fa12ad3f2cbfa1186ca",
+      "mako-local-sys/build.rs": "633a79b4ce02f316165feae6b1542c89a28d57ac8a6bd4aa610f62e3747209e1",
+      "mako-local-sys/src/lib.rs": "db9c716d8ac745a64c9d5e635edb4b903e6779b7a06203658e0d51b955707ecb",
+      "mako-local/Cargo.toml": "96ddf0839013d6e76578187437edf7fb612abc33c5d626d0cfaffecf88feef06",
+      "mako-local/build.rs": "7126d0b73b5736ac73e9acb71e2c2f6b6f0cb9287a50dd51d00e2e2b93b68b35",
+      "mako-local/src/engine.rs": "c76c0769b10a1c2784ccb5a71538237e930492f06a55b51b0578f17b2eb324f9",
+      "mako-local/src/fake_abi.rs": "5da3af115f617cbd4d9d38f10841ce9e1db29ac4024222999d21d4a57cef0058",
+      "mako-local/src/lib.rs": "2616bbf21059b99f4af7bad464cbc8d184a69ef04175c9dd5d9e5af3081d9dc8",
+      "mako-local/src/worker.rs": "0386ce7681305b019ec7c6b07611dda1f170c4a2b7c75e64258a853ebc5ec08a",
+      "mako-local/tests/clock_differential.rs": "366f7dcf5ba8ebe43486f66471a7937248341984bd7aacb69d41da8dcc036d3d",
+      "mako-local/tests/differential.rs": "ff888240659214c39d9a7ef0ca0e4d1b4c821556d326e8829b7358ad0d80b77a",
+      "mako-local/tests/fixed_worker.rs": "b09aec886793586f73c34da7c04b12c7235c6b2d2fcf4a9fe0145602e42c260b",
+      "mako-local/tests/history_oracle.rs": "a04025eab67811a1b31e04cfcb8712299a2399b9c50070a9810e221b97cf8e2e",
+      "mako-local/tests/native_abi_link.rs": "2e9ee5773e97f86bac55881585e5fbb1953a0b85b111f3829ad251ef5bdeaeeb",
+      "mako-local/tests/native_allocator_config.rs": "f12e469d336b4b7b8bb825c538f050c0b3f2b7c143506940de96ceec13796b49",
+      "mako-local/tests/overhead.rs": "08b863d8d36e52f443b3dc6a8c4fe11d5d4747249e2cde44fa1de289b43a2e91",
+      "mako-local/tests/transactions.rs": "edec4caab625dfd5aca7dad40ddcd5fb27ff574ccedf49c4ff8abd2b592909ec",
+      "mako-local/tests/worker_pools.rs": "ed1768af9ea64beed8622532db58ac97897d29356668c16fa4c1c9647cf7b795",
+      "masstree/Cargo.toml": "e9c791041a9ba805a189bf20c2055c4a31b98de57a3d8e01a92a47f3c77d1dfb",
+      "masstree/build.rs": "25c3e5599f1f819742b56e715ca41920888774c0bf5306b201fc09337235b1cd",
+      "masstree/src/bin/masstree_get_bench.rs": "07ac15bfd0ec14a9b0f2897a42cd9d2d8baa9f5fdec48c6daeac0c839392d521",
+      "masstree/src/lib.rs": "859ff26e09291411f095a03961de0ee1db366166e48524414d9b4b008ac13d06",
+      "masstree/src/native.rs": "40a044ef836cb9f939c619644649c50bfaf910fde4de308411e81f3f6ab71804",
+      "masstree/tests/native_integration.rs": "32880c33b3d784345564bfb02d1829458f7ce51801377a069f8c0a98e5385dd8",
+      "mrx-core/Cargo.toml": "157521b986aef0627acb7d6002a182be62e8abe78dd3fcca80a36e5d7b80c875",
+      "mrx-core/src/durability.rs": "c91e2b9adaea02154e579a45d07cc457d34a59703613090d9137d8c181e20d43",
+      "mrx-core/src/fakes.rs": "8b2cf3647868b416a437477b570e017cd56cd274366e1421842deaeb22b513fe",
+      "mrx-core/src/lib.rs": "6c283277ca6b2c1e4dec7bdcc513eb8ea2090069e69ba42ec4540e452c01c7a6",
+      "mrx-core/src/record.rs": "09ee96f556761100ee9c8ef4e6fdb174bd829c7b9b8baf40cb01fa74e45bd5ca",
+      "mrx-core/src/runtime.rs": "4522e621904d81fdb6eadb87978c9fd34a10d5b1ac828566fd468a2a48586b93",
+      "mrx-core/src/store.rs": "0f69ab41d62d6903a43491b4243524b787df1d8c3cfd1dce01b4360de6c3ff24",
+      "mrx-core/src/table.rs": "716f18e5a7764a3c04633a4dee007d7ec33977070003a1698d464d3c5cee7729",
+      "mrx-core/src/value.rs": "3891d605091d2ddb2145fcd9d8fb396d9f1e04a08fe985bdc27beebb7a45d9eb",
+      "mrx-core/tests/cache.rs": "c273c9044f885c2fe52744826e6b90d0e6f00d71dd4ff5bec14643d2d4b27da0",
+      "mrx-core/tests/durability.rs": "c0afc69765026fee54eb92e7598a090f206fe7632ba4934433968279056807c0",
+      "mrx-rocks/Cargo.toml": "28e77165712340d3c093b3a80eb6ff74fff354dd707ac3e43249427e7dad6c12",
+      "mrx-rocks/build.rs": "1d20aa8622a192a004df83e98c82df02eba23b3443c6af257c5abcb2a661a916",
+      "mrx-rocks/src/lib.rs": "d48e1ace8509e297f2b320283369a6bcd3548141d9bb5a9f4de8e1c5205cb409",
+      "mrx-rocks/tests/rocks.rs": "b88d8811bebf9c98edd5db03faabc9fcab92fe642cae4916223ce509ab2ca3d1",
+      "mtree-sys/Cargo.toml": "4e5161b5aea2400bae7c0321e0c3c1e1bb9866609afcbfe8e7d8111a3205f880",
+      "mtree-sys/src/lib.rs": "e72ad337714369a3fbb2c50a3682987d8c96e7d5da885aea8474c1f8366644ea",
+      "sto-core/Cargo.toml": "135812cf1958a7a345f858f538332cf2b54eaf06150c89adff0523d55ed29cd2",
+      "sto-core/src/adapter.rs": "789feaf590c2fd672311c12aa1fda8b393714926e3bd3f52ce25bcbbd4707fb5",
+      "sto-core/src/bin/sto_core_array_bench.rs": "e106b1cd47e0ae0bc7b461396c214b59590b49de63633ac82bb99e85fc70d4f9",
+      "sto-core/src/direct_commit.rs": "d54c70b4d81263f05be242f7fd11f0d139ba74cfc23cdfbdf7e4df4c18eee73f",
+      "sto-core/src/error.rs": "001f23f014c2b7f6c51dd0d3b4b2252c09ee0a71357f04bea3da87e41e7a7bc2",
+      "sto-core/src/hook.rs": "165a30164578110a464a0165d6ac2e8ee9af391432a962fde0bc441a51b1f499",
+      "sto-core/src/identity.rs": "bccd3073719b948b9b4573b3e03991a5bca9cb9f1b2050837129e4420038ddb5",
+      "sto-core/src/item.rs": "9c32f05956f1aa2581892291211b1c40b1f1a2b6e2fa22480fa5b46304761bac",
+      "sto-core/src/legacy_tid.rs": "b520a52e199de98106e242a29d0d50ea25f68af9ce3213a5d33f6948e222e0d8",
+      "sto-core/src/lib.rs": "26a2b8ce6865666dca553444c4e80474ec3e3ab2afd4f8e3660ce1fd9c83cf56",
+      "sto-core/src/lock.rs": "9104dae7886b1604c59cb7cc6f1fd553a44978f80fdf3cc0ecde987b3b94534a",
+      "sto-core/src/runtime.rs": "065f26c64db71f1bff3c6326a70a8923f683c5261504247bfe550e10037807b1",
+      "sto-core/src/terminal_read.rs": "2a40fabe86dc4add31df2e80deda310bcf5f8fad809967a5c97e298e425c21f0",
+      "sto-core/src/test_install.rs": "aa72552a5b3e620b250107c7a013dc18df1a92ead3aaee65e6a9614a91bebdfc",
+      "sto-core/src/transaction.rs": "e87f825195b456ad977241a2cb5d3069c641b699fd7e988b38bd1397325bbb79",
+      "sto-core/src/txn_array.rs": "66a4190f5e271e3e135c26e0dc42f62242e8e0631409a10b16660d8c650aa9a9",
+      "sto-core/src/txn_cell.rs": "12bf34cdaa4bbefc394f7386ce8398b934c7b7aa3b9f38310d66535a7bd6506c",
+      "sto-core/src/txn_counter.rs": "321416cb0d25f345f29a9ca0cb31604e361d5f8f53da7f8b52b3dc925c366109",
+      "sto-core/src/version.rs": "37fe9367eac34c978560f5119d5784a1d171c8cef1d80104e3d6698e1d7e703a",
+      "sto-core/tests/commit_hook.rs": "39b0c3645bc743e9bbf7f132eb9d017d792845436a959102cd2a8eb3c60b85fc",
+      "sto-core/tests/compile_fail.rs": "2e5a8e520fbebb6e70afc9f9d3a39098213c5d3eb1285112f36c61824c70034e",
+      "sto-core/tests/failure_protocol.rs": "e2a2e17435d058a54f9a227adb0468abf88dfbcfedc5a40c4e535beae26231e7",
+      "sto-core/tests/legacy_tid.rs": "5cafc71ed162af3a8d8be5392064eb982c829da1b1742e605d37c1f6e7931600",
+      "sto-core/tests/local_versions.rs": "6a697bedd9fe6baa6d7e6459fa6378c08e17535f21cfceb8ec2f779f8775268b",
+      "sto-core/tests/public_adapter_contract.rs": "2fd67d7bfbc8999f6e340b3a4d1751fe91ac310611aa42939450b473bacb0d16",
+      "sto-core/tests/reference_history.rs": "d221a229d7c11eef85a0edd75a00cf1b8f8aafdeb55ad4dcb18af8c82fec682c",
+      "sto-core/tests/support/failure_protocol_install_observer.rs": "8b5565f00948b71e1a23e0a5dd4dc6758d7dc05434194d51f1936fc5f346e6f9",
+      "sto-core/tests/transactions.rs": "73b888a30aeda0f115152d1a290022cc28f02f1981ffcc2d250388215236ad00",
+      "sto-core/tests/ui/acquire_context.rs": "1d74570297438c166ccc2222e05cf002c17674aea63153e752ac7c847bec1749",
+      "sto-core/tests/ui/acquire_context.stderr": "4ccab553372ff4bb84249b6ef51e9d95b129ca97903d6287f49db3aa7bf4a505",
+      "sto-core/tests/ui/active_transaction.rs": "a0556184112c05dea98055482649b30707499668295e1c481a27484785367705",
+      "sto-core/tests/ui/active_transaction.stderr": "b3c421ac80ddf610bde9d817fdce07482a7b0be2e89e7b00e19e2da258c03e4b",
+      "sto-core/tests/ui/entry.rs": "c33e1d275ac5d725ae148140734f91c48d79b6f626e211d03dc03362b5b1cd1c",
+      "sto-core/tests/ui/entry.stderr": "0df802715ae2c2ff41cceb7d3d06e3e93b3f665f40cfea1664da956377592e62",
+      "sto-core/tests/ui/execution_check_context.rs": "8f84b4ae633b04086ca83b6628d5ffab99dd80382a3981e246a28e95766f5e4c",
+      "sto-core/tests/ui/execution_check_context.stderr": "4c0d800f2c56360e69183db1787241e2a9ba09ada00b0317e1bfbb2e6600f046",
+      "sto-core/tests/ui/finish_context.rs": "770a5752298e7cf8c79cc92f593beb7d8a7b95aa5fc449475edb7ba98f4b690a",
+      "sto-core/tests/ui/finish_context.stderr": "fdb1b686baa738ca6345418043fab673188629865e52f1c7780e432c4eead98b",
+      "sto-core/tests/ui/finish_item.rs": "709b34e8981cc0d06934d9b5a51e12be1f7b97cd2793745edb8792811b6b99d6",
+      "sto-core/tests/ui/finish_item.stderr": "8166c39b39bf11b1dd003455b7d4102ccf8903114b7370c2b26b5f6cad8126b5",
+      "sto-core/tests/ui/install_context.rs": "7abdb5485410ce3859333e8af7b85c9bb6783d03bf0ed2337ed17544e46e7673",
+      "sto-core/tests/ui/install_context.stderr": "19f1212782159368513bd88d6cc4f5fad87a2cf8607e2ca48399ffaec5d39ad1",
+      "sto-core/tests/ui/install_item.rs": "251e4fc8a20345c4ccf78dd40fb86534920f3aa324c37531e276f4e43da93268",
+      "sto-core/tests/ui/install_item.stderr": "968b970abc0a14f49ae84207ab37828688ee93f286656462d0ed5914012bdc9c",
+      "sto-core/tests/ui/non_send_guard.rs": "bed090e8ad8d3ad84f626eb4a0928b91db8e8b839f48bd73edfd4247d11cf0da",
+      "sto-core/tests/ui/non_send_guard.stderr": "053648138f53cd5583ad6525ab4b617fe1ea4e4ed1b1e8fefbc8ae87a08ec6df",
+      "sto-core/tests/ui/predicate_context.rs": "3622a31b2561fae7b8648889cc6f7a3cb9bad3a5ea2cd324cc6fbe95e38fe2e6",
+      "sto-core/tests/ui/predicate_context.stderr": "42e4b4aca931825470eaa1488c4cdfd93447ff5fea55b823e914b79c0832943b",
+      "sto-core/tests/ui/preflight_context.rs": "1e4ff5aad8cc64d648f545eedcf0cbe50ec8fff1735273ea836c7dcb0b7b65fd",
+      "sto-core/tests/ui/preflight_context.stderr": "d284d27922c34a2b2fce6e684a6436c712e2048cab917042f2d89a00d8ef87ba",
+      "sto-core/tests/ui/preflight_free_validation_context.rs": "3dcfd0a81931456077ab8d4f9b57cdec746e5f97fd609daad7c4a8bc3f6a21a9",
+      "sto-core/tests/ui/preflight_free_validation_context.stderr": "d511c4ae9614a906b5785b5544bfe620debd895b8e06f01e13a3da0cab575702",
+      "sto-core/tests/ui/preflight_item.rs": "247390319d5a52a301a4eee004229ed7f8829c676d99dea0793de9c7da967b5e",
+      "sto-core/tests/ui/preflight_item.stderr": "6d34a9412a6e566c0b52972d0106b62cbdea7ac86819fa7deac6d6e180ee0fea",
+      "sto-core/tests/ui/release_context.rs": "cbc0fa539fdda3ae06cdf41bf2b1584889422fcdfbbe34fafd7acfde693556c9",
+      "sto-core/tests/ui/release_context.stderr": "297cfa19c22f84cc51e4433e61c016993f0b9e7078b3392505b8cd33a8674739",
+      "sto-core/tests/ui/resolved_item_session.rs": "a087a9cc17eba87ea11fd9f4a1028741c4194b5e52315e2d22d3d76f9213f3e8",
+      "sto-core/tests/ui/resolved_item_session.stderr": "49c7c9a728d1a0e47b6bfc4edd31fd06443f9365d4800b57a64641bea993c64e",
+      "sto-core/tests/ui/support/mod.rs": "42c2a99c57088349b0cba78bcb5b997eb08237ad3364adc35933caf603ad0aa7",
+      "sto-core/tests/ui/terminal_read_typestate.rs": "755089ed88f514dd1ecb2a1d90340ed356f6298047d26ed820a4c97ff53c1b26",
+      "sto-core/tests/ui/terminal_read_typestate.stderr": "ddbcbd150a678b546163ffc7e4ed799d1b8871388905653168890a5693bdb4fe",
+      "sto-core/tests/ui/unique_item_keys.rs": "a6a408ae2b9b96f4847b173107146089bd535f1f74f39a91a6b8cafeee4fd5dc",
+      "sto-core/tests/ui/unique_item_keys.stderr": "68a17886653ec937f792299847dbf9c905b3408f13080f9381078f6f8377eaab",
+      "sto-core/tests/ui/validation_context.rs": "5693353275a25b06d2b0b4512662842abeadbaabcdf7e01f49e173e6a9ee0531",
+      "sto-core/tests/ui/validation_context.stderr": "1094418e60185fa957ffd339a1ee7ac6b7fc5cb7965cdd02177e98b23818f8e9",
+      "sto-core/tests/ui/worker_context.rs": "1d436168ab1b4153192b394347cfaddd65a63767363a38b2660a056cb4e739ee",
+      "sto-core/tests/ui/worker_context.stderr": "812aa8cffd209768ba65bc28faaab0803c9805114947534dafd7401f4dbfc3fa",
+      "sto-masstree/Cargo.toml": "43d4d7d69da8fc11edcf6af020d5694d84c2eb0b273be94e73f090d6fc0c63b5",
+      "sto-masstree/build.rs": "5deffb28aefc0175be3e624c794bae1f1fafcf3c9439a78cb1cc1e83d76ef0e3",
+      "sto-masstree/src/bin/sto_masstree_compare.rs": "86599acbb629e935c2aa16e44dad1aa989af9d7843ac59a5dd3d63f502b8a45e",
+      "sto-masstree/src/direct_record.rs": "d492a97f6b6a6febe8dc833398fa110fc88807d84a8a07c95ec201f326b4735d",
+      "sto-masstree/src/fixed_u64.rs": "de8f116cab8fefff0ddd68fc91e4c489ca88c20c8178fc2b9deaf2a395b7e5e8",
+      "sto-masstree/src/history_tests.rs": "fb8dad05ac4838e882c74e401d3f787ff43c75fc6a3ab7ad99e816333213f5c9",
+      "sto-masstree/src/lib.rs": "b4c19fc6404a754ff626cc64337646460d0ce1c85189d61f83eb6f584ea7dfef",
+      "sto-masstree/src/local_version_tests.rs": "263eaab7e43022f04568aa20a927c837849a01f8d0e2d250f8fe5832308d38c1",
+      "sto-masstree/src/record_prefetch.rs": "7072fd4e0c3c3907de63eac8c3ab7a62c367fe02485a1ab5a62410d6797011ca",
+      "sto-masstree/src/registry_growth_tests.rs": "f8d0ed43e27e241cbfc9d08391ff81ea676d51c8464a4feee822f0f617963e7c",
+      "sto-masstree/tests/history_oracle.rs": "f0757156e6677df7862cb2fde2bb1766fa90bfb7dc3206ce2b2df681d91bae9a",
+      "sto-masstree/tests/local_versions_native.rs": "ef83144f8945ddd0fe25f2afb20bad95e3d078bf2f0d78990f30605dde814846",
+      "sto-masstree/tests/native_integration.rs": "02035b4a3a3e0be982b96b8eb1ce4193bae6cc205cff60a6ea2237390d5ff466",
+      "sto-masstree/tests/public_contract.rs": "8b1ad6fa277909307d57438b121398edb3c34c026cd284474859667e524a6806"
+    },
+    "unchanged": true
+  },
+  "elapsed_seconds": 520.754,
+  "engine": "sto",
+  "mutations": [
+    {
+      "anchor_sha256": "d0883774d9a0de40a3427a643047cbf5ea300aaaed3d903d89bcbe11119a717f",
+      "breaks": "The native transaction installs the canonical final same-key value while asynchronous RocksDB replay materializes an empty value.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "native",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-7492z3m9",
+        "elapsed_seconds": 21.028,
+        "failed_test_lines": [],
+        "output_sha256": "2a210fba6cb045939c4a6f4a45e22952707e338ceddf6146b7f04a22bc113196",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "every_same_key_mutation_pair_has_one_canonical_backend_result",
+      "executed_test_count": 1,
+      "expected_signature": "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-7492z3m9",
+          "elapsed_seconds": 1.415,
+          "failed_test_lines": [],
+          "output_sha256": "c5affc26242c5bd7b892058918159d067e8becdd9adc049f01f1cf955391c35d",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "6ca971cfd76a737294e71778260b1c24dedeff3edb4787b66f1cf232d14fdcdc",
+      "name": "native-replay-drops-put-value",
+      "observed_signature": "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED",
+      "original_file_sha256": "dcb9d9ae186d85ceb1a33512aba02afd9c5638c44923509546a838c42fa6c110",
+      "path": "src/record.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "651cf7bb7431656c0d6cbe2397becae5bb21810edf3050cc6dc62d283c6e6fdd",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "native",
+          "every_same_key_mutation_pair_has_one_canonical_backend_result",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-native-replay-drops-put-value-7492z3m9",
+        "elapsed_seconds": 0.54,
+        "failed_test_lines": [
+          "test every_same_key_mutation_pair_has_one_canonical_backend_result ... FAILED"
+        ],
+        "output_sha256": "11668b00712906f8b2878b54d2f804aa8aa0287c693a2af39bedb5b37e8d3d6e",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "d6888cd1a604c60cdaa0f1a97573a9729075ad7ea5bc54953396cbd9143c92ed",
+      "breaks": "A second producer can enter a capacity-one queue before the first detached reservation is consumed or dropped.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-i6v2clc3",
+        "elapsed_seconds": 29.837,
+        "failed_test_lines": [],
+        "output_sha256": "57e635830f1c69bc25ac647fcccc7fede3c65b3a4f1d21246b5ff988e2ceca93",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::detached_permit_backpressures_another_reserver_until_drop",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-i6v2clc3",
+          "elapsed_seconds": 0.378,
+          "failed_test_lines": [],
+          "output_sha256": "97251f8b419df2ebbbf77d564e55fc64974dc2ad321fd53e579ffe59176dc5af",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "c3ab6a4a2da060f26b221d59558ea849b7288b019a791aef853e75c500dbaec4",
+      "name": "early-detached-capacity-discharge",
+      "observed_signature": "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "1e0b6a1aee9051e928de677807e9715d8f4986d9fffd51041368da5b5c6bd689",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::detached_permit_backpressures_another_reserver_until_drop",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-early-detached-capacity-discharge-i6v2clc3",
+        "elapsed_seconds": 0.707,
+        "failed_test_lines": [
+          "test writeback::tests::detached_permit_backpressures_another_reserver_until_drop ... FAILED"
+        ],
+        "output_sha256": "a9c70355f0f2f0f03ecdc526eb2ae22eb3cb7c8e6642b37a3b936e660bc4d3cf",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "3e33505a4c3715689a4a27e13a387d0d4b96bdddf838b4ce5ef53a99882a199e",
+      "breaks": "DetachedPermit::bind performs a heap round trip in the native post-validation critical section.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "hook_allocation",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-3xq0op7v",
+        "elapsed_seconds": 22.471,
+        "failed_test_lines": [],
+        "output_sha256": "bb9974a85d2b75af16fb85d562b49ff776b0cc3f1b3f1006602c41910855d265",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "detached_bind_is_allocation_free_and_the_tripwire_is_live",
+      "executed_test_count": 1,
+      "expected_signature": "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-3xq0op7v",
+          "elapsed_seconds": 0.375,
+          "failed_test_lines": [],
+          "output_sha256": "a40382cfade80b025b93cc3a847c23e10ec1d1bb3566303d1cbe20d2c4eabf58",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "ebf5362926706c732d0745671df51821fffa7a580fa3d25d0074527e1fda35e7",
+      "name": "hook-time-allocation",
+      "observed_signature": "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "879f5c57f0f71d7e377f8025e80413e0aaf509c95c8fa393754d3569e5322b4c",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "hook_allocation",
+          "detached_bind_is_allocation_free_and_the_tripwire_is_live",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-hook-time-allocation-3xq0op7v",
+        "elapsed_seconds": 0.57,
+        "failed_test_lines": [
+          "test detached_bind_is_allocation_free_and_the_tripwire_is_live ... FAILED"
+        ],
+        "output_sha256": "4b1749c2e63abed00a3a5528f3692396f7aecb9054ce5fef3cd2a2bd84cf618e",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "fab75e41259f2c51141e60ecc98a3f29e6ff657d425cc37ca082bb200e7cdf35",
+      "breaks": "A validation loser advances last_bound and leaves a gap in the dense committed CacheSeq history.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-8ql7c6ns",
+        "elapsed_seconds": 31.676,
+        "failed_test_lines": [],
+        "output_sha256": "0971c8564db653ae1c2420a1b695c96b033f219af53d4037d0a46b5797aa591b",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-8ql7c6ns",
+          "elapsed_seconds": 0.741,
+          "failed_test_lines": [],
+          "output_sha256": "5c04f717519ca3f57a117383770bbf17a03135d5647c0aa431be9c88d486ac60",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "05f721af89ae9dcd63251bfbf2d8d453036e2fde7b6f651ebc44fb614880f0e9",
+      "name": "conflict-cancellation-slot",
+      "observed_signature": "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "3a76061bab6e2a6daaa7498a5699f3d2c573e6a995b86529cb0e1228b8e14b86",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-conflict-cancellation-slot-8ql7c6ns",
+        "elapsed_seconds": 0.784,
+        "failed_test_lines": [
+          "test writeback::tests::detached_abort_uses_capacity_but_never_assigns_a_sequence_or_slot ... FAILED"
+        ],
+        "output_sha256": "844c74ca161d5e36ec57ef25b1382b357bb357df960ec402ea47094a0e1cd209",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "a174de5042bfcd9b4174be299b053339b6679770a87cd98f02ea7631c779bfa7",
+      "breaks": "A successful publish advances the acknowledged frontier but leaves the write-back consumer permanently blocked.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-lq_3yur1",
+        "elapsed_seconds": 28.897,
+        "failed_test_lines": [],
+        "output_sha256": "4d55415557b0a82a0d57915620b427b7779ceb9fd9d70a46a201aa9b22bff37e",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-lq_3yur1",
+          "elapsed_seconds": 0.423,
+          "failed_test_lines": [],
+          "output_sha256": "bf98f86345d17c4800b39eb27e9b1e050e848b4a5aeb959822f4c7e2e57727e9",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "cfd85ebbe81ceaf72a7881f0957aea9a8073228b6abfcab9a3220b039bb58c69",
+      "name": "missing-ready-publication",
+      "observed_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "22fba7871564d30ea26b6e05e7231a35044af9a307018f15b6afa579c8eefc9e",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-ready-publication-lq_3yur1",
+        "elapsed_seconds": 0.834,
+        "failed_test_lines": [
+          "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED"
+        ],
+        "output_sha256": "740d4b1d3f112f7bb8da97da276f282a7d00b056d6355ae3a64d2bc95754b3a9",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "e7d3403c850a828f34a4ecd59253a7e30fd97ef5e353c86329f617394bdf5455",
+      "breaks": "The consumer may observe Ready before native success and before the finalized record has been stored.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-k27sgdf1",
+        "elapsed_seconds": 29.039,
+        "failed_test_lines": [],
+        "output_sha256": "8c18421ecbd98e0f63a1410e3613c6b0749282f4df0ab0d50b959e7b6610ecd3",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-k27sgdf1",
+          "elapsed_seconds": 0.397,
+          "failed_test_lines": [],
+          "output_sha256": "3b4ae045e7e16d55c858662aef385c654e6ffb8d87d757c85953823e61b27e70",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "cc683944d98cc9fe22e30d2d34a8ee61d6ffc97803c9227839c9f906afe8471a",
+      "name": "premature-ready-publication",
+      "observed_signature": "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "354380dbf9e7038630245929588782d63a53033ac4f915082acff4475fe984ce",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-premature-ready-publication-k27sgdf1",
+        "elapsed_seconds": 0.795,
+        "failed_test_lines": [
+          "test writeback::tests::bind_and_publish_make_the_prepared_to_ready_transition_explicit ... FAILED"
+        ],
+        "output_sha256": "d2b6f7d4873ea3739a75c192d2ac83bea72471f22ff88421b33358dbbfff8c2c",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "293a2c63db4f50c83a596511388767d05dc316a9968b5ae88548e5c6cf4fff15",
+      "breaks": "Dropping a bound reservation neither finalizes its record nor pins the uncertain sequence, permitting unsafe progress.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ds947l_7",
+        "elapsed_seconds": 28.591,
+        "failed_test_lines": [],
+        "output_sha256": "944cb95915992f1e75df3c9e9ff8df1478f3ddc9dcc32f5cdc48a391ba6490a2",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ds947l_7",
+          "elapsed_seconds": 0.439,
+          "failed_test_lines": [],
+          "output_sha256": "60491e683229166563069a6c96df4293e289845f42e327d2156e153afc964c87",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "c08a8832305b31af56687bc437a8a0762b3d7a279a4b354bedf8daacae2b3b43",
+      "name": "unpinned-unknown-outcome",
+      "observed_signature": "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "03028105141525de42a5a1d302fcfad7d1f0aef6e361ac65e7edcce75b9aa4d2",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-unpinned-unknown-outcome-ds947l_7",
+        "elapsed_seconds": 0.772,
+        "failed_test_lines": [
+          "test writeback::tests::dropping_bound_unknown_finalizes_and_retains_its_write_set ... FAILED"
+        ],
+        "output_sha256": "1549ce74b8a11f946c32cd3f7d039199578f4fc18c67d5b6052a01f99de91439",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "7e61f206f2eb2eb168fa25e1025f7994da733b25099b06fe9754bd3b5952cb94",
+      "breaks": "Checkpoint startup exposes missing live values after their logs were reclaimed.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-load-omits-values-naa4zx1q",
+        "elapsed_seconds": 30.367,
+        "failed_test_lines": [],
+        "output_sha256": "269c00e161d3a4932731af494c329cb45e733eabccea6a551eb62123d3180e68",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters",
+      "executed_test_count": 1,
+      "expected_signature": "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-load-omits-values-naa4zx1q",
+          "elapsed_seconds": 0.418,
+          "failed_test_lines": [],
+          "output_sha256": "ef04e071287aa20b574eab7f4d6f11b3702e1ca31a69e570c452c8785627cd75",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "169aabe23bbef2cb059af685ad9e0178c76df13b27ab18bbe389b0127119841f",
+      "name": "checkpoint-load-omits-values",
+      "observed_signature": "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED",
+      "original_file_sha256": "631687549c574f4960e5edb32959f21098e33fadf001fbbd7dfc055247ecb73a",
+      "path": "src/recovery.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "b8769f97a85ae2335c8ab02f93822ee8b0b42a272d3d537d6c93a82b8f595524",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-load-omits-values-naa4zx1q",
+        "elapsed_seconds": 0.851,
+        "failed_test_lines": [
+          "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED"
+        ],
+        "output_sha256": "bffd994367a00af317f04bb6b32b782ed98189accda729880cc37ff04a596aa0",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "0fd841b62ed4ce30d332dd88f1f2a02e83efc32acbe17e119ef668640ca56b8e",
+      "breaks": "Checkpoint hydration makes a deleted key present in Silo.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-hydrates-tombstones-_ukp8twh",
+        "elapsed_seconds": 30.587,
+        "failed_test_lines": [],
+        "output_sha256": "e2b44426f9fb8d1a811ea9f84168ff5f63f8d8f73291551b5477e306f49f2350",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters",
+      "executed_test_count": 1,
+      "expected_signature": "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-hydrates-tombstones-_ukp8twh",
+          "elapsed_seconds": 0.461,
+          "failed_test_lines": [],
+          "output_sha256": "a0c739e00fe9b22000333bb1048780c8a74a3013712d052f05823b99da23c6a2",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "03e844e0da8c3d7e49080fbeafeee19e7083909dbb316e266c727500ce4790fe",
+      "name": "checkpoint-hydrates-tombstones",
+      "observed_signature": "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED",
+      "original_file_sha256": "631687549c574f4960e5edb32959f21098e33fadf001fbbd7dfc055247ecb73a",
+      "path": "src/recovery.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "ec44f1a53bab2425d6830718a1c6cfeca320bb2785f169ed06936c25458ed170",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-checkpoint-hydrates-tombstones-_ukp8twh",
+        "elapsed_seconds": 0.876,
+        "failed_test_lines": [
+          "test milestone1_acceptance_tests::gc_reclaims_all_history_then_recovers_current_values_tombstones_and_counters ... FAILED"
+        ],
+        "output_sha256": "96adf1534d7df51d44c2ddc894ea5c96a125f7bd6b88da31c7d17ab5794c77b5",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "fcb53f319fe853c829e15edcba94840e62665bcd85b540b512bc66821b5626ab",
+      "breaks": "The applied frontier no longer agrees with the exact Mako timestamp encoded by native serialization.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "timestamp",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-jfvnso35",
+        "elapsed_seconds": 20.162,
+        "failed_test_lines": [],
+        "output_sha256": "82ec98547663a71de9b6f9b996ac7eabc7f7104ffac475fb00f721fd34f08590",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "native_timestamp_matches_the_persisted_record_and_applied_frontier",
+      "executed_test_count": 1,
+      "expected_signature": "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-jfvnso35",
+          "elapsed_seconds": 0.441,
+          "failed_test_lines": [],
+          "output_sha256": "497b49de2dfeac5e0053fbf458cbe821b1ba8840151a288d91ee7e0e1714f575",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "ef1b31a04a026c3ae413172bf3625a5efa453c834a871b0de52b5cc5decae297",
+      "name": "wrong-mako-timestamp",
+      "observed_signature": "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "56c90a809e2fa16b0f277c5494f446a32a4f7eafa4dcd90fd1822ec473730e4c",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--test",
+          "timestamp",
+          "native_timestamp_matches_the_persisted_record_and_applied_frontier",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-wrong-mako-timestamp-jfvnso35",
+        "elapsed_seconds": 2.18,
+        "failed_test_lines": [
+          "test native_timestamp_matches_the_persisted_record_and_applied_frontier ... FAILED"
+        ],
+        "output_sha256": "4ccfade70bfd267aeda426c366383e62915edd2c67a118079ceca1a3fe3aa6bf",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "c8a583353e4b2f7b63232783cfe21183e8c15fe20eedb7324208b8604be70fec",
+      "breaks": "A post-recovery native commit can reuse or precede a timestamp in the recovered backend history.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-ojbs1snn",
+        "elapsed_seconds": 28.724,
+        "failed_test_lines": [],
+        "output_sha256": "683ef55ab5c3fbdc67cd06a651d8bb1e7b9a73c2f2ca68a5b9e226997573a23d",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "tests::recovery_advances_mako_timestamp_past_the_recovered_maximum",
+      "executed_test_count": 1,
+      "expected_signature": "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-ojbs1snn",
+          "elapsed_seconds": 0.419,
+          "failed_test_lines": [],
+          "output_sha256": "ac44e13017c28ecfb17b5b86c723eaf76c50fad2bfe151501967ae38776f0c9f",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "dfccd0cfec374048e6a148161cecee67a86d0865f55cd6e9dcc54e2caced92a6",
+      "name": "missing-recovery-clock-floor",
+      "observed_signature": "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED",
+      "original_file_sha256": "631687549c574f4960e5edb32959f21098e33fadf001fbbd7dfc055247ecb73a",
+      "path": "src/recovery.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "9fca83d554f657e7a90a9220dbeced738bcabeed399e81904ac25723fe3b25da",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "tests::recovery_advances_mako_timestamp_past_the_recovered_maximum",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-missing-recovery-clock-floor-ojbs1snn",
+        "elapsed_seconds": 0.887,
+        "failed_test_lines": [
+          "test tests::recovery_advances_mako_timestamp_past_the_recovered_maximum ... FAILED"
+        ],
+        "output_sha256": "1f4ea7cbebe69c896f350d2678d4e227870508ad4779a5702f4396155a5cc635",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "e88e14a99a1bfbf65b23461e86ffb4a640df905182e01a75bea362c7b034419d",
+      "breaks": "GC deletes records at the retention boundary instead of retaining them.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-includes-exact-cutoff-h_30wtqh",
+        "elapsed_seconds": 28.933,
+        "failed_test_lines": [],
+        "output_sha256": "504f330093a9bcbd0fdac8189e17bc8205b1e7f285d0005f107067dd5be446be",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-includes-exact-cutoff-h_30wtqh",
+          "elapsed_seconds": 0.444,
+          "failed_test_lines": [],
+          "output_sha256": "0b8b02c1c0239bb30ee1db2a4005b427c9d1838cce0073447d5788a412bd1d22",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "7ac38b0c77beebda2516f10a3551c98e4c7f9d5b7b65169762a4cf48730ec9bc",
+      "name": "gc-includes-exact-cutoff",
+      "observed_signature": "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "b7fdae60494ffeb3a56c4456675232728048c5bc8df5b762cbdc55e30f2d791b",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-includes-exact-cutoff-h_30wtqh",
+        "elapsed_seconds": 0.687,
+        "failed_test_lines": [
+          "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED"
+        ],
+        "output_sha256": "d945a1f4bfcdf4c0a28423b51b9b154343feb48b2d69638b377d0906894bfe41",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "89950aa45819b80f2c8c964050246784b46754e53f31f984a8176437bae131b9",
+      "breaks": "GC leaves a gap in the retained suffix by omitting its atomic metadata update.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-loses-reclaimed-metadata-jzx3vxri",
+        "elapsed_seconds": 29.484,
+        "failed_test_lines": [],
+        "output_sha256": "76cfa1d3fc48d4ada78fe1fcf87c53d51f74416f1d0fbbf95458bad77f6f853a",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-loses-reclaimed-metadata-jzx3vxri",
+          "elapsed_seconds": 0.424,
+          "failed_test_lines": [],
+          "output_sha256": "e5698437340b7b704a8b07f76b7c118fa4b0816f1b3a64f4d3a848d682f62088",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "4cba4c4318c49d1d5aa01dfdf215c857cbefc6cc9fdfcbf10fd4a602545d44da",
+      "name": "gc-loses-reclaimed-metadata",
+      "observed_signature": "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "4b7655fb801b8c2f3dd5742233d115eb987b4cae7780ff0c22ae83c65c956c87",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-loses-reclaimed-metadata-jzx3vxri",
+        "elapsed_seconds": 0.764,
+        "failed_test_lines": [
+          "test writeback::tests::gc_cutoff_is_strict_and_untagged_reversed_hlc_keeps_dense_suffix ... FAILED"
+        ],
+        "output_sha256": "4ea914ee8beb2a4d00a744ef20f7fa4500ed05b22cebd19d1ba869e281a1dbe2",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    },
+    {
+      "anchor_sha256": "5d36963da2ae7dd3e7608a274ce39c8edb17e90814ca2138eedce29e91888106",
+      "breaks": "An apply can overwrite lane metadata before the exact ambiguous GC retry completes.",
+      "compile": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "--no-run"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-drops-exact-retry-exclusion-x6u4vtq6",
+        "elapsed_seconds": 61.124,
+        "failed_test_lines": [],
+        "output_sha256": "218b20a2fdd7c19bec0d808ed06d3cdff1cb8249ae943fd7ea55f2c971080bd7",
+        "returncode": 0,
+        "running_test_counts": [],
+        "timed_out": false,
+        "timeout_seconds": 900
+      },
+      "designated_test": "writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once",
+      "executed_test_count": 1,
+      "expected_signature": "test writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once ... FAILED",
+      "lock_setup": {
+        "copied_lockfile_sha256": "9f4df4034e1fac49027530a1ae961b36735d6bd715a3eb6237eebc7e643c5ffb",
+        "normalization": {
+          "command": [
+            "cargo",
+            "metadata",
+            "--offline",
+            "--format-version",
+            "1"
+          ],
+          "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-drops-exact-retry-exclusion-x6u4vtq6",
+          "elapsed_seconds": 0.463,
+          "failed_test_lines": [],
+          "output_sha256": "8ebe0087bb74e1adefc9513a3dcece87b3d898116e43b75dd6ccda853a2e6f87",
+          "returncode": 0,
+          "running_test_counts": [],
+          "timed_out": false,
+          "timeout_seconds": 900
+        },
+        "normalized_lockfile_sha256": "f53bc48be0d6c3f0fa159ce7f2df60adcf87acdb73f2f59f838ee6a5118c9a8e",
+        "target_still_absent": true
+      },
+      "mutated_file_sha256": "47da072c1b1088dcd2a85e53d9683cef16d0a4a46081d68e82a38aed3e573c7f",
+      "name": "gc-drops-exact-retry-exclusion",
+      "observed_signature": "test writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once ... FAILED",
+      "original_file_sha256": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "path": "src/writeback.rs",
+      "path_rewrites": [
+        {
+          "from": "../mako-engine",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine"
+        },
+        {
+          "from": "../mrx-core",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-core"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        },
+        {
+          "from": "../mako-history",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history"
+        },
+        {
+          "from": "../mrx-rocks",
+          "to": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-rocks"
+        }
+      ],
+      "reason": "designated exact test failed with the expected signature",
+      "replacement_sha256": "6974e65e259cdd36621312f4445dabeef8f843f3a2effd2b535f85b80316fbef",
+      "status": "killed",
+      "test": {
+        "command": [
+          "cargo",
+          "test",
+          "--locked",
+          "-p",
+          "mako-cache",
+          "--no-default-features",
+          "--features",
+          "engine-sto-test-hooks,test-support",
+          "--lib",
+          "writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "cwd": "/home/users/shuai/.cache/mako-cache-mutations/mako-cache-mut-gc-drops-exact-retry-exclusion-x6u4vtq6",
+        "elapsed_seconds": 0.816,
+        "failed_test_lines": [
+          "test writeback::tests::ambiguous_gc_retries_exact_bytes_before_apply_and_counts_once ... FAILED"
+        ],
+        "output_sha256": "c209785513d1a699cc20557618f8d941881e97042bc4f3cfbe3b4f0f6dd62628",
+        "returncode": 101,
+        "running_test_counts": [
+          1
+        ],
+        "timed_out": false,
+        "timeout_seconds": 180
+      },
+      "workspace": null
+    }
+  ],
+  "native_profile": {
+    "build_dir": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22",
+    "commit_hooks_required": true,
+    "hook_archive_required": false,
+    "hook_implementation": "rust"
+  },
+  "native_wrapper_source": null,
+  "original_crate": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-cache",
+  "rustup_toolchain_override": "1.95.0",
+  "schema": "mako-cache-phase1f-mutations-v1",
+  "scope": "applied-to-Rocks; asynchronous and not a Rocks WAL durability claim",
+  "score": {
+    "harness_errors": 0,
+    "killed": 14,
+    "survived": 0,
+    "total": 14
+  },
+  "selected": [
+    "native-replay-drops-put-value",
+    "early-detached-capacity-discharge",
+    "hook-time-allocation",
+    "conflict-cancellation-slot",
+    "missing-ready-publication",
+    "premature-ready-publication",
+    "unpinned-unknown-outcome",
+    "checkpoint-load-omits-values",
+    "checkpoint-hydrates-tombstones",
+    "wrong-mako-timestamp",
+    "missing-recovery-clock-floor",
+    "gc-includes-exact-cutoff",
+    "gc-loses-reclaimed-metadata",
+    "gc-drops-exact-retry-exclusion"
+  ],
+  "source_integrity": {
+    "after_tree_sha256": "c3ca2350f790aaf4e6aa441aa815de0b196fc3ee379af4febfac0bb934f9deb8",
+    "before_tree_sha256": "c3ca2350f790aaf4e6aa441aa815de0b196fc3ee379af4febfac0bb934f9deb8",
+    "changed_paths": [],
+    "file_count": 22,
+    "file_sha256": {
+      "Cargo.toml": "0cfc5e4ea15c895bc6606258f8710bf807acd9ed95e5dd17c3d13604badf59c6",
+      "build.rs": "cf540ed1b1f13487d257c0f4334146fdaef0ec2298fbc7029a7d23aa86c9ba94",
+      "src/application_history_tests.rs": "e37c8cc8ec90fe075523bd9fe1e51f90fce3fa14453d3573e713016a9eb21d56",
+      "src/checkpoint.rs": "e4f4dfd8346a35ec370f2ca54a9a5dc55f998032df681e6a88d5238d5583a8be",
+      "src/crash_tests.rs": "9fb197ba7ff3a2f38ac5da818eb5bd17464ba5989c70b84e6c1e43f2b06ea158",
+      "src/failpoint.rs": "3666a5f4a2d3d6166f9fd6eb700b016f88c56bbf70f5adb50de0283791d233ed",
+      "src/lib.rs": "6b752728553931efe678e69d8be6b165bdace112fcb945d3c25056c019e65911",
+      "src/milestone1_acceptance_tests.rs": "0f93eff4427cb08c2332c79b2adf0bbbaa74ee36ca74cc218e0e6a503fac641d",
+      "src/record.rs": "dcb9d9ae186d85ceb1a33512aba02afd9c5638c44923509546a838c42fa6c110",
+      "src/recovery.rs": "631687549c574f4960e5edb32959f21098e33fadf001fbbd7dfc055247ecb73a",
+      "src/runtime.rs": "3c5fcf5e673c80f888541508e5e599ee8d6562d5a82a18dd07d40123a2a491ce",
+      "src/test_support.rs": "220a4384fab288e70e9d3022bdcf3d89c7eb8fbc52cf026e90690ec3f0ced874",
+      "src/writeback.rs": "1e11eda7b8df4da26a9a6b39b74004c48ce9b127af1a31cefab1bae47313197b",
+      "src/writeback_set.rs": "3ed22c144e9396c1b369219596a27e7e9ad065a5e67473830505b936c1b2d197",
+      "tests/cleanup.rs": "b210a9c45ae0f82e49fb7f0b5954ec5ddd3d8bd53e8c48adae7605f7e32c599a",
+      "tests/commit_fence_loom.rs": "d19e04320d0b1053a13df533e76efa67936f4a827581d9b174923be35676c8a0",
+      "tests/concurrent_holder.rs": "3196021c719a7275e370cccb71b0e741804b6bcf217d19b04fb43a1445618e0a",
+      "tests/hook_allocation.rs": "c40b5dc116d6f34321ebe5977ffad417fd6737e70fac661aaaddee74ac523580",
+      "tests/native.rs": "da595fb0c446ba9b9b929352eefa75329f78537f7321c75877465906f2d86efd",
+      "tests/occupancy_credit_loom.rs": "3b80213dfc77868dbbbc735e40daad7725c4eb8f5abebf688aa19a8886f31d94",
+      "tests/rocks.rs": "a9fc79aedabfd487b16eedc4ebae6d3099f5e1dcf298adaa7033c92c2235cd7c",
+      "tests/timestamp.rs": "0ade5b35761586527afb612b9af207f359c62aab2dfa758abf58fc33693bff49"
+    },
+    "unchanged": true
+  },
+  "started_utc": "2026-09-13T05:49:00Z",
+  "status": "all_killed",
+  "temp_root": "/home/users/shuai/.cache/mako-cache-mutations",
+  "toolchain_pin_sha256": "9507ffc9d1642c1137fd14b8bb6a7f877b9cf5be361f7e9c47604c3e6d9c3dc9",
+  "artifact": {
+    "source_report": "/var/tmp/mako-sto-integration.UdvOQE/cache-post-format-pinned-final-mutations.json",
+    "source_report_sha256": "443484ffc2f35eecfb776e1fdaaef4081e496205a1ff8972c11888e702dbf152",
+    "runner_source_sha256": "6bd2113619f3c257dc8f5586dfd0e4464b1789419add389788ffba525dd81381",
+    "working_directory": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates",
+    "command": [
+      "bash",
+      "/var/tmp/mako-sto-integration.UdvOQE/cargo-native",
+      "--run",
+      "python3",
+      "mako-cache/mutations/run.py",
+      "--engine",
+      "sto",
+      "--report",
+      "/var/tmp/mako-sto-integration.UdvOQE/cache-post-format-pinned-final-mutations.json"
+    ],
+    "log": "/var/tmp/mako-sto-integration.UdvOQE/cache-post-format-pinned-final-mutations.log",
+    "launcher": {
+      "path": "/var/tmp/mako-sto-integration.UdvOQE/cargo-native",
+      "sha256": "cd317993212b98782d56a20c56fc91920542d082728def7fa9b39b54d84a09f4",
+      "contents": "#!/bin/bash\nset -euo pipefail\nexport RUSTUP_TOOLCHAIN=1.95.0\nexport MAKO_BUILD_DIR=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22\nexport MAKO_LOCAL_FAKE_ABI=0\nexport MAKO_LOCAL_REQUIRE_NATIVE=1\nexport MAKO_MTREE_NATIVE_INTEGRATION=1\nexport MAKO_MTREE_NATIVE_LIB_DIRS=\"${MAKO_BUILD_DIR}:${MAKO_BUILD_DIR}/src/masstree:/home/users/shuai/.linuxbrew/opt/llvm@22/lib\"\nexport MAKO_MTREE_NATIVE_LIBS=static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread\nexport LD_LIBRARY_PATH=\"/home/users/shuai/.linuxbrew/opt/llvm@22/lib:${MAKO_BUILD_DIR}/third-party/yaml-cpp\"\nexport MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1\nexport MAKO_LOCAL_DIFFERENTIAL_DRIVER=\"${MAKO_BUILD_DIR}/mako_local_differential_driver\"\nexport PYTHON=/home/users/shuai/.linuxbrew/bin/python3\nexport LIBCLANG_PATH=/home/users/shuai/.linuxbrew/opt/llvm@21/lib\nexport CARGO_TARGET_DIR=/var/tmp/mako-sto-integration.UdvOQE/target\nexport TMPDIR=/var/tmp/mako-sto-integration.UdvOQE\nexport CARGO_BUILD_JOBS=4\nif [[ \"${1:-}\" == \"--run\" ]]; then\n    shift\n    exec \"$@\"\nfi\nexec cargo \"$@\"\n"
+    },
+    "note": "Captured child output streams omitted where present. Commands, outcomes, source/toolchain identities and original report digest retained. Prior unspecified-toolchain report remains in pre-format/."
+  }
+}

@@ -1,0 +1,381 @@
+TPC-C Sharding: Initialized policy with 16 warehouses across 1 shards (version 1788944566)
+D [<unknown>:0] 2026-09-09 09:02:46.892 | Server: generated instance_id=2871314656826230212
+D [<unknown>:0] 2026-09-09 09:02:46.892 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:02:46.892 | Server: generated instance_id=7333719701971768283
+start worker:58075
+D [<unknown>:0] 2026-09-09 09:02:46.893 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:02:46.893 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:02:46.894 | create a fiber scheduler
+--------------Finish loading data and wait for others completing load phase ------------
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 09:03:09.023 | Server: generated instance_id=1293222580111317097
+D [<unknown>:0] 2026-09-09 09:03:09.024 | Server: generated instance_id=2847374017669900681
+D [<unknown>:0] 2026-09-09 09:03:09.024 | [poll_loop] Starting poll loop
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 09:03:09.024 | Server: generated instance_id=3868888194185149086
+D [<unknown>:0] 2026-09-09 09:03:09.024 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.024 | [poll_loop] Starting poll loop
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 09:03:09.025 | Server: generated instance_id=2773812213937478856
+D [<unknown>:0] 2026-09-09 09:03:09.025 | Server: generated instance_id=6602848459232522921
+D [<unknown>:0] 2026-09-09 09:03:09.025 | Server: generated instance_id=1936479300998723115
+D [<unknown>:0] 2026-09-09 09:03:09.025 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.025 | create a fiber scheduler
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 09:03:09.025 | create a fiber scheduler
+No JEMALLOC_NO_RENAME
+D [<unknown>:0] 2026-09-09 09:03:09.026 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.026 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.026 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.027 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.027 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.027 | Server: generated instance_id=5748060321854039281
+D [<unknown>:0] 2026-09-09 09:03:09.027 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.027 | Server: generated instance_id=596316958779288033
+D [<unknown>:0] 2026-09-09 09:03:09.028 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.028 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.045 | Server: generated instance_id=3546853221596576858
+D [<unknown>:0] 2026-09-09 09:03:09.045 | Server: generated instance_id=4750725579822071076
+D [<unknown>:0] 2026-09-09 09:03:09.045 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.045 | Server: generated instance_id=8219427209355000738
+D [<unknown>:0] 2026-09-09 09:03:09.045 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.045 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.046 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.046 | Server: generated instance_id=7953984334927226963
+D [<unknown>:0] 2026-09-09 09:03:09.046 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.046 | Server: generated instance_id=9096988388619460026
+D [<unknown>:0] 2026-09-09 09:03:09.046 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.046 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.046 | Server: generated instance_id=3090531620317890514
+D [<unknown>:0] 2026-09-09 09:03:09.046 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.046 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.046 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.047 | Server: generated instance_id=5176459163426507042
+D [<unknown>:0] 2026-09-09 09:03:09.047 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.047 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.047 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.047 | Server: generated instance_id=6532442239384339360
+D [<unknown>:0] 2026-09-09 09:03:09.047 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.047 | [poll_loop] Starting poll loop
+D [<unknown>:0] 2026-09-09 09:03:09.047 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.048 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:09.050 | create a fiber scheduler
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] Called from TID=2430771
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.128 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Called from TID=2430782
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Called from TID=2430772
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Called from TID=2430768
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::~PollThread] Destructor called from TID=2430782
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Called from TID=2430782
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::~PollThread] Destructor called from TID=2430768
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Called from TID=2430768
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.129 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::~PollThread] Destructor called from TID=2430771
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Called from TID=2430771
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::~PollThread] Destructor called from TID=2430772
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Called from TID=2430772
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.130 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Called from TID=2430774
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Called from TID=2430773
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.131 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Called from TID=2430787
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::~PollThread] Destructor called from TID=2430774
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Called from TID=2430774
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Called from TID=2430767
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Called from TID=2430776
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Sending CmdShutdownD [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Released join_handle lock
+
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::~PollThread] Destructor called from TID=2430787
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Called from TID=2430787
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.132 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430775
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430766
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430769
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430781
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430786
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::~PollThread] Destructor called from TID=2430767
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430767
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::~PollThread] Destructor called from TID=2430776
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Called from TID=2430776
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.133 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Called from TID=2430777
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor called from TID=2430775
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Called from TID=2430775
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor called from TID=2430773
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Called from TID=2430773
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor called from TID=2430766
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Called from TID=2430766
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.134 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor called from TID=2430777
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Called from TID=2430777
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor called from TID=2430781
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Called from TID=2430781
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] thread.join() completed!D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor complete
+
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Called from TID=2430770
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] thread.join() completed!D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Acquiring join_handle lock...
+
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor called from TID=2430786
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Called from TID=2430786
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor called from TID=2430769
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Called from TID=2430769
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.135 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.136 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.136 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.136 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.136 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::~PollThread] Destructor called from TID=2430770
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::shutdown] Called from TID=2430770
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.137 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] Called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.159 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::~PollThread] Destructor called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::shutdown] Called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.160 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [poll_loop] Exited while loop (stop_=true), starting cleanup
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [poll_loop] Cleanup complete, poll_loop exiting
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::~PollThread] Destructor called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Called from TID=2430726
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-09-09 09:03:20.161 | [PollThread::~PollThread] Destructor complete
+
+TPCC_BENCH_RESULT {"schema_version":1,"engine":"rust","threads":16,"warehouses":16,"configured_seconds":10,"measured_seconds":10.110366000000001,"commits":8516045,"aborts":851,"attempts":8516896,"throughput_txn_s":842308.28043218213,"mix":{"NewOrder":3832185,"Payment":3662315,"Delivery":341287,"OrderStatus":339347,"StockLevel":340911}}

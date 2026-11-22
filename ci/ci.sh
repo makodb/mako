@@ -335,6 +335,130 @@ compile() {
     bash ./src/mako/update_config.sh
 }
 
+# The CTest sweep in run_srpc_unit_tests also selects the Rust STO C/C++
+# boundary tests, whose binaries are opt-in targets outside `all`. Build
+# exactly those binaries here, without the Cargo lint/test half of the
+# rust_sto_integration aggregate, so the sweep never reports them as
+# "Not Run" and a failing Rust-line gate cannot hide the suites after it.
+build_rust_sto_boundary_binaries() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh rustStoBoundaryBinaries"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target \
+        sto_tpcc_bench \
+        sto_tpcc_cpp_wrapper_smoke \
+        sto_tpcc_cpp_wrapper_scan_smoke \
+        rocksdbInterfaceTest \
+        test_benchmark_output \
+        test_mtree_abi_c11_header \
+        test_sto_tpcc_ffi_c11_header \
+        test_silo_runtime \
+        -- -k 0
+}
+
+# The Rust/C transaction boundary is a required-native gate: a compile-only
+# Cargo fallback, a missing native archive, or a skipped C/C++ probe must fail
+# CI instead of silently reducing coverage.
+run_mako_local_abi_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalAbiGates"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target \
+        check_mako_local_build_fingerprint \
+        test_mako_local_abi \
+        test_mako_local_abi_c11 \
+        test_mako_local_abi_cpp_conformance \
+        run_mako_local_rust_tests \
+        run_mako_engine_integration_driver_tests \
+        run_mako_engine_sto_tests \
+        run_mako_engine_sto_mutation_tests \
+        run_mako_cache_sto_mutation_tests \
+        run_mako_clock_mutation_tests \
+        run_mako_engine_cross_reopen_tests
+    local boundary_test
+    for boundary_test in \
+        MakoLocalAbiTests \
+        MakoLocalAbiC11Probe \
+        MakoLocalAbiCppConformance \
+        MakoLocalAbiSymbols \
+        MakoLocalAbiSymbolCheckerUnit \
+        MakoLocalBuildFingerprintUnit
+    do
+        ctest --test-dir "${BUILD_DIR}" --output-on-failure \
+            --no-tests=error -R "^${boundary_test}$"
+    done
+}
+
+# Configure a fresh, focused native boundary build for one sanitizer and run
+# the strict C++/C/Rust integration target. MAKO_LOCAL_SANITIZER is deliberately
+# a required selector so a CI matrix typo cannot silently run an ordinary build.
+run_mako_local_sanitizer_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalSanitizerGates"
+    echo "========================================="
+    local sanitizer="${MAKO_LOCAL_SANITIZER:-}"
+    local sanitizer_toggle
+    # TSan rebuilds the Rust std with -Zbuild-std for the Cargo test
+    # executables; libmako's Rust staticlibs must be built against that same
+    # std (see MAKO_LOCAL_TSAN_RUST_STATICLIBS in CMakeLists.txt).
+    local tsan_rust_staticlibs=OFF
+    case "${sanitizer}" in
+        asan)
+            sanitizer_toggle="MAKO_ASAN=1"
+            ;;
+        ubsan)
+            sanitizer_toggle="MAKO_UBSAN=1"
+            ;;
+        tsan)
+            sanitizer_toggle="MAKO_TSAN=1"
+            tsan_rust_staticlibs=ON
+            ;;
+        *)
+            echo "ERROR: MAKO_LOCAL_SANITIZER must be asan, ubsan, or tsan" >&2
+            return 2
+            ;;
+    esac
+
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-4}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
+    echo "Configuring ${sanitizer} boundary gate in ${BUILD_DIR}"
+    env "${sanitizer_toggle}" cmake -S . -B "${BUILD_DIR}" \
+        -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMAKO_LOCAL_TEST_HOOKS=OFF \
+        -DMAKO_LOCAL_TSAN_RUST_STATICLIBS="${tsan_rust_staticlibs}"
+    env "${sanitizer_toggle}" cmake --build "${BUILD_DIR}" \
+        --parallel "${jobs}" --target run_mako_local_sanitizer_tests
+}
+
+# Cleanup-failure tests intentionally retain quarantined native state. Run
+# their exact production seam in a distinct hook-enabled functional profile so
+# ASan/LSan can keep the hook-free ownership baseline strict and exact.
+run_mako_local_hook_gates() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalHookGates"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-4}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" \
+        -DCMAKE_BUILD_TYPE="${build_type}" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMAKO_LOCAL_TEST_HOOKS=ON
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" \
+        --target run_mako_local_hook_tests
+}
+
+run_mako_local_miri_gate() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh makoLocalMiriGate"
+    echo "========================================="
+    bash ./scripts/run_mako_local_miri.sh
+}
+
 # Function 2: Run simple transaction test
 run_simple_transaction() {
     echo "========================================="
@@ -859,6 +983,21 @@ case "${1:-}" in
     compile)
         compile
         ;;
+    rustStoBoundaryBinaries)
+        build_rust_sto_boundary_binaries
+        ;;
+    makoLocalAbiGates)
+        run_mako_local_abi_gates
+        ;;
+    makoLocalSanitizerGates)
+        run_mako_local_sanitizer_gates
+        ;;
+    makoLocalHookGates)
+        run_mako_local_hook_gates
+        ;;
+    makoLocalMiriGate)
+        run_mako_local_miri_gate
+        ;;
     nativeShardingProof)
         bash ./scripts/verify_native_sharding.sh
         ;;
@@ -939,6 +1078,7 @@ case "${1:-}" in
         bash ./scripts/verify_native_sharding.sh
         compile
         bash ./examples/test_native_sharding.sh
+        build_rust_sto_boundary_binaries
         run_srpc_unit_tests
         run_simple_transaction
         run_client_server_test
@@ -960,13 +1100,20 @@ case "${1:-}" in
         run_multi_shard_single_process
         run_2shard_single_process
         run_2shard_single_process_replication
+        # The Rust/C boundary gate runs after the replication matrix: under
+        # `set -e` an earlier failure here would end the run before any of
+        # the suites above produced a result.
+        run_mako_local_abi_gates
         echo "All CI steps completed successfully!"
         ;;
     *)
         echo "Error: Unknown CI test target '${1:-}'"
         echo ""
         echo "Supported targets:"
-        echo "  compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  compile, rustStoBoundaryBinaries,"
+        echo "  makoLocalAbiGates, makoLocalSanitizerGates,"
+        echo "  makoLocalHookGates, makoLocalMiriGate, cleanup,"
+        echo "  simpleTransaction, simplePaxos,"
         echo "  shardNoReplication,"
         echo "  nativeShardingProof, nativeShardingSmoke,"
         echo "  shard1Replication, shard2Replication,"

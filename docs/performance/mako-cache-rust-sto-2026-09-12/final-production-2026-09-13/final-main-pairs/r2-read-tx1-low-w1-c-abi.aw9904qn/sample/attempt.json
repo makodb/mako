@@ -1,0 +1,175 @@
+{
+  "command": [
+    "env",
+    "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+    "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+    "taskset",
+    "-c",
+    "0",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-final-production",
+    "__sample",
+    "mako",
+    "read",
+    "1",
+    "low",
+    "1",
+    "262144",
+    "65536",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r2-read-tx1-low-w1-c-abi.aw9904qn/rocks"
+  ],
+  "completed": true,
+  "memory_samples": [
+    {
+      "VmHWM": 86016,
+      "VmRSS": 86016,
+      "VmSize": 446464,
+      "elapsed_seconds": 0.0010876110754907131
+    },
+    {
+      "VmHWM": 19292160,
+      "VmRSS": 19292160,
+      "VmSize": 57384960,
+      "elapsed_seconds": 0.05140684312209487
+    },
+    {
+      "VmHWM": 19361792,
+      "VmRSS": 19361792,
+      "VmSize": 57384960,
+      "elapsed_seconds": 0.1017247149720788
+    },
+    {
+      "VmHWM": 19361792,
+      "VmRSS": 19361792,
+      "VmSize": 57384960,
+      "elapsed_seconds": 0.15204987721517682
+    },
+    {
+      "VmHWM": 19361792,
+      "VmRSS": 19361792,
+      "VmSize": 57384960,
+      "elapsed_seconds": 0.20237924996763468
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20451328,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.25273655401542783
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20451328,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.30314172012731433
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20500480,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.353551615960896
+    },
+    {
+      "VmHWM": 23871488,
+      "VmRSS": 23871488,
+      "VmSize": 98308096,
+      "elapsed_seconds": 0.40386311896145344
+    },
+    {
+      "VmHWM": 139943936,
+      "VmRSS": 139943936,
+      "VmSize": 371998720,
+      "elapsed_seconds": 0.4541744999587536
+    },
+    {
+      "VmHWM": 188588032,
+      "VmRSS": 188588032,
+      "VmSize": 632045568,
+      "elapsed_seconds": 0.5044854013249278
+    },
+    {
+      "VmHWM": 270503936,
+      "VmRSS": 270503936,
+      "VmSize": 810303488,
+      "elapsed_seconds": 0.5547957131639123
+    },
+    {
+      "VmHWM": 271654912,
+      "VmRSS": 271654912,
+      "VmSize": 810303488,
+      "elapsed_seconds": 0.6051067053340375
+    },
+    {
+      "VmHWM": 272801792,
+      "VmRSS": 272801792,
+      "VmSize": 810303488,
+      "elapsed_seconds": 0.6554172462783754
+    },
+    {
+      "VmHWM": 275648512,
+      "VmRSS": 275648512,
+      "VmSize": 822886400,
+      "elapsed_seconds": 0.7057283581234515
+    },
+    {
+      "VmHWM": 276402176,
+      "VmRSS": 276402176,
+      "VmSize": 822886400,
+      "elapsed_seconds": 0.7560403500683606
+    },
+    {
+      "VmHWM": 277155840,
+      "VmRSS": 277155840,
+      "VmSize": 822886400,
+      "elapsed_seconds": 0.8063513119705021
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 149647360,
+      "VmSize": 822861824,
+      "elapsed_seconds": 0.8567105452530086
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32681984,
+      "VmSize": 831254528,
+      "elapsed_seconds": 0.9070238783024251
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32825344,
+      "VmSize": 831254528,
+      "elapsed_seconds": 0.9573359689675272
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32825344,
+      "VmSize": 831254528,
+      "elapsed_seconds": 1.0076960632577538
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32854016,
+      "VmSize": 831254528,
+      "elapsed_seconds": 1.0580060742795467
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32915456,
+      "VmSize": 831254528,
+      "elapsed_seconds": 1.1083188862539828
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32935936,
+      "VmSize": 831242240,
+      "elapsed_seconds": 1.1586785200051963
+    },
+    {
+      "VmHWM": 278016000,
+      "VmRSS": 32706560,
+      "VmSize": 806064128,
+      "elapsed_seconds": 1.2090895562432706
+    }
+  ],
+  "returncode": 0,
+  "wall_seconds": 1.2594771110452712
+}

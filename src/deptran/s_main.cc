@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
   // failure, not a pass.
   const int lab_exit = RaftFrame::RaftLabProcessExitCode();
 
-  RandomGenerator::destroy();
+  // No RandomGenerator::destroy(); see shutdown_paxos in paxos_main_helper.cc.
   Config::DestroyConfig();
   Log_info("Raft lab process finished with exit code {}", lab_exit);
   return lab_exit;

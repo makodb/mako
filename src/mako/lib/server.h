@@ -29,10 +29,12 @@ namespace mako
     {
     public:
         ShardReceiver(std::string file);
+        // Register the startup table map before request handling.
         void Register(abstract_db *db,
                  const map<int, abstract_ordered_index *> &open_tables_table_id /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        // Synchronized publication of one (possibly lazily adopted) index.
         void UpdateTableEntry(int table_id, abstract_ordered_index *table);
 
         // Message handlers.
@@ -56,10 +58,11 @@ namespace mako
 
         // Shared core of the self-contained non-txn ops (types 14-17):
         // runs one op on the CALLING thread via the L3 non-txn API (an
-        // internal one-op OCC transaction; writes replicate through
-        // the normal commit path). The calling thread must be
-        // Silo-registered (helper threads and ClientTcpServer workers
-        // are). Returns ErrorCode::SUCCESS / SERVER_BUSY (this
+        // internal one-op OCC transaction using the backend's normal commit
+        // machinery; this helper alone does not certify replication). The
+        // calling thread must be Silo-registered (helper threads and
+        // ClientTcpServer workers are). Returns ErrorCode::SUCCESS /
+        // SERVER_BUSY (this
         // thread's participant txn holds staged 2PC state; retry) /
         // ABORT (get: key not found) / ERROR (non-leader write or
         // unknown table). op_result: put="newly inserted",
@@ -105,6 +108,10 @@ namespace mako
 
         // @safe - Get database reference
         abstract_db* GetDb() const { return db; }
+        // @safe - A sealed empty frame still owes its coordinator a terminal.
+        bool CanParkParticipant() const noexcept {
+            return (!participant_sealed || participant_terminal) && !participant_unknown;
+        }
 
         // @unsafe - legacy engine callbacks; all identity/session/result state
         // belongs to the native Rust gateway. No multi-operation atomicity.
@@ -161,6 +168,31 @@ namespace mako
         string obj_v;
 
         int current_term ;
+        ParticipantIdentity admitted_identity{};
+        bool participant_terminal = false;
+        bool participant_committed = false;
+        bool participant_sealed = false;
+        bool participant_unknown = false;
+        uint8_t cached_request_type = 0;
+        size_t cached_response_size = 0;
+        char cached_response[sizeof(get_response_t)]{};
+
+        // @safe - Requests fenced by ParticipantIdentity: the legacy 2PC kinds
+        // and the full-scan page, which is a piece of the same participant.
+        static constexpr bool IsParticipantRequest(uint8_t type) noexcept {
+            return (type >= getReqType && type <= batchLockReqType) ||
+                   type == fullScanReqType;
+        }
+        bool AdmitParticipant(uint8_t type, char *request, char *response,
+                              size_t &response_size);
+        void CompleteParticipant(uint8_t type, char *response, size_t response_size);
+        size_t RejectParticipant(uint8_t type, const basic_request_t &request,
+                                 char *response, int status);
+        // @unsafe - The sharding boundary ended the admitted attempt's frame.
+        void TerminateParticipant(const ParticipantIdentity &identity);
+        // @unsafe - A standalone one-op transaction may neither run on nor end
+        // this lane's participant frame while this holds (see RunNontxnOp).
+        bool ParticipantFrameBusy() const;
 
     };
 
@@ -168,12 +200,24 @@ namespace mako
     {
     public:
         ShardServer(std::string file, int clientShardIndex, int shardIndex, int par_id);
+        ~ShardServer();
+        ShardServer(const ShardServer &) = delete;
+        ShardServer &operator=(const ShardServer &) = delete;
+        ShardServer(ShardServer &&) = delete;
+        ShardServer &operator=(ShardServer &&) = delete;
+        // Register the startup table map before Run() starts. The receiver keeps
+        // its own synchronized copy, which UpdateTable extends at run time.
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,
                  const map<int, abstract_ordered_index *> &open_tables /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        // Publishes one index opened after startup (lazily adopted native
+        // warehouse tables included) to the receiver's synchronized map while
+        // Run() may be serving. Callers serialize through setup_update_table's
+        // helper lifecycle lock: this object's own startup copy is unsynchronized
+        // and is never read by Run().
         void UpdateTable(int table_id, abstract_ordered_index *table);
         void Run();
 
