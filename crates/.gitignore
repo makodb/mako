@@ -1,1 +1,3 @@
 /target/
+# A crate built on its own, outside the workspace, puts its output here.
+/*/target/
