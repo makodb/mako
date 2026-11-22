@@ -1433,8 +1433,10 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
         echo "asan_native_exact_quarantine_leak_detection=disabled"
         echo "asan_workspace_non_quarantine_leak_detection=enabled"
         echo "asan_exact_quarantine_leak_detection=disabled"
-        echo "asan_ctest_rust_label_leak_detection=enabled"
+        echo "asan_ctest_rust_label_leak_detection=enabled-except-exact-protocol-process-lifetime-tests"
         echo "asan_ctest_remaining_rust_label_suppressions=none"
+        echo "asan_ctest_rust_protocol_process_lifetime_leak_detection=disabled-multi-process-server-lifetime"
+        echo "asan_ctest_rust_protocol_process_lifetime_tests=test_sto_tpcc_protocol_rust_none;test_sto_tpcc_protocol_rust_none_colocated;test_sto_tpcc_protocol_rust_paxos;test_sto_tpcc_protocol_rust_paxos_colocated;test_sto_tpcc_protocol_rust_raft;test_sto_tpcc_protocol_rust_raft_colocated"
         echo "asan_ctest_native_process_lifetime_lifecycle_leak_detection=disabled-legacy-process-lifetime-backend"
         echo "asan_ctest_sto_rmw_profile_leak_detection=disabled-process-lifetime-masstree"
         echo "asan_native_abi_lsan_policy=${repo_root}/src/mako/mako_local_lsan_suppressions.txt"
@@ -2187,7 +2189,8 @@ run_logged ctest-silo-critical-default-profile \
 # deliberately retain native STO/Masstree state for process lifetime. Their
 # tests must still run under each native sanitizer. ASan disables only leak
 # reporting for these exact tests; address errors remain fatal and every
-# Rust-labeled CTest retains leak detection.
+# Rust-labeled CTest retains leak detection, except the six multi-process
+# protocol tests qualified further below.
 if [[ "${sanitizer}" == "address" ]]; then
     asan_cpp_lifecycle_options="${ASAN_OPTIONS/detect_leaks=1/detect_leaks=0}"
     if [[ "${asan_cpp_lifecycle_options}" == "${ASAN_OPTIONS}" ]]; then
@@ -2310,12 +2313,25 @@ with manifest.open("a", encoding="utf-8") as output:
 print("verified exact LSan evidence: 40 allocations / 12800 bytes")
 PY
 
+    # The six multi-process protocol tests start whole server processes: the
+    # benchmark binary with its RPC runtime and, for four of them, the Paxos or
+    # Raft stack. Those processes keep replication, worker and runtime state for
+    # their whole life and release it by exiting, so LeakSanitizer reports
+    # megabytes at exit from thousands of allocation sites. ASan disables only
+    # leak reporting for these exact tests; every address error in every child
+    # process remains fatal. Added on 2026-11-22, user-approved.
+    run_logged ctest-rust-protocol-process-lifetime \
+        env ASAN_OPTIONS="${asan_cpp_lifecycle_options}" \
+            ctest --test-dir "${build_dir}" --output-on-failure \
+                --no-tests=error \
+                -R '^(test_sto_tpcc_protocol_rust_none|test_sto_tpcc_protocol_rust_none_colocated|test_sto_tpcc_protocol_rust_paxos|test_sto_tpcc_protocol_rust_paxos_colocated|test_sto_tpcc_protocol_rust_raft|test_sto_tpcc_protocol_rust_raft_colocated)$'
+
     # Every other Rust-labeled test runs with leak detection enabled and no
     # LSan suppression environment at all.
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \
             --no-tests=error -L '^rust$' \
-            -E '^(test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted)$'
+            -E '^(test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_protocol_rust_none|test_sto_tpcc_protocol_rust_none_colocated|test_sto_tpcc_protocol_rust_paxos|test_sto_tpcc_protocol_rust_paxos_colocated|test_sto_tpcc_protocol_rust_raft|test_sto_tpcc_protocol_rust_raft_colocated)$'
 else
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \

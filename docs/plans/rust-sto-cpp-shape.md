@@ -745,6 +745,17 @@ the current Rust implementation's performance or safety properties.
   counterparts, and the 61 allocations that Miri and ASan reported for
   `failure_protocol` are the transaction frames and lock plans those faults
   quarantine. No other suppression was added.
+- On 2026-11-22 the user approved running the six multi-process protocol tests
+  (`test_sto_tpcc_protocol_rust_none`, `_none_colocated`, `_paxos`,
+  `_paxos_colocated`, `_raft` and `_raft_colocated`) with ASan's leak reporting
+  off. Each starts whole server processes that keep replication, worker and
+  runtime state for their whole life and release it by exiting; in CI the two
+  unreplicated tests alone reported 2,088,600 bytes in 7,335 allocations and
+  4,182,616 bytes in 14,671 allocations at exit. The runner runs exactly these
+  six in their own stage, `ctest-rust-protocol-process-lifetime`, and records
+  the exception in its manifest. Address errors stay fatal in every child
+  process, and every other Rust-labeled test keeps leak detection. This is not
+  permission to extend the list.
 - The first runtime ASan baseline found two additional borrowed-owner fixtures
   missing from the separate adapter/cache inventory. Isolated runs attributed
   all 438 allocations (134,272 bytes) to
