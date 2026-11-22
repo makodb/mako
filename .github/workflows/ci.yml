@@ -403,26 +403,11 @@ jobs:
       - name: Run tests - client-server mode
         run: ./ci/ci.sh clientServer
 
-      - name: Run tests - simple replication
-        run: ./ci/ci.sh simplePaxos 
-
       - name: Run tests - simple 2 shards without replication (SRPC)
         run: ./ci/ci.sh shardNoReplication
 
-      - name: Run tests - simple 1 shard with replication - dbtest
-        run: ./ci/ci.sh shard1Replication
-
-      - name: Run tests - simple 2 shard with replication - dbtest (SRPC)
-        run: ./ci/ci.sh shard2Replication
-
-      - name: Run tests - simple 1 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard1ReplicationSimple
-
-      - name: Run tests - simple 2 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard2ReplicationSimple
-
       # =========================================
-      # Raft Replication Tests (after Paxos replication tests)
+      # Raft Replication Tests
       # =========================================
       - name: Run tests - 1 shard with Raft replication - dbtest
         run: ./ci/ci.sh shard1ReplicationRaft
@@ -447,9 +432,6 @@ jobs:
 
       - name: Run tests - 2 shard single process (no replication)
         run: ./ci/ci.sh shard2SingleProcess
-
-      - name: Run tests - 2 shard single process with replication
-        run: ./ci/ci.sh shard2SingleProcessReplication
 
       # =========================================
       # Rust-line gates (after the mainline suites)

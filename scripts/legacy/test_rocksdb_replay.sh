@@ -25,7 +25,7 @@ if [ -z "$ROCKSDB_DIR" ]; then
     echo "Error: No RocksDB data found"
     echo ""
     echo "Please generate data first by running a workload, for example:"
-    echo "  ./examples/test_2shard_replication.sh"
+    echo "  ./examples/test_2shard_replication_raft.sh"
     exit 1
 fi
 

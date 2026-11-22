@@ -224,10 +224,10 @@ static void warn_if_replicated_role_may_block() {
   }
 
   Warning("Replicated dbtest started with --paxos-proc-name=%s. "
-          "If peer role groups (p1, p2, learner) are not running, startup can wait indefinitely. "
+          "If peer role groups (p1, p2; also learner under the deprecated Paxos) are not running, startup can wait indefinitely. "
           "Use --startup-timeout-sec=<seconds> or MAKO_STARTUP_TIMEOUT_SEC to fail fast in non-interactive runs. "
-          "For local end-to-end runs use examples/test_1shard_replication.sh or "
-          "examples/test_2shard_replication.sh.",
+          "For local end-to-end runs use examples/test_1shard_replication_raft.sh or "
+          "examples/test_2shard_replication_raft.sh.",
           benchConfig.getPaxosProcName().c_str());
 }
 
@@ -290,7 +290,7 @@ public:
       }
       fprintf(stderr,
               "[ERROR] dbtest startup timed out after %d seconds in replicated localhost mode.\n"
-              "        Start peer roles (p1, p2, learner) or use examples/test_1shard_replication.sh / examples/test_2shard_replication.sh.\n",
+              "        Start peer roles (p1, p2; also learner under the deprecated Paxos) or use examples/test_1shard_replication_raft.sh / examples/test_2shard_replication_raft.sh.\n",
               startup_timeout_sec);
       std::fflush(stderr);
       std::_Exit(2);

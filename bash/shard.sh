@@ -15,7 +15,10 @@ trd=$3
 cluster=$4
 is_micro=$5
 is_replicated=$6
-replication_type=${7:-paxos}  # Default to paxos if not specified
+# Defaults to paxos if not specified. Paxos is DEPRECATED and no longer
+# tested (src/deptran/paxos/DEPRECATED.md); pass raft. The default is kept
+# because changing it is a behaviour change nobody decided on.
+replication_type=${7:-paxos}
 let up=trd+3
 #sudo cgset -r cpuset.mems=0 cpulimit
 #sudo cgset -r cpuset.cpus=0-$up cpulimit
@@ -97,7 +100,11 @@ echo "  Number of threads: $trd"
 echo "  Cluster:           $cluster"
 echo "  Micro benchmark:   $([ "$is_micro" == "1" ] && echo "enabled" || echo "disabled")"
 echo "  Replicated mode:   $([ "$is_replicated" == "1" ] && echo "enabled" || echo "disabled")"
-echo "  Replication type:  $replication_type"
+# Unreplicated runs never read the type; printing the default would put the
+# word "paxos" into every unreplicated log.
+if [ "$is_replicated" == "1" ]; then
+    echo "  Replication type:  $replication_type"
+fi
 echo "  CPU throttle:      ${cpu_throttle_label} (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
 echo "========================================="
 

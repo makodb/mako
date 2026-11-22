@@ -6,9 +6,9 @@
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
 #
-# NOTE: This script mirrors test_1shard_replication.sh (Paxos) exactly
-# in duration, polling, shutdown, and validation — only the replication
-# layer differs (Raft 3 replicas vs Paxos 4 replicas with learner).
+# NOTE: This script was written to mirror the Paxos script test_1shard_replication.sh
+# (deleted when Paxos was deprecated) in duration, polling, shutdown, and validation;
+# only the replication layer differed (Raft: 3 replicas, no learner).
 
 echo "========================================="
 echo "Testing 1-shard setup with Raft replication"

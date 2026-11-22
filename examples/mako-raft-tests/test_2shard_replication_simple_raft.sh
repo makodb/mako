@@ -2,9 +2,9 @@
 
 # Script to test 2-shard experiments with Raft replication using simpleTransactionRepRaft
 #
-# NOTE: This script mirrors test_2shard_replication_simple.sh (Paxos) exactly
-# in duration, startup order, shutdown, and validation — only the replication
-# layer differs (Raft 3 replicas vs Paxos 4 replicas with learner).
+# NOTE: This script was written to mirror the Paxos script test_2shard_replication_simple.sh
+# (deleted when Paxos was deprecated) in duration, startup order, shutdown, and validation;
+# only the replication layer differed (Raft: 3 replicas, no learner).
 
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

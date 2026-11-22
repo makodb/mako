@@ -47,7 +47,9 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
-# Randomize raft replication ports — see test_2shard_replication.sh.
+# Randomize raft replication ports to avoid TIME_WAIT / leftover-process
+# collisions on the static replication ports (config/1leader_2followers)
+# between consecutive CI runs.
 TEMP_PAXOS_DIR=$(make_paxos_replication_configs 2 "$trd" raft)
 if [ -z "$TEMP_PAXOS_DIR" ]; then
     exit 1

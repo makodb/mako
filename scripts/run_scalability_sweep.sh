@@ -1,19 +1,18 @@
 #!/bin/bash
 
-# Thesis Scalability Sweep — varies worker thread count across backends.
-# Produces throughput + CPU data for the three-act story:
-#   Act 1: Paxos baseline (linear scaling, workers at ~100% CPU)
-#   Act 2: Multi-Raft (same throughput as Paxos = valid drop-in)
-#   Act 3: Single-Raft (same throughput, less total CPU)
+# Thesis Scalability Sweep — varies worker thread count across the Raft backends.
+# Produces throughput + CPU data for:
+#   Multi-Raft  (one Raft group per partition)
+#   Single-Raft (one Raft group for all partitions; same throughput, less total CPU)
+# The thesis story's first act, the Paxos baseline, was a backend of this
+# script until Paxos was deprecated (src/deptran/paxos/DEPRECATED.md).
 #
 # Usage:
-#   bash run_scalability_sweep.sh --backend paxos --threads "1 2 4 6 8 12 16" --runs 3
 #   bash run_scalability_sweep.sh --backend raft-single --threads "1 2 4 6 8 12 16" --runs 3
 #   bash run_scalability_sweep.sh --backend raft-multi --threads "1 2 4 6 8 12 16" --runs 3
 #
 # Prerequisites:
 #   - Binary must be pre-built for the correct backend:
-#       Paxos:        make -j32
 #       Raft-single:  make clean && make mako-raft-single -j32
 #       Raft-multi:   make clean && make mako-raft-multi -j32
 #   - Raft configs generated: cd config/1leader_2followers && python3 raft_generator.py
@@ -40,13 +39,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$BACKEND" ]; then
-    echo "Error: --backend required (paxos|raft-single|raft-multi)"
+    echo "Error: --backend required (raft-single|raft-multi)"
     exit 1
 fi
 
 case "$BACKEND" in
-    paxos|raft-single|raft-multi) ;;
-    *) echo "Error: --backend must be paxos, raft-single, or raft-multi"; exit 1 ;;
+    raft-single|raft-multi) ;;
+    *) echo "Error: --backend must be raft-single or raft-multi"; exit 1 ;;
 esac
 
 # ============================================================
@@ -221,19 +220,10 @@ start_replicas() {
     local leader_log="$2"
     local follower_p1_log="$3"
     local follower_p2_log="$4"
-    local learner_log="$5"
 
     export MAKO_BATCH_SIZE=$BATCH_SIZE
 
     case "$BACKEND" in
-        paxos)
-            nohup bash bash/shard.sh 1 0 "$trd" localhost 0 1 paxos > "$leader_log" 2>&1 &
-            nohup bash bash/shard.sh 1 0 "$trd" p2 0 1 paxos > "$follower_p2_log" 2>&1 &
-            sleep 1
-            nohup bash bash/shard.sh 1 0 "$trd" p1 0 1 paxos > "$follower_p1_log" 2>&1 &
-            sleep 1
-            nohup bash bash/shard.sh 1 0 "$trd" learner 0 1 paxos > "$learner_log" 2>&1 &
-            ;;
         raft-single|raft-multi)
             nohup bash bash/shard_raft.sh 1 0 "$trd" localhost 0 1 > "$leader_log" 2>&1 &
             nohup bash bash/shard_raft.sh 1 0 "$trd" p2 0 1 > "$follower_p2_log" 2>&1 &
@@ -285,7 +275,6 @@ for trd in $THREADS; do
         leader_log="${LOGS_DIR}/t${trd}_run${run}_leader.log"
         follower_p1_log="${LOGS_DIR}/t${trd}_run${run}_follower_p1.log"
         follower_p2_log="${LOGS_DIR}/t${trd}_run${run}_follower_p2.log"
-        learner_log="${LOGS_DIR}/t${trd}_run${run}_learner.log"
         cpu_log="${LOGS_DIR}/t${trd}_run${run}_cpu.log"
         thread_cpu_log="${LOGS_DIR}/t${trd}_run${run}_cpu_threads.log"
 
@@ -293,7 +282,7 @@ for trd in $THREADS; do
         start_cpu_monitor "$cpu_log" "$thread_cpu_log"
 
         # Start replicas
-        start_replicas "$trd" "$leader_log" "$follower_p1_log" "$follower_p2_log" "$learner_log"
+        start_replicas "$trd" "$leader_log" "$follower_p1_log" "$follower_p2_log"
         sleep 2
 
         # Poll for completion (timeout: 180s for high thread counts)
@@ -391,7 +380,6 @@ echo "  Date:           $(date)"
 echo "  Backend:        $BACKEND"
 echo "  Configuration:  1 shard, TPC-C, batch_size=$BATCH_SIZE"
 case "$BACKEND" in
-    paxos)       echo "  Replication:    Multi-Paxos (4 replicas: 3 voters + 1 learner)" ;;
     raft-single) echo "  Replication:    Raft single-instance (3 replicas, 1 Raft group for all partitions)" ;;
     raft-multi)  echo "  Replication:    Raft multi-instance (3 replicas, 1 Raft group per partition)" ;;
 esac
