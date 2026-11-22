@@ -1,0 +1,41 @@
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.017s
+
+OK
+   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)
+   Compiling mrx-masstree v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx-masstree)
+   Compiling mrx v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mrx)
+error: failed to run custom build command for `mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-local)`
+
+Caused by:
+  process didn't exit successfully: `/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/cargo-target-mako-cache-bench-c-abi/debug/build/mako-local-de5457295d8e8047/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:rerun-if-env-changed=MAKO_BUILD_DIR
+  cargo:rerun-if-env-changed=MAKO_LOCAL_REQUIRE_NATIVE
+  cargo:rerun-if-env-changed=MAKO_LOCAL_FAKE_ABI
+  cargo:rerun-if-env-changed=LIBCXX_DIR
+  cargo:rerun-if-env-changed=PYTHON
+  cargo:rerun-if-changed=native-link-archives.txt
+  cargo:rerun-if-changed=build_support/native_allocator.rs
+  cargo:rustc-check-cfg=cfg(have_mako)
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_mrx/libmako.a
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/libmako.a
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build/libmako.a
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_docker/libmako.a
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/scripts/mako_local_fingerprint.py
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/generated/mako_local_build_manifest.json
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/compile_commands.json
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/CMakeCache.txt
+  cargo:rerun-if-changed=/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/cargo-target-mako-cache-bench-c-abi/debug/build/mako-local-6fa3b7c52b10e49c/out/mako_local_fingerprint_verify_always
+
+  --- stderr
+
+  thread 'main' (2076440) panicked at mako-local/build.rs:332:9:
+  mako-local refused native archive /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/libmako.a because its content/configuration identity 
+  could not be verified. Rebuild with `cmake --build /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22 --target mako`.
+  verifier stdout:
+
+  verifier stderr:
+  mako-local fingerprint error: selected build object does not exist for libmako.a: /home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/coordinator.cc.o: [Errno 2] No such file or directory: '/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/coordinator.cc.o'
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

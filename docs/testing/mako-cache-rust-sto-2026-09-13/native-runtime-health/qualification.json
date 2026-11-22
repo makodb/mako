@@ -1,0 +1,36 @@
+{
+  "normal_library": {
+    "path": "/var/tmp/mako-runtime-health.JdAGrh/target-normal/debug/deps/mako_engine_sto-b5cca98962b2209b",
+    "sha256": "647683e5e554c7387dab41952c139aea3d5cb65dd30e9d76f882ae23e42f9434",
+    "passed": 20,
+    "ignored": 1,
+    "ignored_reason": "existing LSan lost-payload negative control",
+    "native_link": "ordinary libmako and libmasstree, no proof helper",
+    "rust_toolchain": "1.95.0",
+    "log_sha256": "b046611eebad50581d6b81bf68ad45380183fd8c2bd34199fbfbf0b3df473f19"
+  },
+  "proof": {
+    "report_sha256": "350c4fd28f3fe2385ba1db8f9b2a7aed93928cece52d15f9619ac3f1be3c5f71",
+    "child_scenarios": [
+      "abort",
+      "drop"
+    ],
+    "scope": "production poison transition, not native exception or sanitizer instrumentation"
+  },
+  "negative_controls": {
+    "report_sha256": "b53fc7334d8ce64aaeade4f9cbfdd15e60cacd6da2ff2ec53736d17b4cf95b86",
+    "killed": 4,
+    "fresh_targets": true
+  },
+  "source_archive_sha256": "e7cf82e85f58e583123e009b67b5aebfd33820ecf553d72ccac9c6c8f731f699",
+  "prepared_driver": {
+    "run_mako_engine_native_health_proof.py": "40d9853c309936f39b8a95fd793a6100c9179d0d2ceba37fe4562d25d559922a",
+    "test_mako_engine_native_health_proof.py": "e8b3208bf95c7800baaf868614cf93a62779ca9a9f1235270398cb77df97f6b6"
+  },
+  "production_native_archives_unchanged": {
+    "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/libmako.a": "53e9a34a1c1e963aaa809adcb26ac5af70d27d072c351122f5911b8f7a273402",
+    "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/build_c22/src/masstree/libmasstree.a": "d0470b6005b62b741198b1143ba82807bdcd6c9e2cadb274a6dad5d11b5ed613"
+  },
+  "original_scratch_root": "/var/tmp/mako-runtime-health.JdAGrh",
+  "source_files_not_native_archives_are_archived": true
+}

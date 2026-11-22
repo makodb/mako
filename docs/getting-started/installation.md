@@ -32,7 +32,7 @@ The following will be installed during setup:
 - Git
 - CMake (3.15+)
 - C++17 compiler (GCC 9+ or Clang 10+)
-- Rust compiler (via rustup)
+- Rust compiler (official `1.97.1` release, installed by `install_rustc.sh`)
 - Various system libraries (APR, Boost, YAML-cpp, etc.)
 
 ## Installation Steps
@@ -105,7 +105,13 @@ Mako uses Rust components for memory safety (RustyCpp):
 source install_rustc.sh
 ```
 
-This script uses [rustup](https://rustup.rs/) to install the Rust compiler and Cargo build system.
+This script does not use rustup. It downloads the official Rust `1.97.1`
+tarballs from `static.rust-lang.org`, checks each against the checksum published
+beside it, and installs the compiler, Cargo, `rust-src`, `clippy` and `rustfmt`
+into `$HOME/.local-rust`. It also appends `$HOME/.local-rust/bin` to `PATH` in
+your `.bashrc` (or `.zshrc`). `1.97.1` matches `rust-toolchain.toml`; the native
+sharding build needs at least that release, and its verification gate needs
+exactly it.
 
 **Verify Rust installation**:
 ```bash
@@ -249,7 +255,8 @@ error: Rust compiler 'rustc' not found
 **Solution**: Ensure Rust installation completed and activate in current shell:
 ```bash
 source install_rustc.sh
-source $HOME/.cargo/env
+# or, if it is already installed:
+export PATH="$HOME/.local-rust/bin:$PATH"
 ```
 
 #### Issue: Out of memory during build

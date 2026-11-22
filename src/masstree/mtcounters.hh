@@ -25,6 +25,9 @@ enum memtag {
     // The type is purely for debugging. The pool indicates the pool from
     // which an allocation was taken.
     // @unsafe - tags travel with raw allocations; misuse can corrupt memdebug state
+    // Keep the callback sentinel inside the enum's existing 13-bit value
+    // range, outside every type-plus-pool tag currently allocated below.
+    memtag_mrcu_callback = 0x1FFF,
     memtag_none = 0x000,
     memtag_value = 0x100,
     memtag_limbo = 0x500,
@@ -34,6 +37,13 @@ enum memtag {
     memtag_masstree_gc = 0x1300,
     memtag_pool_mask = 0xFF
 };
+
+// `memtag` is embedded in limbo_element. Keep the named callback sentinel
+// signed without changing that allocation/reclamation record's ABI layout.
+static_assert(sizeof(memtag) == sizeof(int),
+              "memtag must retain its int-sized limbo record layout");
+static_assert(alignof(memtag) == alignof(int),
+              "memtag must retain its int-aligned limbo record layout");
 
 enum threadcounter {
     // order is important among tc_alloc constants:

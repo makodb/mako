@@ -1,0 +1,25 @@
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-unknown-linux-gnu
+release: 1.95.0
+LLVM version: 22.1.2
+   Compiling rustversion v1.0.23
+   Compiling masstree v0.0.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/masstree)
+   Compiling sto-masstree v0.0.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/sto-masstree)
+   Compiling mtree-sys v0.0.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mtree-sys)
+   Compiling mako-engine-api v0.1.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mako-engine-api)
+   Compiling mako-history v0.1.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mako-history)
+   Compiling mako-clock v0.1.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mako-clock)
+   Compiling arc-swap v1.9.2
+   Compiling sto-core v0.0.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/sto-core)
+   Compiling mako-differential v0.1.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mako-differential)
+   Compiling mako-engine-sto v0.1.0 (/var/tmp/mako-prefetch-promotion.3eMW85/crates/mako-engine-sto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.23s
+     Running unittests src/lib.rs (/var/tmp/mako-prefetch-promotion.3eMW85/target-native/debug/deps/mako_engine_sto-4ff38d6a09f942b0)
+
+running 1 test
+test prefetch::tests::hint_does_not_allocate_a_stamp_or_change_the_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s

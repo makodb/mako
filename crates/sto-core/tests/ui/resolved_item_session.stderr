@@ -1,0 +1,8 @@
+error: lifetime may not live long enough
+ --> tests/ui/resolved_item_session.rs:8:5
+  |
+6 |     session: ResolvedItemSession<'_, support::Adapter>,
+  |     ------- has type `ResolvedItemSession<'1, Adapter>`
+7 | ) -> ResolvedItemSession<'static, support::Adapter> {
+8 |     session
+  |     ^^^^^^^ returning this value requires that `'1` must outlive `'static`

@@ -1,0 +1,27 @@
+
+running 9 tests
+test record::tests::crc32c_matches_the_reference_vector ... ok
+test record::tests::encoding_refuses_a_wrong_extent ... ok
+test record::tests::one_put_v6_record_has_the_documented_layout ... ok
+test record::tests::v5_record_carries_a_crc_over_every_preceding_byte ... ok
+test resolved_cache::tests::allocation_failure_disables_and_storage_cannot_grow ... ok
+test touched::tests::recycled_log_forgets_effects_and_preserves_small_storage ... ok
+test touched::tests::recycling_caps_retained_transaction_memory ... ok
+test txn::ownership_tests::holder_publication_transfers_empty_and_overflow_values_across_ring_reuse ... ok
+test txn::ownership_tests::terminal_version_capacity_is_not_a_transaction_size_error ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 138.15s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running unittests src/lib.rs (/var/tmp/mako-private-resolved-miri.vR9DWr/target/miri/x86_64-unknown-linux-gnu/debug/build/mako-engine-sto/684348d92f35130e/out/mako_engine_sto-684348d92f35130e)
+warning: method `disable_resolved_cache` is never used
+  --> mako-engine-sto/src/worker.rs:60:19
+   |
+28 | impl WorkerSlot {
+   | --------------- method in this implementation
+...
+60 |     pub(crate) fn disable_resolved_cache(&self) {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+

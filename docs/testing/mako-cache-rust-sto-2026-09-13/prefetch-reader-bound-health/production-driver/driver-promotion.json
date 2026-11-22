@@ -1,0 +1,20 @@
+{
+  "format": "mako-sanitizer-driver-promotion-v1",
+  "promoted_by": "root",
+  "sanitizer_patch": "../tsan-model-runtime/driver-proposal.patch",
+  "native_health_patches": [
+    "../../native-runtime-health/driver-path-fix.patch",
+    "../../native-runtime-health/driver-tests.patch"
+  ],
+  "sanitizer_driver_byte_identical_to_tested_private_proposal": true,
+  "source_file_sha256": {
+    "scripts/ci/run_rust_sto_cache_tests.py": "1ddedb1ed62e3b6099e3806b0f64b9097a3d5cb2f5620cd9043c82ded3a9a857",
+    "scripts/test_run_rust_sto_cache_tests.py": "740ea332dfd47f435a141ce3407306ddab4e06fe5a30cc0cc8816f44167b9d77",
+    "scripts/ci/run_mako_engine_native_health_proof.py": "40d9853c309936f39b8a95fd793a6100c9179d0d2ceba37fe4562d25d559922a",
+    "scripts/ci/test_mako_engine_native_health_proof.py": "e8b3208bf95c7800baaf868614cf93a62779ca9a9f1235270398cb77df97f6b6",
+    "scripts/ci/rust_sto_cache_sanitizers.md": "50f15bbb0256b15a8b2ca999e3ecb0911d534722fb1fa4aa3387c03061c96f75"
+  },
+  "scope": "Four Python driver/test files promoted plus sanitizer scope documentation. No Rust, Cargo, C++ runtime or native ABI change.",
+  "previous_private_driver_reports_preserved": true,
+  "following_execution": "All three configured production CMake sanitizer targets are rerun into separate final records, with237 source inputs and exact278-test inventories checked."
+}

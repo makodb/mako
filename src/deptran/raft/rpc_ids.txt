@@ -1,0 +1,23 @@
+# The Raft service's wire ids. FROZEN -- these are the wire contract.
+#
+# WHY THIS FILE EXISTS. rpcgen assigns ids at random
+# (src/srpc/pylib/simplerpcgen/rpcgen.py:334) and preserves them across
+# regeneration ONLY by scraping them back out of the header it previously
+# wrote; the .rpc file records them nowhere. `used_codes` is seeded from that
+# same scrape, so an id stays reserved only while the header still declares
+# its service. The moment RaftService leaves rcc_rpc.rpc (plan stage 5a), the
+# next-but-one regeneration stops reserving these four and a service added to
+# that file can draw one of them -- silently, and the wire breaks for every
+# peer that has not been rebuilt.
+#
+# So they live here instead, in one place the Rust emitter reads. While
+# rcc_rpc.h still declares RaftService, scripts/rpcgen_rust.py checks the
+# header against this table and fails on any disagreement; it also fails if
+# any OTHER service in that header has drawn one of these ids. After 5a this
+# table is the only record, which is the point.
+#
+# format: <service> <RPC_NAME_UPPERCASE> <0xid>
+Raft VOTE 0x2802b911
+Raft APPENDENTRIES 0x3935326f
+Raft EMPTYAPPENDENTRIES 0x6e089268
+Raft INSTALLSNAPSHOT 0x5276442f

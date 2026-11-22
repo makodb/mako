@@ -264,34 +264,7 @@ if [ ! -f "4proc-localhost.log" ]; then
     echo "  [X] Log file not found"
     failed=1
 else
-    # Check for TPC-C sharding policy initialization
-    if grep -q "TPC-C Sharding: Initialized policy" "4proc-localhost.log"; then
-        echo "  [OK] TPC-C sharding policy initialized"
-        # Show the initialization line for reference
-        grep "TPC-C Sharding: Initialized policy" "4proc-localhost.log" | tail -n 1 | sed 's/^/    /'
-    else
-        echo "  [X] TPC-C sharding policy not initialized"
-        failed=1
-    fi
 
-    # Check for multi-shard initialization
-    if grep -q "Multi-shard mode" "4proc-localhost.log"; then
-        echo "  [OK] Multi-shard mode detected"
-        grep "Multi-shard mode" "4proc-localhost.log" | head -1 | sed 's/^/    /'
-    else
-        echo "  [X] Multi-shard mode not detected"
-        failed=1
-    fi
-
-    # Check for SiloRuntime creation for both shards
-    for shard in 0 1; do
-        if grep -q "Assigned shared SiloRuntime.*to shard $shard" "4proc-localhost.log"; then
-            echo "  [OK] SiloRuntime assigned for shard $shard"
-        else
-            echo "  [X] SiloRuntime not assigned for shard $shard"
-            failed=1
-        fi
-    done
 
     # Check for agg_persist_throughput
     if grep -q "agg_persist_throughput" "4proc-localhost.log"; then

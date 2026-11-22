@@ -1,25 +1,28 @@
-// Unit tests for the TCP channel backend's connection-side data path
-//.
+// Unit tests for the TCP channel backend's connection-side data path.
 //
-// Strategy: build a `TcpConnection` over one end of a `socketpair(2)`,
-// read/write the other end manually as the "peer", and drive the
-// connection's `Pollable` methods directly. This bypasses the real
-// poll thread (covered in later sub-leaves) and exercises the
-// channel-facade contract end-to-end without any network setup.
+// Two fixtures, because a connection has two lives:
 //
-// What's covered here:
-//   - send_frame -> wire bytes match what frame_codec emits
-//   - peer write -> on_frame fires per complete frame, in order
-//   - fragmented inbound (split header, split payload) handled across
-//     handle_read calls
-//   - peer hangup -> on_closed(None) fires exactly once
-//   - close() is idempotent (multiple calls, only one on_closed)
-//   - send_frame after close returns ChannelError::ConnectionReset
-//   - send_frame past high-water returns WouldBlock without buffering
-//     beyond the limit
-//   - malformed inbound (negative size header) -> on_error then
-//     on_closed
-//   - multi-frame coalesced peer write delivers frames in wire order
+// * TcpConnectionTest builds a `TcpConnection` over one end of a
+//   `socketpair(2)` with no PollThread, and reads/writes the other end as the
+//   "peer".  Without a PollThread there is no transport task and no
+//   write-through, so a sent frame stays queued until `flush()`; that makes
+//   the encoder, the coalescing of queued frames, close, backpressure and the
+//   proxy forwarding deterministic to check.
+// * AttachedTcpConnectionTest connects through the public `TcpFactory` to a
+//   plain loopback socket, so the generated reader and writer tasks run on a
+//   real PollThread (S5 of docs/dev/lion-runtime-plan.md).  Inbound framing
+//   (whole, fragmented and coalesced frames), peer hang-up, close and foreign
+//   sends are checked through them.
+//
+// Until S7b these tests drove the connection's `Pollable` methods
+// (handle_read / handle_write / poll_mode / content_size and the pending-write
+// latch) directly; that surface left with the retired epoll loop.  The
+// contracts that only it had -- handle_read returning false and handle_write
+// returning NO_CHANGE after close, poll_mode tracking queued bytes -- have no
+// counterpart on Lion; task retirement after close is covered by
+// tests/tcp_transport_rust.rs (a_close_on_the_poll_thread_retires_both_tasks,
+// a_foreign_close_of_an_idle_connection_retires_both_tasks) and by
+// CloseRetiresTheTransportAndThePeerSeesEof below.
 //
 // Notes on socketpair vs real TCP:
 //   - SOCK_STREAM with AF_UNIX gives us byte-stream semantics matching
@@ -36,6 +39,7 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -43,10 +47,6 @@
 #include <rusty/rusty.hpp>
 
 #include "../srpc.hpp"
-
-// PollMode (READ/WRITE) lives in srpc.epoll_wrapper, which the trimmed
-// consumer umbrella no longer re-exports (08b68144) — import directly.
-import srpc.epoll_wrapper;
 
 import std;
 
@@ -63,7 +63,15 @@ namespace {
 // rusty::Option<Arc<..>> is 16 bytes where the bare OwnedFd was 4 (+4 pad), so
 // every field after fd_ moves +8 and sizeof goes 344 -> 352.  These values are
 // measured from the generated module (undefined-template probe), not derived.
-static_assert(sizeof(TcpConnection) == 352);
+// Re-pinned for the Lion transport (docs/dev/lion-runtime-plan.md S5): 352 ->
+// 400.  21ce10a appended writer_ (UnsafeCell<Option<Waker>>, the writer task's
+// waker, 32 bytes with rusty-cpp a130025e's heap-held Waker callable), and
+// daf3d92/4c008ed appended send_error_ and last_send_us_ for write-through and
+// the cork.  The fields before writer_ do not move.
+// S7b removed pending_write_update_, the retired pending-write latch: a bool
+// at 162, inside the padding before poll_thread_, so nothing else moves and
+// sizeof stays 400 (measured, like the rest).
+static_assert(sizeof(TcpConnection) == 400);
 static_assert(alignof(TcpConnection) == 8);
 static_assert(rusty::is_send<TcpConnection>::value);
 static_assert(rusty::is_sync<TcpConnection>::value);
@@ -74,11 +82,13 @@ static_assert(offsetof(TcpConnection, outbound_) == 48);
 static_assert(offsetof(TcpConnection, inbound_) == 112);
 static_assert(offsetof(TcpConnection, closed_) == 160);
 static_assert(offsetof(TcpConnection, on_closed_fired_) == 161);
-static_assert(offsetof(TcpConnection, pending_write_update_) == 162);
 static_assert(offsetof(TcpConnection, poll_thread_) == 168);
 static_assert(offsetof(TcpConnection, on_frame_) == 184);
 static_assert(offsetof(TcpConnection, on_closed_) == 240);
 static_assert(offsetof(TcpConnection, on_error_) == 296);
+static_assert(offsetof(TcpConnection, writer_) == 352);
+static_assert(offsetof(TcpConnection, send_error_) == 384);
+static_assert(offsetof(TcpConnection, last_send_us_) == 392);
 
 // Re-pinned with TcpConnection above: listener_ became
 // RefCell<Option<Arc<LegacyTcpListener>>> (the listener's descriptor lease),
@@ -213,21 +223,23 @@ TEST_F(TcpConnectionTest, FdIsExposed) {
 }
 
 // ---------------------------------------------------------------------------
-// Send path: bytes match frame_codec's wire format
+// Send path without a PollThread: bytes match frame_codec's wire format
 // ---------------------------------------------------------------------------
 
-TEST_F(TcpConnectionTest, SendFramePushesEncodedBytesOnHandleWrite) {
+// No PollThread means no writer task and no write-through: the frame stays
+// queued (the peer sees nothing) until flush() drains it.
+TEST_F(TcpConnectionTest, SendFrameIsQueuedUntilFlush) {
     const std::uint8_t payload[] = {0xCA, 0xFE, 0xBA, 0xBE};
     ChannelFrame f{payload, sizeof(payload)};
 
     EXPECT_EQ(mut_conn().send_frame(f), ChannelError::None);
-    EXPECT_EQ(conn().poll_mode(), PollMode::READ | PollMode::WRITE);
+    std::vector<std::uint8_t> got;
+    EXPECT_EQ(peer_read(got), -1);
+    EXPECT_TRUE(errno == EAGAIN || errno == EWOULDBLOCK);
 
-    // Drive the write.
-    EXPECT_EQ(mut_conn().handle_write(), PollMode::READ);
+    mut_conn().flush();
 
     // Peer should observe header (4 bytes) + payload (4 bytes).
-    std::vector<std::uint8_t> got;
     ssize_t n = peer_read(got);
     ASSERT_GT(n, 0);
     ASSERT_EQ(got.size(), 4u + sizeof(payload));
@@ -243,7 +255,7 @@ TEST_F(TcpConnectionTest, SendFramePushesEncodedBytesOnHandleWrite) {
 TEST_F(TcpConnectionTest, SendZeroLengthPayload) {
     ChannelFrame f{nullptr, 0};
     EXPECT_EQ(mut_conn().send_frame(f), ChannelError::None);
-    EXPECT_EQ(mut_conn().handle_write(), PollMode::READ);
+    mut_conn().flush();
 
     std::vector<std::uint8_t> got;
     ASSERT_EQ(peer_read(got), 4);  // Just the size header.
@@ -259,7 +271,7 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     EXPECT_EQ(mut_conn().send_frame({a, sizeof(a)}), ChannelError::None);
     EXPECT_EQ(mut_conn().send_frame({b, sizeof(b)}), ChannelError::None);
 
-    EXPECT_EQ(mut_conn().handle_write(), PollMode::READ);
+    mut_conn().flush();
 
     std::vector<std::uint8_t> got;
     ssize_t n = peer_read(got);
@@ -276,160 +288,6 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     EXPECT_EQ(v.payload_size, sizeof(b));
     reader.consume_frame();
     EXPECT_EQ(reader.next_frame(v), FrameDecodeStatus::NeedMoreBytes);
-}
-
-// ---------------------------------------------------------------------------
-// Receive path
-// ---------------------------------------------------------------------------
-
-TEST_F(TcpConnectionTest, HandleReadDeliversCompleteFrame) {
-    int frames_seen = 0;
-    std::vector<std::uint8_t> last_frame;
-    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
-        ++frames_seen;
-        last_frame.assign(f.payload, f.payload + f.size);
-    }));
-
-    // Encode a frame on the peer side and write it.
-    std::vector<std::uint8_t> wire;
-    const std::uint8_t payload[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
-    ASSERT_EQ(static_cast<ssize_t>(wire.size()),
-              peer_write(wire.data(), wire.size()));
-
-    EXPECT_TRUE(mut_conn().handle_read());
-    EXPECT_EQ(frames_seen, 1);
-    ASSERT_EQ(last_frame.size(), sizeof(payload));
-    EXPECT_EQ(0, std::memcmp(last_frame.data(), payload, sizeof(payload)));
-}
-
-TEST_F(TcpConnectionTest, FragmentedInboundReassembled) {
-    int frames_seen = 0;
-    std::vector<std::uint8_t> last_frame;
-    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
-        ++frames_seen;
-        last_frame.assign(f.payload, f.payload + f.size);
-    }));
-
-    std::vector<std::uint8_t> wire;
-    const std::uint8_t payload[] = {'h', 'e', 'l', 'l', 'o'};
-    ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
-
-    // Feed bytes one at a time; on_frame should not fire until the
-    // last byte arrives.
-    for (std::size_t i = 0; i + 1 < wire.size(); ++i) {
-        ASSERT_EQ(1, peer_write(wire.data() + i, 1));
-        mut_conn().handle_read();
-        EXPECT_EQ(frames_seen, 0)
-            << "frame fired prematurely at byte " << (i + 1);
-    }
-    ASSERT_EQ(1, peer_write(wire.data() + wire.size() - 1, 1));
-    mut_conn().handle_read();
-    EXPECT_EQ(frames_seen, 1);
-    EXPECT_EQ(last_frame.size(), sizeof(payload));
-}
-
-TEST_F(TcpConnectionTest, MultiFrameCoalescedReadDeliversAll) {
-    std::vector<std::vector<std::uint8_t>> seen;
-    mut_conn().set_on_frame(OnFrameCallback::from_callable([&](const ChannelFrame& f) {
-        seen.emplace_back(f.payload, f.payload + f.size);
-    }));
-
-    std::vector<std::uint8_t> wire;
-    const std::uint8_t a[] = {0xAA};
-    const std::uint8_t b[] = {0xBB, 0xCC};
-    const std::uint8_t c[] = {0xDD, 0xEE, 0xFF};
-    ASSERT_TRUE(frame_codec_encode_into(wire, a, 1, false));
-    ASSERT_TRUE(frame_codec_encode_into(wire, b, 2, false));
-    ASSERT_TRUE(frame_codec_encode_into(wire, c, 3, false));
-    ASSERT_EQ(static_cast<ssize_t>(wire.size()),
-              peer_write(wire.data(), wire.size()));
-
-    EXPECT_TRUE(mut_conn().handle_read());
-    ASSERT_EQ(seen.size(), 3u);
-    EXPECT_EQ(seen[0].size(), 1u);
-    EXPECT_EQ(seen[1].size(), 2u);
-    EXPECT_EQ(seen[2].size(), 3u);
-    EXPECT_EQ(seen[2][2], 0xFF);
-}
-
-TEST_F(TcpConnectionTest, MalformedInboundFiresErrorThenClosed) {
-    int errors_seen = 0;
-    int closes_seen = 0;
-    ChannelError last_err = ChannelError::None;
-    ChannelError last_close = ChannelError::None;
-    mut_conn().set_on_error(OnErrorCallback::from_callable([&](ChannelError e, std::string_view) {
-        ++errors_seen;
-        last_err = e;
-    }));
-    mut_conn().set_on_closed(OnClosedCallback::from_callable([&](ChannelError r) {
-        ++closes_seen;
-        last_close = r;
-    }));
-
-    // Forge a header whose decoded payload size is negative. The
-    // sentinel bit pattern: i32 with bit 31 clear and a payload size
-    // of -1 is impossible by construction (the high bit is the ext
-    // flag, lower 31 bits are unsigned). To synthesize a Malformed
-    // result we build an i32 whose lower 31 bits read as a negative
-    // i31 — which is itself impossible in pure twos-complement i31 —
-    // so instead we simulate the only practical Malformed source: a
-    // size header masked to a value the codec rejects. The codec's
-    // decoder treats `payload < 0` after masking as Malformed; we
-    // construct that by directly memcpying a value whose bit pattern
-    // makes `response_payload_size` return a negative value.
-    //
-    // In current scheme that value cannot be produced because the mask
-    // is unsigned. So we test the fallback path: construct a frame
-    // whose declared size is huge enough that we'd time out waiting,
-    // then close the conn (no Malformed visible). For a deterministic
-    // Malformed surface we instead drive the codec helper directly via
-    // FrameStreamReader; the connection's handle_read path uses the
-    // same code, so an alternative malformed test is to send a frame
-    // we *promised* would parse, then disconnect mid-payload (covered
-    // by the peer-hangup test). This test body therefore exercises a
-    // safer scenario: huge length-prefix that will never receive its
-    // payload, followed by peer hangup, which exits via the peer-EOF
-    // path rather than Malformed. The Malformed branch in the codec
-    // is exhaustively covered by `rpc_frame_codec_test.cc`.
-    //
-    // We assert the more interesting end-to-end behavior: peer hangup
-    // after a partial frame is still a clean close, not an error.
-    std::uint8_t partial_header[2] = {0x10, 0x00};
-    ASSERT_EQ(2, peer_write(partial_header, 2));
-    mut_conn().handle_read();
-    EXPECT_EQ(errors_seen, 0);
-    EXPECT_EQ(closes_seen, 0);
-
-    // Hang up.
-    ::shutdown(peer_fd_, SHUT_WR);
-    ::close(peer_fd_);
-    peer_fd_ = -1;
-    mut_conn().handle_read();
-
-    EXPECT_EQ(errors_seen, 0);  // Clean close, not an error.
-    EXPECT_EQ(closes_seen, 1);
-    EXPECT_EQ(last_close, ChannelError::None);
-    EXPECT_TRUE(conn().is_closed());
-}
-
-TEST_F(TcpConnectionTest, PeerHangupFiresOnClosedExactlyOnce) {
-    int closes_seen = 0;
-    mut_conn().set_on_closed(OnClosedCallback::from_callable(
-        [&](ChannelError) { ++closes_seen; }));
-
-    ::shutdown(peer_fd_, SHUT_WR);
-    ::close(peer_fd_);
-    peer_fd_ = -1;
-
-    // Multiple handle_read invocations; on_closed should fire only on
-    // the first one that sees EOF.
-    mut_conn().handle_read();
-    mut_conn().handle_read();
-    mut_conn().handle_read();
-
-    EXPECT_EQ(closes_seen, 1);
-    EXPECT_TRUE(conn().is_closed());
 }
 
 // ---------------------------------------------------------------------------
@@ -479,16 +337,6 @@ TEST_F(TcpConnectionTest, SendAfterCloseReturnsConnectionReset) {
     EXPECT_EQ(mut_conn().send_frame({b, 1}), ChannelError::ConnectionReset);
 }
 
-TEST_F(TcpConnectionTest, HandleReadReturnsFalseAfterClose) {
-    mut_conn().close();
-    EXPECT_FALSE(mut_conn().handle_read());
-}
-
-TEST_F(TcpConnectionTest, HandleWriteReturnsNoChangeAfterClose) {
-    mut_conn().close();
-    EXPECT_EQ(mut_conn().handle_write(), PollMode::NO_CHANGE);
-}
-
 // ---------------------------------------------------------------------------
 // Backpressure
 // ---------------------------------------------------------------------------
@@ -511,38 +359,6 @@ TEST_F(TcpConnectionTest, OutboundHighWaterReturnsWouldBlock) {
     // the next send should be rejected without buffering.
     EXPECT_EQ(mut_conn().send_frame({pad, sizeof(pad)}),
               ChannelError::WouldBlock);
-}
-
-// ---------------------------------------------------------------------------
-// Pollable contract details
-// ---------------------------------------------------------------------------
-
-TEST_F(TcpConnectionTest, PollModeIncludesWriteWhenOutboundPending) {
-    EXPECT_EQ(conn().poll_mode(), PollMode::READ);
-
-    const std::uint8_t b[1] = {0x01};
-    mut_conn().send_frame({b, 1});
-    EXPECT_EQ(conn().poll_mode(), PollMode::READ | PollMode::WRITE);
-
-    EXPECT_EQ(mut_conn().handle_write(), PollMode::READ);
-    EXPECT_EQ(conn().poll_mode(), PollMode::READ);
-}
-
-TEST_F(TcpConnectionTest, CheckPendingWriteUpdateLatchesAndClears) {
-    EXPECT_FALSE(conn().check_pending_write_update());
-
-    const std::uint8_t b[1] = {0x01};
-    mut_conn().send_frame({b, 1});
-    EXPECT_TRUE(conn().check_pending_write_update());
-    EXPECT_FALSE(conn().check_pending_write_update());  // Latched: cleared on read.
-}
-
-TEST_F(TcpConnectionTest, ContentSizeReportsBufferedBytes) {
-    EXPECT_EQ(mut_conn().content_size(), 0u);
-    const std::uint8_t b[3] = {0x01, 0x02, 0x03};
-    mut_conn().send_frame({b, 3});
-    // Header (4 bytes) + payload (3 bytes) = 7 bytes outbound, 0 inbound.
-    EXPECT_EQ(mut_conn().content_size(), 7u);
 }
 
 // ---------------------------------------------------------------------------
@@ -570,13 +386,303 @@ TEST_F(TcpConnectionTest, ChannelProxyForwardsAllOps) {
     // forwarding to the same Arc).
 }
 
-TEST(TcpListenerConcurrencyTest, CloseWaitsForWholeAcceptDriverWithTwoReaders) {
-    auto listener = TcpListener::new_();
-    ASSERT_EQ(listener.listen("127.0.0.1:0"), ChannelError::None);
+// ---------------------------------------------------------------------------
+// Attached to a PollThread: the generated reader and writer tasks
+// ---------------------------------------------------------------------------
+
+// Callbacks run on the poll thread; the test thread reads what they record.
+struct Observed {
+    std::mutex mutex;
+    std::vector<std::vector<std::uint8_t>> frames;
+    std::atomic<int> frame_count{0};
+    std::atomic<int> errors{0};
+    std::atomic<int> closes{0};
+    std::atomic<int> last_close{static_cast<int>(ChannelError::Internal)};
+};
+
+class AttachedTcpConnectionTest : public ::testing::Test {
+ protected:
+    void SetUp() override {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        ASSERT_GE(listen_fd_, 0);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        ASSERT_EQ(::bind(listen_fd_, reinterpret_cast<const sockaddr*>(&address),
+                         sizeof(address)), 0);
+        ASSERT_EQ(::listen(listen_fd_, 1), 0);
+        socklen_t length = sizeof(address);
+        ASSERT_EQ(::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&address),
+                                &length), 0);
+        const std::string endpoint =
+            "127.0.0.1:" + std::to_string(ntohs(address.sin_port));
+
+        poll_thread_ = rusty::Some(PollThread::create());
+        auto factory = TcpFactory::new_(poll_thread_.as_ref().unwrap().clone());
+        auto connected = factory.connect(endpoint);
+        ASSERT_EQ(connected.error, ChannelError::None);
+        ASSERT_TRUE(connected.connection.is_some());
+        proxy_ = std::move(connected.connection);
+
+        peer_fd_ = ::accept(listen_fd_, nullptr, nullptr);
+        ASSERT_GE(peer_fd_, 0);
+        // One segment per peer write, so fragmented input stays fragmented.
+        const int one = 1;
+        ASSERT_EQ(::setsockopt(peer_fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)), 0);
+        // Bounds every blocking peer read.
+        const timeval limit{5, 0};
+        ASSERT_EQ(::setsockopt(peer_fd_, SOL_SOCKET, SO_RCVTIMEO, &limit, sizeof(limit)), 0);
+    }
+
+    void TearDown() override {
+        if (proxy_.is_some()) {
+            proxy()->close();
+        }
+        if (poll_thread_.is_some()) {
+            poll_thread_.as_ref().unwrap()->shutdown();
+        }
+        close_peer();
+        if (listen_fd_ >= 0) {
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+        }
+    }
+
+    // The proxy's setters take `&mut self`; mirror mut_conn() above.
+    ChannelConnectionProxy& proxy() {
+        return const_cast<ChannelConnectionProxy&>(proxy_.as_ref().unwrap());
+    }
+
+    // Callbacks capture the fixture's `seen_`, which outlives TearDown: its
+    // close() delivers on_closed, after the test body's locals are gone.
+    void observe() {
+        Observed& seen = seen_;
+        proxy()->set_on_frame(OnFrameCallback::from_callable([&seen](const ChannelFrame& f) {
+            {
+                std::lock_guard<std::mutex> guard(seen.mutex);
+                seen.frames.emplace_back(f.payload, f.payload + f.size);
+            }
+            seen.frame_count.fetch_add(1, std::memory_order_release);
+        }));
+        proxy()->set_on_error(OnErrorCallback::from_callable(
+            [&seen](ChannelError, std::string_view) {
+                seen.errors.fetch_add(1, std::memory_order_release);
+            }));
+        proxy()->set_on_closed(OnClosedCallback::from_callable([&seen](ChannelError reason) {
+            seen.last_close.store(static_cast<int>(reason), std::memory_order_relaxed);
+            seen.closes.fetch_add(1, std::memory_order_release);
+        }));
+    }
+
+    void peer_write_all(const std::uint8_t* data, std::size_t size) {
+        while (size > 0) {
+            const ssize_t n = ::write(peer_fd_, data, size);
+            ASSERT_GT(n, 0);
+            data += n;
+            size -= static_cast<std::size_t>(n);
+        }
+    }
+
+    // Read exactly `size` bytes; fewer means EOF, an error or the timeout.
+    std::vector<std::uint8_t> peer_read_exactly(std::size_t size) {
+        std::vector<std::uint8_t> out(size);
+        std::size_t got = 0;
+        while (got < size) {
+            const ssize_t n = ::read(peer_fd_, out.data() + got, size - got);
+            if (n <= 0) break;
+            got += static_cast<std::size_t>(n);
+        }
+        out.resize(got);
+        return out;
+    }
+
+    void close_peer() {
+        if (peer_fd_ >= 0) {
+            ::close(peer_fd_);
+            peer_fd_ = -1;
+        }
+    }
+
+    // Declared first, so destroyed last.
+    Observed seen_;
+    int listen_fd_ = -1;
+    int peer_fd_ = -1;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_;
+    rusty::Option<ChannelConnectionProxy> proxy_;
+};
+
+constexpr auto kDeliveryLimit = std::chrono::seconds(5);
+
+TEST_F(AttachedTcpConnectionTest, PeerFrameIsDeliveredByTheReaderTask) {
+    Observed& seen = seen_;
+    observe();
+
+    std::vector<std::uint8_t> wire;
+    const std::uint8_t payload[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
+    peer_write_all(wire.data(), wire.size());
+
+    ASSERT_TRUE(wait_until([&] { return seen.frame_count.load() == 1; }, kDeliveryLimit));
+    std::lock_guard<std::mutex> guard(seen.mutex);
+    ASSERT_EQ(seen.frames.size(), 1u);
+    ASSERT_EQ(seen.frames[0].size(), sizeof(payload));
+    EXPECT_EQ(0, std::memcmp(seen.frames[0].data(), payload, sizeof(payload)));
+}
+
+TEST_F(AttachedTcpConnectionTest, FragmentedInboundReassembled) {
+    Observed& seen = seen_;
+    observe();
+
+    std::vector<std::uint8_t> wire;
+    const std::uint8_t payload[] = {'h', 'e', 'l', 'l', 'o'};
+    ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
+
+    // Feed bytes one at a time, each its own segment and read edge; on_frame
+    // must not fire until the last byte arrives.
+    for (std::size_t i = 0; i + 1 < wire.size(); ++i) {
+        peer_write_all(wire.data() + i, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        EXPECT_EQ(seen.frame_count.load(), 0)
+            << "frame fired prematurely at byte " << (i + 1);
+    }
+    peer_write_all(wire.data() + wire.size() - 1, 1);
+    ASSERT_TRUE(wait_until([&] { return seen.frame_count.load() == 1; }, kDeliveryLimit));
+    std::lock_guard<std::mutex> guard(seen.mutex);
+    ASSERT_EQ(seen.frames.size(), 1u);
+    EXPECT_EQ(0, std::memcmp(seen.frames[0].data(), payload, sizeof(payload)));
+}
+
+TEST_F(AttachedTcpConnectionTest, MultiFrameCoalescedReadDeliversAll) {
+    Observed& seen = seen_;
+    observe();
+
+    std::vector<std::uint8_t> wire;
+    const std::uint8_t a[] = {0xAA};
+    const std::uint8_t b[] = {0xBB, 0xCC};
+    const std::uint8_t c[] = {0xDD, 0xEE, 0xFF};
+    ASSERT_TRUE(frame_codec_encode_into(wire, a, 1, false));
+    ASSERT_TRUE(frame_codec_encode_into(wire, b, 2, false));
+    ASSERT_TRUE(frame_codec_encode_into(wire, c, 3, false));
+    peer_write_all(wire.data(), wire.size());
+
+    ASSERT_TRUE(wait_until([&] { return seen.frame_count.load() == 3; }, kDeliveryLimit));
+    std::lock_guard<std::mutex> guard(seen.mutex);
+    ASSERT_EQ(seen.frames.size(), 3u);
+    EXPECT_EQ(seen.frames[0].size(), 1u);
+    EXPECT_EQ(seen.frames[1].size(), 2u);
+    EXPECT_EQ(seen.frames[2].size(), 3u);
+    EXPECT_EQ(seen.frames[2][2], 0xFF);
+}
+
+// A peer hang-up after a partial frame is a clean close, not an error.  (A
+// malformed header cannot be produced on this wire -- the 31-bit size field
+// is unsigned -- and the codec's Malformed branch is covered by
+// rpc_frame_codec_test.cc.)
+TEST_F(AttachedTcpConnectionTest, PartialFrameThenPeerHangupIsACleanClose) {
+    Observed& seen = seen_;
+    observe();
+
+    const std::uint8_t partial_header[2] = {0x10, 0x00};
+    peer_write_all(partial_header, 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(seen.errors.load(), 0);
+    EXPECT_EQ(seen.closes.load(), 0);
+
+    ::shutdown(peer_fd_, SHUT_WR);
+    close_peer();
+
+    ASSERT_TRUE(wait_until([&] { return seen.closes.load() == 1; }, kDeliveryLimit));
+    EXPECT_EQ(seen.errors.load(), 0);
+    EXPECT_EQ(seen.last_close.load(), static_cast<int>(ChannelError::None));
+    EXPECT_EQ(seen.frame_count.load(), 0);
+    EXPECT_TRUE(proxy()->is_closed());
+}
+
+TEST_F(AttachedTcpConnectionTest, PeerHangupFiresOnClosedExactlyOnce) {
+    Observed& seen = seen_;
+    observe();
+
+    ::shutdown(peer_fd_, SHUT_WR);
+    close_peer();
+
+    ASSERT_TRUE(wait_until([&] { return seen.closes.load() >= 1; }, kDeliveryLimit));
+    // Both tasks see the hang-up; the connection reports it once.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_EQ(seen.closes.load(), 1);
+    EXPECT_TRUE(proxy()->is_closed());
+}
+
+// Sends from the test thread are foreign to the PollThread: they write
+// through or hand the bytes to the writer task.  Either way the peer sees
+// every frame, in order, in frame_codec's format.
+TEST_F(AttachedTcpConnectionTest, ForeignSendsReachThePeerInWireOrder) {
+    const std::uint8_t a[] = {0xCA, 0xFE};
+    const std::uint8_t b[] = {0xBA, 0xBE, 0x01};
+    EXPECT_EQ(proxy()->send_frame({a, sizeof(a)}), ChannelError::None);
+    EXPECT_EQ(proxy()->send_frame({nullptr, 0}), ChannelError::None);
+    EXPECT_EQ(proxy()->send_frame({b, sizeof(b)}), ChannelError::None);
+
+    const std::size_t total = 4 + sizeof(a) + 4 + 4 + sizeof(b);
+    const auto got = peer_read_exactly(total);
+    ASSERT_EQ(got.size(), total);
+
+    auto reader = FrameStreamReader::new_();
+    reader.append(got.data(), got.size());
+    FrameView v{};
+    ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);
+    ASSERT_EQ(v.payload_size, sizeof(a));
+    EXPECT_EQ(0, std::memcmp(v.payload, a, sizeof(a)));
+    reader.consume_frame();
+    ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);
+    EXPECT_EQ(v.payload_size, 0u);
+    reader.consume_frame();
+    ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);
+    ASSERT_EQ(v.payload_size, sizeof(b));
+    EXPECT_EQ(0, std::memcmp(v.payload, b, sizeof(b)));
+    reader.consume_frame();
+    EXPECT_EQ(reader.next_frame(v), FrameDecodeStatus::NeedMoreBytes);
+}
+
+// close() from a foreign thread shuts the socket down, the transport tasks
+// retire and close the connection (on_closed fires once), and the peer reads
+// EOF.
+TEST_F(AttachedTcpConnectionTest, CloseRetiresTheTransportAndThePeerSeesEof) {
+    Observed& seen = seen_;
+    observe();
+
+    proxy()->close();
+    EXPECT_TRUE(proxy()->is_closed());
+
+    std::uint8_t byte = 0;
+    EXPECT_EQ(::read(peer_fd_, &byte, 1), 0);
+    ASSERT_TRUE(wait_until([&] { return seen.closes.load() >= 1; }, kDeliveryLimit));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(seen.closes.load(), 1);
+    EXPECT_EQ(seen.errors.load(), 0);
+
+    const std::uint8_t b[1] = {0xAA};
+    EXPECT_EQ(proxy()->send_frame({b, 1}), ChannelError::ConnectionReset);
+}
+
+// ---------------------------------------------------------------------------
+// Listener close and the accept driver
+// ---------------------------------------------------------------------------
+
+// The accept task runs the accept driver on the PollThread; a close from any
+// other thread waits until the whole driver (not only the callback) is done.
+// Ported from the two-reader version that drove TcpListener::handle_read on
+// two threads; on Lion there is one accept task per listener, and the
+// Rust lane's twin is tests/tcp_channel_rust.rs
+// close_waits_for_the_whole_accept_driver.
+TEST(TcpListenerConcurrencyTest, CloseWaitsForTheWholeAcceptDriver) {
+    auto poll_thread = PollThread::create();
+    auto raw = TcpListener::new_();
+    raw.set_poll_thread(poll_thread.clone());
+    auto listener = rusty::Arc<TcpListener>::new_(std::move(raw));
 
     std::atomic<unsigned> callbacks_entered{0};
     std::atomic<bool> release_first{false};
-    listener.set_on_accept(OnAcceptCallback::from_callable(
+    listener->set_on_accept(OnAcceptCallback::from_callable(
         [&](ChannelConnectionProxy) {
             const unsigned index =
                 callbacks_entered.fetch_add(1, std::memory_order_seq_cst);
@@ -586,50 +692,32 @@ TEST(TcpListenerConcurrencyTest, CloseWaitsForWholeAcceptDriverWithTwoReaders) {
                 }
             }
         }));
+    auto proxy = make_tcp_listener_channel_proxy(listener.clone());
+    ASSERT_EQ(proxy->listen("127.0.0.1:0"), ChannelError::None);
 
-    const int client1 = connect_to_listener(listener.local_address());
+    const int client1 = connect_to_listener(listener->local_address());
     ASSERT_GE(client1, 0);
-    std::thread reader1([&] { listener.handle_read(); });
     const bool first_entered = wait_until(
         [&] { return callbacks_entered.load(std::memory_order_acquire) >= 1; },
-        std::chrono::seconds(2));
+        std::chrono::seconds(5));
     if (!first_entered) {
-        release_first.store(true, std::memory_order_release);
-        reader1.join();
         ::close(client1);
+        poll_thread->shutdown();
         FAIL() << "first accept callback did not start";
     }
-
-    const int client2 = connect_to_listener(listener.local_address());
-    if (client2 < 0) {
-        release_first.store(true, std::memory_order_release);
-        reader1.join();
-        ::close(client1);
-        FAIL() << "second client failed to connect";
-    }
-    bool reader2_result = true;
-    std::thread reader2([&] { reader2_result = listener.handle_read(); });
-    reader2.join();
+    // A second connection queues behind the blocked driver.
+    const int client2 = connect_to_listener(listener->local_address());
 
     std::atomic<unsigned> closes_done{0};
     std::thread closer1([&] {
-        listener.close();
+        listener->close();
         closes_done.fetch_add(1, std::memory_order_release);
     });
-    const bool close_started = wait_until([&] { return listener.is_closed(); },
-                                          std::chrono::seconds(2));
-    if (!close_started) {
-        release_first.store(true, std::memory_order_release);
-        reader1.join();
-        closer1.join();
-        ::close(client1);
-        ::close(client2);
-        FAIL() << "close did not set the closed latch";
-    }
-
+    const bool close_started = wait_until([&] { return listener->is_closed(); },
+                                          std::chrono::seconds(5));
     // A second close exercises the already-closed path; it must wait too.
     std::thread closer2([&] {
-        listener.close();
+        listener->close();
         closes_done.fetch_add(1, std::memory_order_release);
     });
     const bool a_close_returned_while_first_callback_was_live = wait_until(
@@ -637,17 +725,20 @@ TEST(TcpListenerConcurrencyTest, CloseWaitsForWholeAcceptDriverWithTwoReaders) {
         std::chrono::milliseconds(200));
 
     release_first.store(true, std::memory_order_release);
-    reader1.join();
     closer1.join();
     closer2.join();
+    // The driver saw close and accepted nothing more.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     ::close(client1);
-    ::close(client2);
+    if (client2 >= 0) ::close(client2);
 
-    EXPECT_FALSE(reader2_result);
+    EXPECT_TRUE(close_started);
+    EXPECT_GE(client2, 0);
     EXPECT_EQ(callbacks_entered.load(std::memory_order_seq_cst), 1u);
     EXPECT_FALSE(a_close_returned_while_first_callback_was_live);
     EXPECT_EQ(closes_done.load(std::memory_order_acquire), 2u);
-    EXPECT_EQ(listener.fd(), -1);
+    EXPECT_EQ(listener->fd(), -1);
+    poll_thread->shutdown();
 }
 
 }  // namespace

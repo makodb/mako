@@ -1,22 +1,43 @@
 # Rust lane independence
 
 Completed 2026-09-13. The canonical Cargo lane runs on Rust std and the small
-C/assembly kernel, without a Rust facade package or C++ runtime.
+C/assembly kernel, without a Rust facade package or C++ runtime. Since
+2026-09-27 it also depends on the pinned Lion crates; see *Current status*.
 The generated C++ lane remains a separate consumer of the same Rust sources.
 
 ## Current status
 
-The canonical Cargo lane runs on Rust std and the native C/assembly kernel. It
-has no production Rust dependencies and needs no facade package, C++ runtime or
-transpiler.
+At completion on 2026-09-13, the canonical Cargo lane ran on Rust std and the
+native C/assembly kernel. It had no production Rust dependencies and needed no
+facade package, C++ runtime or transpiler.
+
+**Update, 2026-10-01: the Lion dependencies.** Since `2085e7c` (2026-09-27),
+decision D5 and item S1 of [lion-runtime-plan.md](lion-runtime-plan.md),
+`Cargo.toml` has exactly two production dependencies: `lion-reactor` and
+`lion-executor`, path dependencies into the `third-party/lion` gitlink with
+`default-features = false`. They bring the other Lion path crates and the erased
+`vstd` library from Verus's git repository, at the revision Lion names. The
+independence check now enforces an exact allowlist instead of an empty
+dependency set. It rejects any other `[dependencies]` entry, any build or
+target dependency, `[patch]` or `[replace]`, and Lion's runtime crates (mio,
+flume, tokio, socket2, futures-task, pin-project-lite) anywhere in the normal
+dependency tree. The Cargo lane still needs no facade package, C++ runtime or
+transpiler. Ownership moved as well: Lion's crates now own the executor, the
+I/O reactor and the timer wheel, so "Scheduling, transport decisions and
+serialization policy stay in canonical Rust" under *What remains by design*
+describes the tree at completion. See
+[canonical-rust-runtime.md](../canonical-rust-runtime.md) for the current split.
 
 The [independence check](../../scripts/check_rust_independence.py) copies only
 canonical Rust modules, tests, Cargo inputs and native kernel sources into a
-new directory. It copies no facade, C++ runtime,
+new directory, plus, since S1, the tracked files of the Lion crates in the
+dependency closure. It copies no facade, C++ runtime,
 C++ source or transpiler, then runs locked offline Cargo tests and doctests with a
 restricted tool path and `CXX=/bin/false`.
 
-Current acceptance on Linux x86_64/glibc, with Clang 22 and libc++ for C++:
+Acceptance at completion (2026-09-13, before the Lion dependencies) on Linux
+x86_64/glibc, with Clang 22 and libc++ for C++. The plan's result notes record
+the results measured since:
 
 | Check | Result |
 | --- | --- |

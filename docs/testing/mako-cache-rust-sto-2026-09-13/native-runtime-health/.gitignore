@@ -1,0 +1,4 @@
+# Retain the exact scoped proof evidence, not arbitrary build outputs.
+!*.json
+!*.log
+!source-inputs.tar.gz

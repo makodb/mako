@@ -151,8 +151,8 @@ public:
         // 1. worker phase
         txn_obj_buf.reserve(str_arena::MinStrReserveLength);
         txn_obj_buf.resize(db->sizeof_txn_object(0));
-        db->shard_reset(); // initialize
         TThread::set_mode(1);
+        db->shard_reset(); // initialize
         TThread::enable_multiverison();
         {
             std::string needV = "";
@@ -233,10 +233,6 @@ public:
        }
     }
 
-    void init() {
-        scoped_db_thread_ctx ctx(db, false);
-        mbta_table::thread_init();
-    }
     static mbta_sharded_ordered_index * OpenTablesForTablespace(abstract_db *db, const char *name) {
        auto *table = db->open_sharded_index(name);
        return table;
@@ -249,9 +245,9 @@ protected:
 };
 
 void runner(abstract_db *db) {
-    auto worker = new simple_tpcc_worker(db) ;
-    worker->init();
-    worker->txn_basic();
+    scoped_db_thread_ctx thread_context(db, false);
+    simple_tpcc_worker worker(db);
+    worker.txn_basic();
     // worker->parse_str();
     // worker->txn_scan();
     // worker->txn_participant();

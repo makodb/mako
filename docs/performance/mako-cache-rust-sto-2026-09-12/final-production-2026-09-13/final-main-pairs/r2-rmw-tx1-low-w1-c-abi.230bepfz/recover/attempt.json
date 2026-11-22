@@ -1,0 +1,176 @@
+{
+  "command": [
+    "env",
+    "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+    "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+    "taskset",
+    "-c",
+    "0",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-final-production",
+    "__recover",
+    "mako",
+    "rmw",
+    "1",
+    "low",
+    "1",
+    "65536",
+    "16384",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r2-rmw-tx1-low-w1-c-abi.230bepfz/rocks",
+    "81920"
+  ],
+  "completed": true,
+  "memory_samples": [
+    {
+      "VmHWM": 159744,
+      "VmRSS": 159744,
+      "VmSize": 446464,
+      "elapsed_seconds": 0.0012452779337763786
+    },
+    {
+      "VmHWM": 21164032,
+      "VmRSS": 21164032,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.051587015856057405
+    },
+    {
+      "VmHWM": 21164032,
+      "VmRSS": 21164032,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.1019510249607265
+    },
+    {
+      "VmHWM": 21192704,
+      "VmRSS": 21192704,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.15227864170446992
+    },
+    {
+      "VmHWM": 24735744,
+      "VmRSS": 24735744,
+      "VmSize": 94101504,
+      "elapsed_seconds": 0.2025884590111673
+    },
+    {
+      "VmHWM": 33013760,
+      "VmRSS": 33013760,
+      "VmSize": 101965824,
+      "elapsed_seconds": 0.25294595677405596
+    },
+    {
+      "VmHWM": 41058304,
+      "VmRSS": 41058304,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.3032614039257169
+    },
+    {
+      "VmHWM": 41111552,
+      "VmRSS": 41111552,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.3535725697875023
+    },
+    {
+      "VmHWM": 41758720,
+      "VmRSS": 41758720,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.4039223790168762
+    },
+    {
+      "VmHWM": 42201088,
+      "VmRSS": 42201088,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.45424332562834024
+    },
+    {
+      "VmHWM": 43855872,
+      "VmRSS": 43855872,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.5045540216378868
+    },
+    {
+      "VmHWM": 43855872,
+      "VmRSS": 43855872,
+      "VmSize": 113500160,
+      "elapsed_seconds": 0.5549098309129477
+    },
+    {
+      "VmHWM": 45580288,
+      "VmRSS": 45580288,
+      "VmSize": 120840192,
+      "elapsed_seconds": 0.6052196267992258
+    },
+    {
+      "VmHWM": 45580288,
+      "VmRSS": 45580288,
+      "VmSize": 120840192,
+      "elapsed_seconds": 0.6555296336300671
+    },
+    {
+      "VmHWM": 45580288,
+      "VmRSS": 45580288,
+      "VmSize": 120840192,
+      "elapsed_seconds": 0.7058851616457105
+    },
+    {
+      "VmHWM": 45580288,
+      "VmRSS": 45580288,
+      "VmSize": 120840192,
+      "elapsed_seconds": 0.756197108887136
+    },
+    {
+      "VmHWM": 52158464,
+      "VmRSS": 52158464,
+      "VmSize": 129228800,
+      "elapsed_seconds": 0.8065074649639428
+    },
+    {
+      "VmHWM": 52158464,
+      "VmRSS": 52158464,
+      "VmSize": 129228800,
+      "elapsed_seconds": 0.8568639839068055
+    },
+    {
+      "VmHWM": 52158464,
+      "VmRSS": 52158464,
+      "VmSize": 129228800,
+      "elapsed_seconds": 0.9071733397431672
+    },
+    {
+      "VmHWM": 52158464,
+      "VmRSS": 52158464,
+      "VmSize": 129228800,
+      "elapsed_seconds": 0.957483225967735
+    },
+    {
+      "VmHWM": 52420608,
+      "VmRSS": 52420608,
+      "VmSize": 129228800,
+      "elapsed_seconds": 1.0078394548036158
+    },
+    {
+      "VmHWM": 75448320,
+      "VmRSS": 75448320,
+      "VmSize": 181669888,
+      "elapsed_seconds": 1.0581500409170985
+    },
+    {
+      "VmHWM": 133361664,
+      "VmRSS": 49999872,
+      "VmSize": 406040576,
+      "elapsed_seconds": 1.1084644878283143
+    },
+    {
+      "VmHWM": 133361664,
+      "VmRSS": 49999872,
+      "VmSize": 406040576,
+      "elapsed_seconds": 1.158778874669224
+    },
+    {
+      "VmHWM": 133361664,
+      "VmRSS": 46559232,
+      "VmSize": 389255168,
+      "elapsed_seconds": 1.209090031683445
+    }
+  ],
+  "returncode": 0,
+  "wall_seconds": 1.2594591109082103
+}

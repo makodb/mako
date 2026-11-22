@@ -1,0 +1,20 @@
+{
+  "command": [
+    "taskset",
+    "-c",
+    "33-63",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+    "verify",
+    "--path",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-c-abi.9qz6tsfe/rocks",
+    "--manifest",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-c-abi.9qz6tsfe/expected.txt",
+    "--writeback-cpu",
+    "32"
+  ],
+  "completed": false,
+  "error": "KeyboardInterrupt: ",
+  "returncode": -15,
+  "timeout_seconds": 3600,
+  "wall_seconds": 73.41068672994152
+}

@@ -27,15 +27,19 @@
 //! (six here, one in `rpc/server.rs`): an allow that suppresses nothing is
 //! clutter that reads as a warning.
 //!
-//! Pinned with an item-scoped `#[allow]`: 43 attributes on 42 items across 15
-//! families. Lifting every one of them yields 70 findings across 11 families
-//! on 33 items. Four pinned families -- `borrowed_box`, `unnecessary_cast`,
-//! `upper_case_acronyms`, `wrong_self_convention` -- produce no finding under
-//! this clippy, so those pins are inert today, and the two ABI hazards they
-//! once guarded (renaming the emitted enumerator and `DisconnectBehavior_QUEUE()`
-//! accessor; changing an emitted method signature) cannot currently be
-//! re-measured because `--fix` has nothing to apply. Two live families still
-//! change the provider's ABI when taken, both re-verified 2026-09-11:
+//! Pinned with an item-scoped `#[allow]`: 39 attributes on 38 items across 14
+//! families. Lifting every one of them yields 69 findings across 10 families
+//! on 32 items. (Re-measured 2026-09-26, same clippy, when `Client` became
+//! `Send + Sync`: that removed the one `arc_with_non_send_sync` finding, on
+//! `Client::create`, and with it all four pins of that family -- the other
+//! three already suppressed nothing.) Four pinned families -- `borrowed_box`,
+//! `unnecessary_cast`, `upper_case_acronyms`, `wrong_self_convention` --
+//! produce no finding under this clippy, so those pins are inert today, and
+//! the two ABI hazards they once guarded (renaming the emitted enumerator and
+//! `DisconnectBehavior_QUEUE()` accessor; changing an emitted method
+//! signature) cannot currently be re-measured because `--fix` has nothing to
+//! apply. Two live families still change the provider's ABI when taken, both
+//! re-verified 2026-09-11:
 //!
 //!   * `ptr_arg` retypes exported `clientpool_select` from
 //!     `const rusty::Vec<rusty::Arc<Client>>&` to
@@ -66,10 +70,10 @@ use crate::reactor as _;
 #[allow(unused_imports)]
 use crate::threading as _;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 // (`std::ffi::CStr` is deliberately NOT imported: see `clientconn_addr_to_string`.)
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use crate::rand::randgen_range;
@@ -528,8 +532,6 @@ impl Future {
         }
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     fn create(xid: i64, attr: FutureAttr) -> Arc<Future> {
         Arc::new(Future::new(xid, attr))
     }
@@ -1510,6 +1512,15 @@ impl ClientConnection {
     // --- generic request trio ---
     fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) { clientconn_request_via_channel(self, rpc_id, attr, write_fn) }
+    /// Mako-local (bounded channel admission, with `clientconn_request_inner`).
+    /// Wait cooperatively for channel admission, never retrying an accepted frame.
+    /// A positive timeout requires a running fiber and a retained connection;
+    /// callers must not hold a Client or peer lock across this call.
+    fn request_with_admission<F>(&self, rpc_id: i32, attr: &FutureAttr,
+                                 admission_timeout_us: u64, write_fn: F) -> FutureResult
+    where F: FnMut(&mut BinaryWriteArchive) {
+        clientconn_request_inner(self, rpc_id, attr, admission_timeout_us, write_fn)
+    }
     pub fn request_with_options<F>(&self, rpc_id: i32, options: &RequestOptions, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) { clientconn_request_with_options(self, rpc_id, options, attr, write_fn) }
     pub fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: AsyncReplyCallback) -> Result<(), i32>
@@ -1547,17 +1558,33 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 
+// One `Arc<Client>` is entered from several threads at once: the thread
+// that owns it, and the client's poll thread, where reply callbacks run and
+// may issue the next request through the same handle (rpcbench's pipeline).
+// Every field is therefore synchronized, and `Client` is `Send + Sync`.
+//
+// These fields used to be `RefCell` and `Cell`. Generated C++ erases Rust's
+// auto traits (`rusty::Arc` and `rusty::Function` carry no `Send` bound), so
+// C++ callers shared the handle anyway. `rusty::RefCell` counts borrows in a
+// plain `int`: two threads borrowing the connection slot at once lost an
+// update, the count reached -1, and the next `connection()` panicked
+// "already mutably borrowed" although nothing had borrowed it mutably.
+//
+// The connection slot is only locked to clone the handle out or to swap it,
+// never across a call into the connection, so a reply callback that
+// re-enters `request_async` cannot deadlock. The scalars are independent
+// values that publish no other data, so they use relaxed atomics.
 pub struct Client {
-    connection_field: RefCell<Option<Arc<ClientConnection>>>,
+    connection_field: std::sync::Mutex<Option<Arc<ClientConnection>>>,
     poll_thread_worker_field: Arc<PollThread>,
-    is_client_mode_field: Cell<bool>,
-    time_field: Cell<i64>,
-    timeout_field: Cell<u64>,
-    rpc_id_field: Cell<i32>,
-    pending_keepalive_config_field: Cell<KeepaliveConfig>,
-    pending_heartbeat_config_field: Cell<HeartbeatConfig>,
-    pending_circuit_breaker_config_field: Cell<CircuitBreakerConfig>,
-    pending_reconnect_policy_field: Cell<ReconnectPolicy>,
+    is_client_mode_field: AtomicBool,
+    time_field: AtomicI64,
+    timeout_field: AtomicU64,
+    rpc_id_field: AtomicI32,
+    pending_keepalive_config_field: ClientCloneCell<KeepaliveConfig>,
+    pending_heartbeat_config_field: ClientCloneCell<HeartbeatConfig>,
+    pending_circuit_breaker_config_field: ClientCloneCell<CircuitBreakerConfig>,
+    pending_reconnect_policy_field: ClientCloneCell<ReconnectPolicy>,
     callback_manager_field: Arc<CallbackManager>,
     pending_factory_field: std::sync::Mutex<Option<ChannelFactoryProxy>>,
     // The Client retains the same counters as its connection so references
@@ -1574,36 +1601,34 @@ impl Drop for Client {
 impl Client {
     fn new(poll_thread_worker: Arc<PollThread>) -> Client {
         Client {
-            connection_field: RefCell::<Option<Arc<ClientConnection>>>::new(None),
+            connection_field: std::sync::Mutex::<Option<Arc<ClientConnection>>>::new(None),
             poll_thread_worker_field: poll_thread_worker,
-            is_client_mode_field: Cell::<bool>::new(false),
-            time_field: Cell::<i64>::new(0i64),
-            timeout_field: Cell::<u64>::new(0u64),
-            rpc_id_field: Cell::<i32>::new(0i32),
-            pending_keepalive_config_field: Cell::<KeepaliveConfig>::new(KeepaliveConfig::new()),
-            pending_heartbeat_config_field: Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
-            pending_circuit_breaker_config_field: Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
-            pending_reconnect_policy_field: Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
+            is_client_mode_field: AtomicBool::new(false),
+            time_field: AtomicI64::new(0i64),
+            timeout_field: AtomicU64::new(0u64),
+            rpc_id_field: AtomicI32::new(0i32),
+            pending_keepalive_config_field: ClientCloneCell::<KeepaliveConfig>::new(KeepaliveConfig::new()),
+            pending_heartbeat_config_field: ClientCloneCell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
+            pending_circuit_breaker_config_field: ClientCloneCell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
+            pending_reconnect_policy_field: ClientCloneCell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
             callback_manager_field: Arc::<CallbackManager>::new(CallbackManager::new()),
             pending_factory_field: std::sync::Mutex::<Option<ChannelFactoryProxy>>::new(None),
             metrics_field: Arc::new(ConnectionMetrics::new()),
         }
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn create(poll_thread_worker: Arc<PollThread>) -> Arc<Client> {
         Arc::<Client>::new(Client::new(poll_thread_worker))
     }
 
-    fn set_client_mode(&self, v: bool) { self.is_client_mode_field.set(v); }
-    fn client_mode(&self) -> bool { self.is_client_mode_field.get() }
-    fn set_time(&self, v: i64) { self.time_field.set(v); }
-    fn time(&self) -> i64 { self.time_field.get() }
-    fn set_timeout(&self, v: u64) { self.timeout_field.set(v); }
-    fn timeout(&self) -> u64 { self.timeout_field.get() }
-    fn set_rpc_id(&self, v: i32) { self.rpc_id_field.set(v); }
-    fn rpc_id(&self) -> i32 { self.rpc_id_field.get() }
+    fn set_client_mode(&self, v: bool) { self.is_client_mode_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn client_mode(&self) -> bool { self.is_client_mode_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_time(&self, v: i64) { self.time_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn time(&self) -> i64 { self.time_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_timeout(&self, v: u64) { self.timeout_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn timeout(&self) -> u64 { self.timeout_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_rpc_id(&self, v: i32) { self.rpc_id_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn rpc_id(&self) -> i32 { self.rpc_id_field.load(std::sync::atomic::Ordering::Relaxed) }
 
     pub fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) {
@@ -1611,7 +1636,7 @@ impl Client {
         if guard.is_none() {
             return FutureResult::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         guard.as_ref().unwrap().request(rpc_id, attr, write_fn)
     }
 
@@ -1621,7 +1646,7 @@ impl Client {
         if guard.is_none() {
             return FutureResult::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         let attr: FutureAttr = FutureAttr { callback: Default::default() };
         guard.as_ref().unwrap().request_with_options(
             rpc_id,
@@ -1637,7 +1662,7 @@ impl Client {
         if guard.is_none() {
             return Result::<(), i32>::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         guard.as_ref().unwrap().request_async(rpc_id, write_fn, on_reply)
     }
 
@@ -1651,7 +1676,7 @@ impl Client {
             value.is_client_mode_ = client;
             value
         });
-        self.is_client_mode_field.set(client);
+        self.is_client_mode_field.store(client, std::sync::atomic::Ordering::Relaxed);
 
         conn.set_keepalive(&self.pending_keepalive_config_field.get());
         conn.set_heartbeat_config(&self.pending_heartbeat_config_field.get());
@@ -1674,15 +1699,16 @@ impl Client {
         let result: i32 = conn.connect(addr);
 
         if result == 0i32 {
-            let mut store_guard = self.connection_field.borrow_mut();
-            *store_guard = Some(conn);
+            // Swap under the lock, but release the replaced connection after
+            // the guard is gone: its teardown must not run while another
+            // thread waits for the slot.
+            let retired: Option<Arc<ClientConnection>> = self.connection_field.lock().unwrap().replace(conn);
+            drop(retired);
         }
 
         result
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn close(&self) {
         if let Some(conn_ref) = self.connection() {
             let generation = conn_ref.mark_closing();
@@ -1793,11 +1819,8 @@ impl Client {
     }
 
     pub fn connection(&self) -> Option<Arc<ClientConnection>> {
-        let guard = self.connection_field.borrow();
-        if guard.is_some() {
-            return Some(guard.as_ref().unwrap().clone());
-        }
-        None
+        let guard = self.connection_field.lock().unwrap();
+        (*guard).clone()
     }
 
     pub fn server_instance_id(&self) -> u64 {
@@ -2150,12 +2173,25 @@ pub fn clientconn_reconnect(self_: &ClientConnection, mut on_complete: OnReconne
     finish(false, result)
 }
 
+pub fn clientconn_request_via_channel<F>(conn: &ClientConnection, rpc_id: i32,
+                                     attr: &FutureAttr, write_fn: F) -> FutureResult
+where F: FnMut(&mut BinaryWriteArchive) {
+    clientconn_request_inner(conn, rpc_id, attr, 0u64, write_fn)
+}
+
 // clippy::borrowed_box -- the concrete Box spelling is load-bearing: through &T the pointer-like check fails and the calls lower to `.` instead of `->` (docs 7.50); measured. See the Task-2 measurement block above.
 // clippy::explicit_auto_deref -- measured 2026-09-11 (clippy 0.1.97, rusty-cpp 3e1d9505): taking it binds `const FiberChannel& fiber` to the handle `fc`, and turns three `fu.xid_` reads into `std::move((*fu).xid_)` / `&(*fu).xid_` -- a move out of a shared Arc's field (8 emitted lines in srpc.client.cppm).
 #[allow(clippy::borrowed_box, clippy::explicit_auto_deref)]
-pub fn clientconn_request_via_channel<F>(conn: &ClientConnection, rpc_id: i32,
-                                     attr: &FutureAttr, mut write_fn: F) -> FutureResult
+fn clientconn_request_inner<F>(conn: &ClientConnection, rpc_id: i32,
+                              attr: &FutureAttr, admission_timeout_us: u64,
+                              mut write_fn: F) -> FutureResult
 where F: FnMut(&mut BinaryWriteArchive) {
+    // Mako-local: `admission_timeout_us` and the retained-frame loop below.
+    // Zero is the plain nonblocking request.  A positive timeout suspends the
+    // caller between attempts, so it needs a running fiber.
+    if admission_timeout_us > 0u64 && Fiber::current_fiber().is_none() {
+        return FutureResult::Err(CLIENT_ERR_INVALID_ARGUMENT);
+    }
     let generation = conn.lifecycle_.lock().unwrap().generation;
     if !conn.allow_request_with_circuit_metrics() {
         return FutureResult::Err(CLIENT_ERR_BUSY);
@@ -2163,7 +2199,8 @@ where F: FnMut(&mut BinaryWriteArchive) {
     conn.pending_queue_.expire_stale();
     if !conn.state_machine_.is_connected() {
         let buffering_cfg = conn.buffering_config_.get();
-        if buffering_cfg.enabled && buffering_cfg.behavior == DisconnectBehavior::QUEUE {
+        if admission_timeout_us == 0u64 && buffering_cfg.enabled
+            && buffering_cfg.behavior == DisconnectBehavior::QUEUE {
             return clientconn_queue_request(conn, rpc_id, attr, write_fn);
         }
         conn.record_circuit_result(CLIENT_ERR_NOT_CONNECTED);
@@ -2219,15 +2256,55 @@ where F: FnMut(&mut BinaryWriteArchive) {
         conn.metrics_.record_request_sent();
         conn.on_request_dispatched(body_sink.bytes.len());
     }
-    let ch_err = unsafe {
-        clientconn_dispatch_frame_for_binding(conn, generation, body_sink.bytes.as_ptr(), body_sink.bytes.len())
-    };
+    let admission_start = if admission_timeout_us > 0u64 { Time::now(true) } else { 0u64 };
+    // A statement loop preserves the outer FutureResult return in generated C++.
+    let mut ch_err: ChannelError;
+    loop {
+        // Closing the connection owns completion after taking this future from
+        // pending_fu_. Do not dispatch it on a subsequently reconnected channel.
+        if admission_timeout_us > 0u64 && (*fu).ready() {
+            return FutureResult::Ok(fu);
+        }
+        // SAFETY: the encoded buffer remains live, and send_frame copies it only
+        // on admission. WouldBlock guarantees that no bytes were accepted. The
+        // send stays bound to the generation the request was published under.
+        ch_err = unsafe {
+            clientconn_dispatch_frame_for_binding(conn, generation, body_sink.bytes.as_ptr(), body_sink.bytes.len())
+        };
+        if ch_err != ChannelError::WouldBlock || admission_timeout_us == 0u64 {
+            break;
+        }
+        let elapsed = Time::now(true) - admission_start;
+        if elapsed >= admission_timeout_us {
+            break;
+        }
+        let delay = (admission_timeout_us - elapsed).min(1000u64);
+        // A running fiber was checked before creating the request. No channel,
+        // lifecycle or pending-future lock is held while the transport drains.
+        Fiber::sleep(delay);
+    }
     if ch_err != ChannelError::None {
-        {
+        let removed: Option<Arc<Future>> = {
             let mut pending_guard2 = conn.pending_fu_.lock().unwrap();
-            if (*pending_guard2).remove(&(*fu).xid_).is_some() {
-                conn.metrics_.record_request_dropped();
+            (*pending_guard2).remove(&(*fu).xid_)
+        };
+        if removed.is_some() {
+            conn.metrics_.record_request_dropped();
+        }
+        if admission_timeout_us > 0u64 {
+            let error = if ch_err == ChannelError::WouldBlock {
+                CLIENT_ERR_AGAIN
+            } else {
+                CLIENT_ERR_IO
+            };
+            conn.record_circuit_result(error);
+            // Taking the map entry transfers the right to notify. A concurrent
+            // close/reply that already took it is responsible for completion.
+            if removed.is_some() {
+                (*fu).error_code_.set(error);
+                (*fu).notify_ready(fu.clone());
             }
+            return FutureResult::Ok(fu);
         }
         conn.record_circuit_result(CLIENT_ERR_IO);
         return FutureResult::Err(CLIENT_ERR_IO);
@@ -2848,8 +2925,6 @@ pub fn clientconn_recv_job_entry(weak_self: WeakClientConnection, channel: Arc<B
     }
 }
 
-// clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn clientconn_bind_channel_via_poll_thread(conn: &ClientConnection,
                                            channel: NullableChannelConnectionProxy) {
     if channel.is_none() {

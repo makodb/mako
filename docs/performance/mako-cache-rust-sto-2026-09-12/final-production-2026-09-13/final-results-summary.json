@@ -1,0 +1,2165 @@
+{
+  "complete": true,
+  "foreground": [
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1059.101,
+          "median": 1037.002,
+          "minimum": 1030.093
+        },
+        "instructions_per_commit": {
+          "maximum": 2598.358,
+          "median": 2598.358,
+          "minimum": 2598.358
+        },
+        "transactions_per_second": {
+          "maximum": 1926470.165,
+          "median": 1913474.659,
+          "minimum": 1876782.456
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 1
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1837.195,
+          "median": 1787.569,
+          "minimum": 1782.828
+        },
+        "instructions_per_commit": {
+          "maximum": 4154.524,
+          "median": 4154.479,
+          "minimum": 4154.478
+        },
+        "transactions_per_second": {
+          "maximum": 1113743.346,
+          "median": 1111819.302,
+          "minimum": 1081197.435
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 1
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1066.651,
+          "median": 1053.692,
+          "minimum": 1037.017
+        },
+        "instructions_per_commit": {
+          "maximum": 2609.935,
+          "median": 2609.542,
+          "minimum": 2608.991
+        },
+        "transactions_per_second": {
+          "maximum": 7622061.706,
+          "median": 7486355.117,
+          "minimum": 7365337.739
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 4
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1916.839,
+          "median": 1913.771,
+          "minimum": 1904.098
+        },
+        "instructions_per_commit": {
+          "maximum": 4168.603,
+          "median": 4165.826,
+          "minimum": 4165.566
+        },
+        "transactions_per_second": {
+          "maximum": 4160215.246,
+          "median": 4117394.529,
+          "minimum": 4085251.369
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 4
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1076.147,
+          "median": 1075.465,
+          "minimum": 1064.283
+        },
+        "instructions_per_commit": {
+          "maximum": 2663.457,
+          "median": 2663.092,
+          "minimum": 2662.667
+        },
+        "transactions_per_second": {
+          "maximum": 14870226.087,
+          "median": 14622684.819,
+          "minimum": 14613529.87
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 8
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2030.892,
+          "median": 2030.82,
+          "minimum": 2030.622
+        },
+        "instructions_per_commit": {
+          "maximum": 4219.365,
+          "median": 4218.863,
+          "minimum": 4218.571
+        },
+        "transactions_per_second": {
+          "maximum": 7669446.039,
+          "median": 7606623.687,
+          "minimum": 7428096.158
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 8
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1076.546,
+          "median": 1068.139,
+          "minimum": 1068.004
+        },
+        "instructions_per_commit": {
+          "maximum": 2673.428,
+          "median": 2672.491,
+          "minimum": 2672.334
+        },
+        "transactions_per_second": {
+          "maximum": 29525565.174,
+          "median": 29374099.35,
+          "minimum": 29145471.949
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 16
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2037.925,
+          "median": 2021.362,
+          "minimum": 1992.574
+        },
+        "instructions_per_commit": {
+          "maximum": 4228.715,
+          "median": 4228.633,
+          "minimum": 4227.759
+        },
+        "transactions_per_second": {
+          "maximum": 15253351.682,
+          "median": 15178963.987,
+          "minimum": 14990209.34
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 16
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1082.901,
+          "median": 1075.873,
+          "minimum": 1075.689
+        },
+        "instructions_per_commit": {
+          "maximum": 2682.816,
+          "median": 2682.808,
+          "minimum": 2682.594
+        },
+        "transactions_per_second": {
+          "maximum": 58314905.361,
+          "median": 57203822.201,
+          "minimum": 55891489.089
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 32
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2166.333,
+          "median": 2164.945,
+          "minimum": 1957.398
+        },
+        "instructions_per_commit": {
+          "maximum": 4239.003,
+          "median": 4238.59,
+          "minimum": 4238.004
+        },
+        "transactions_per_second": {
+          "maximum": 31426136.62,
+          "median": 28065858.368,
+          "minimum": 27525745.527
+        }
+      },
+      "mode": "engine",
+      "repetitions": 3,
+      "workers": 32
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1433.669,
+          "median": 1426.367,
+          "minimum": 1421.263
+        },
+        "instructions_per_commit": {
+          "maximum": 3257.291,
+          "median": 3257.289,
+          "minimum": 3257.288
+        },
+        "transactions_per_second": {
+          "maximum": 1161208.732,
+          "median": 1159497.681,
+          "minimum": 1151964.89
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 1
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2490.669,
+          "median": 2454.313,
+          "minimum": 2449.739
+        },
+        "instructions_per_commit": {
+          "maximum": 5243.128,
+          "median": 5243.123,
+          "minimum": 5243.105
+        },
+        "transactions_per_second": {
+          "maximum": 735744.712,
+          "median": 732452.732,
+          "minimum": 720148.124
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 1
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1471.95,
+          "median": 1454.853,
+          "minimum": 1454.37
+        },
+        "instructions_per_commit": {
+          "maximum": 3273.158,
+          "median": 3273.059,
+          "minimum": 3272.791
+        },
+        "transactions_per_second": {
+          "maximum": 4499596.898,
+          "median": 4488224.809,
+          "minimum": 4457981.915
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 4
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2540.119,
+          "median": 2533.55,
+          "minimum": 2533.323
+        },
+        "instructions_per_commit": {
+          "maximum": 5268.435,
+          "median": 5266.89,
+          "minimum": 5266.788
+        },
+        "transactions_per_second": {
+          "maximum": 2820780.518,
+          "median": 2798998.68,
+          "minimum": 2795171.487
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 4
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1620.895,
+          "median": 1607.4,
+          "minimum": 1600.585
+        },
+        "instructions_per_commit": {
+          "maximum": 3325.973,
+          "median": 3325.918,
+          "minimum": 3325.497
+        },
+        "transactions_per_second": {
+          "maximum": 8259253.651,
+          "median": 8123190.232,
+          "minimum": 7999527.189
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 8
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2632.432,
+          "median": 2623.7,
+          "minimum": 2597.851
+        },
+        "instructions_per_commit": {
+          "maximum": 5279.658,
+          "median": 5279.644,
+          "minimum": 5278.762
+        },
+        "transactions_per_second": {
+          "maximum": 5479346.986,
+          "median": 5440407.768,
+          "minimum": 5387202.121
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 8
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 1815.72,
+          "median": 1813.254,
+          "minimum": 1797.655
+        },
+        "instructions_per_commit": {
+          "maximum": 3336.738,
+          "median": 3335.17,
+          "minimum": 3334.55
+        },
+        "transactions_per_second": {
+          "maximum": 14846715.464,
+          "median": 14640486.892,
+          "minimum": 14537134.868
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 16
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2826.018,
+          "median": 2762.973,
+          "minimum": 2751.835
+        },
+        "instructions_per_commit": {
+          "maximum": 5334.007,
+          "median": 5331.673,
+          "minimum": 5330.324
+        },
+        "transactions_per_second": {
+          "maximum": 10238671.072,
+          "median": 10200304.479,
+          "minimum": 8961271.361
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 16
+    },
+    {
+      "arm": "c-abi",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 2796.087,
+          "median": 2793.961,
+          "minimum": 2771.012
+        },
+        "instructions_per_commit": {
+          "maximum": 3343.841,
+          "median": 3343.788,
+          "minimum": 3343.479
+        },
+        "transactions_per_second": {
+          "maximum": 20234116.41,
+          "median": 20142011.539,
+          "minimum": 20032095.692
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 32
+    },
+    {
+      "arm": "sto",
+      "metrics": {
+        "cycles_per_commit": {
+          "maximum": 3388.225,
+          "median": 3362.292,
+          "minimum": 3347.437
+        },
+        "instructions_per_commit": {
+          "maximum": 5341.112,
+          "median": 5340.781,
+          "minimum": 5340.329
+        },
+        "transactions_per_second": {
+          "maximum": 16914611.085,
+          "median": 16869122.081,
+          "minimum": 16722519.615
+        }
+      },
+      "mode": "cache-ack",
+      "repetitions": 3,
+      "workers": 32
+    }
+  ],
+  "foreground_cells": 60,
+  "foreground_min_pmu_running_ratio": 1.0,
+  "input_sha256": {
+    "final-foreground/protocol.json": "6872651f8eb2c0ce58c9f37aac45ec0a044b1d6cd431e5771f02fca78c59a093",
+    "final-foreground/results.json": "ccd0479cacbb3136a3505f9bc6b49217cda9e51b65b1d05cf0b51467d608c451",
+    "final-main-pairs/protocol.json": "aa8a3bfabce88401d2e339094904bd71388ee5647a53941861b4008723a39491",
+    "final-main-pairs/results.json": "c6c15721e4fdf3cc8acf732c3571c6fcc700322e787b08fcd1045c59aa282544",
+    "final-source-build.json": "8b1833648fe4d0f67d6463e8dab68f8be1e3852afee4a8bf5bae336eba23aa36",
+    "final132-launch.json": "473275013267350177af0a3ab901b286fc4a9a8c0a17ca409c97549f1ca5a97c",
+    "summarize-final-132.py": "daad81d868a7a5c385fe381e268da8c1f04b8bd8c0c04cf1d47e52b1c8415a7d"
+  },
+  "main": [
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 830,
+          "median": 810,
+          "minimum": 810
+        },
+        "attempt_p99_ns": {
+          "maximum": 941,
+          "median": 940,
+          "minimum": 930
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 593128,
+          "median": 513474,
+          "minimum": 283543
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1178.0477104187012,
+          "median": 1165.1526107788086,
+          "minimum": 1161.513916015625
+        },
+        "logical_p50_ns": {
+          "maximum": 970,
+          "median": 960,
+          "minimum": 950
+        },
+        "logical_p99_ns": {
+          "maximum": 1130,
+          "median": 1130,
+          "minimum": 1111
+        },
+        "recovery_open_ns": {
+          "maximum": 199998951,
+          "median": 193239742,
+          "minimum": 193131190
+        },
+        "recovery_validation_ns": {
+          "maximum": 26804338,
+          "median": 26730186,
+          "minimum": 26671727
+        },
+        "transactions_per_second": {
+          "maximum": 854505.9675332912,
+          "median": 850690.6705190568,
+          "minimum": 842057.4900502037
+        },
+        "wall_ns_per_commit": {
+          "maximum": 1187.5673713684082,
+          "median": 1175.5154190063477,
+          "minimum": 1170.2668418884277
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 1,
+      "workload": "read"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 990,
+          "median": 980,
+          "minimum": 970
+        },
+        "attempt_p99_ns": {
+          "maximum": 1090,
+          "median": 1070,
+          "minimum": 1070
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 1344853,
+          "median": 547196,
+          "minimum": 208289
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1420.848243713379,
+          "median": 1409.436336517334,
+          "minimum": 1408.581729888916
+        },
+        "logical_p50_ns": {
+          "maximum": 1130,
+          "median": 1121,
+          "minimum": 1120
+        },
+        "logical_p99_ns": {
+          "maximum": 1310,
+          "median": 1260,
+          "minimum": 1250
+        },
+        "recovery_open_ns": {
+          "maximum": 210101785,
+          "median": 200911091,
+          "minimum": 191428870
+        },
+        "recovery_validation_ns": {
+          "maximum": 47036709,
+          "median": 46869673,
+          "minimum": 46861401
+        },
+        "transactions_per_second": {
+          "maximum": 705601.0281990276,
+          "median": 704473.5443302509,
+          "minimum": 699523.1096517658
+        },
+        "wall_ns_per_commit": {
+          "maximum": 1429.545337677002,
+          "median": 1419.4997215270996,
+          "minimum": 1417.2314949035645
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 1,
+      "workload": "read"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 830,
+          "median": 820,
+          "minimum": 820
+        },
+        "attempt_p99_ns": {
+          "maximum": 1260,
+          "median": 1260,
+          "minimum": 1250
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 298174,
+          "median": 255132,
+          "minimum": 229090
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1242.8251008987427,
+          "median": 1240.674602508545,
+          "minimum": 1228.7776165008545
+        },
+        "logical_p50_ns": {
+          "maximum": 980,
+          "median": 970,
+          "minimum": 960
+        },
+        "logical_p99_ns": {
+          "maximum": 1480,
+          "median": 1480,
+          "minimum": 1480
+        },
+        "recovery_open_ns": {
+          "maximum": 276640155,
+          "median": 270515073,
+          "minimum": 268112909
+        },
+        "recovery_validation_ns": {
+          "maximum": 28714926,
+          "median": 28315784,
+          "minimum": 27460670
+        },
+        "transactions_per_second": {
+          "maximum": 2331285.6368765696,
+          "median": 2234098.36953022,
+          "minimum": 2231370.4926281893
+        },
+        "wall_ns_per_commit": {
+          "maximum": 448.1550703048706,
+          "median": 447.6078643798828,
+          "minimum": 428.94786643981934
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 4,
+      "workload": "read"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 990,
+          "median": 990,
+          "minimum": 980
+        },
+        "attempt_p99_ns": {
+          "maximum": 1250,
+          "median": 1240,
+          "minimum": 1230
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 251782,
+          "median": 219720,
+          "minimum": 194909
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1496.2827005386353,
+          "median": 1488.3761777877808,
+          "minimum": 1480.6065073013306
+        },
+        "logical_p50_ns": {
+          "maximum": 1140,
+          "median": 1131,
+          "minimum": 1130
+        },
+        "logical_p99_ns": {
+          "maximum": 1440,
+          "median": 1430,
+          "minimum": 1420
+        },
+        "recovery_open_ns": {
+          "maximum": 280060993,
+          "median": 255250540,
+          "minimum": 251669265
+        },
+        "recovery_validation_ns": {
+          "maximum": 49466532,
+          "median": 49287584,
+          "minimum": 47680361
+        },
+        "transactions_per_second": {
+          "maximum": 1721891.7037355609,
+          "median": 1721253.4124617623,
+          "minimum": 1716447.8014402308
+        },
+        "wall_ns_per_commit": {
+          "maximum": 582.5985498428345,
+          "median": 580.971978187561,
+          "minimum": 580.7566165924072
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 4,
+      "workload": "read"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 910,
+          "median": 910,
+          "minimum": 890
+        },
+        "attempt_p99_ns": {
+          "maximum": 1390,
+          "median": 1390,
+          "minimum": 1370
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 8972529,
+          "median": 1302781,
+          "minimum": 233401
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1336.2243109941483,
+          "median": 1329.6599876880646,
+          "minimum": 1316.2777626514435
+        },
+        "logical_p50_ns": {
+          "maximum": 1051,
+          "median": 1050,
+          "minimum": 1040
+        },
+        "logical_p99_ns": {
+          "maximum": 1620,
+          "median": 1610,
+          "minimum": 1600
+        },
+        "recovery_open_ns": {
+          "maximum": 779515843,
+          "median": 756999272,
+          "minimum": 751574570
+        },
+        "recovery_validation_ns": {
+          "maximum": 35931648,
+          "median": 35297458,
+          "minimum": 34040304
+        },
+        "transactions_per_second": {
+          "maximum": 5379370.053692116,
+          "median": 5184084.9756531445,
+          "minimum": 5003300.134518838
+        },
+        "wall_ns_per_commit": {
+          "maximum": 199.86808168888092,
+          "median": 192.89807260036469,
+          "minimum": 185.89537250995636
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 32,
+      "workload": "read"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 1060,
+          "median": 1050,
+          "minimum": 1050
+        },
+        "attempt_p99_ns": {
+          "maximum": 1330,
+          "median": 1330,
+          "minimum": 1330
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 6451221,
+          "median": 4367693,
+          "minimum": 915163
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 1569.4552708864212,
+          "median": 1560.5282961130142,
+          "minimum": 1558.9768962860107
+        },
+        "logical_p50_ns": {
+          "maximum": 1210,
+          "median": 1200,
+          "minimum": 1200
+        },
+        "logical_p99_ns": {
+          "maximum": 1530,
+          "median": 1520,
+          "minimum": 1520
+        },
+        "recovery_open_ns": {
+          "maximum": 790513782,
+          "median": 777587827,
+          "minimum": 772727388
+        },
+        "recovery_validation_ns": {
+          "maximum": 57860663,
+          "median": 57542367,
+          "minimum": 55845882
+        },
+        "transactions_per_second": {
+          "maximum": 3265715.0481909118,
+          "median": 3253105.8220287953,
+          "minimum": 3141240.6740869433
+        },
+        "wall_ns_per_commit": {
+          "maximum": 318.34555315971375,
+          "median": 307.3985460996628,
+          "minimum": 306.21165204048157
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 32,
+      "workload": "read"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 2260,
+          "median": 2260,
+          "minimum": 2241
+        },
+        "attempt_p99_ns": {
+          "maximum": 2570,
+          "median": 2570,
+          "minimum": 2520
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 1642967,
+          "median": 220971,
+          "minimum": 190378
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 2585.5210342407227,
+          "median": 2581.382656097412,
+          "minimum": 2567.771007537842
+        },
+        "logical_p50_ns": {
+          "maximum": 2430,
+          "median": 2420,
+          "minimum": 2410
+        },
+        "logical_p99_ns": {
+          "maximum": 2740,
+          "median": 2740,
+          "minimum": 2700
+        },
+        "recovery_open_ns": {
+          "maximum": 217818143,
+          "median": 197396703,
+          "minimum": 195057869
+        },
+        "recovery_validation_ns": {
+          "maximum": 10505459,
+          "median": 10479732,
+          "minimum": 10432757
+        },
+        "transactions_per_second": {
+          "maximum": 387950.092880841,
+          "median": 385941.9127151872,
+          "minimum": 385324.3356588886
+        },
+        "wall_ns_per_commit": {
+          "maximum": 2595.21630859375,
+          "median": 2591.063491821289,
+          "minimum": 2577.6511421203613
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "read"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 2670,
+          "median": 2670,
+          "minimum": 2670
+        },
+        "attempt_p99_ns": {
+          "maximum": 3230,
+          "median": 3050,
+          "minimum": 2960
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 614689,
+          "median": 328295,
+          "minimum": 24381
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 3020.8000259399414,
+          "median": 3018.3007431030273,
+          "minimum": 3017.516674041748
+        },
+        "logical_p50_ns": {
+          "maximum": 2831,
+          "median": 2831,
+          "minimum": 2830
+        },
+        "logical_p99_ns": {
+          "maximum": 3501,
+          "median": 3500,
+          "minimum": 3140
+        },
+        "recovery_open_ns": {
+          "maximum": 221556785,
+          "median": 201570954,
+          "minimum": 191157829
+        },
+        "recovery_validation_ns": {
+          "maximum": 14424772,
+          "median": 14411693,
+          "minimum": 14408367
+        },
+        "transactions_per_second": {
+          "maximum": 331029.5978816116,
+          "median": 330951.3043012417,
+          "minimum": 330646.95338928764
+        },
+        "wall_ns_per_commit": {
+          "maximum": 3024.373851776123,
+          "median": 3021.5925636291504,
+          "minimum": 3020.8779106140137
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "read"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 2390,
+          "median": 2340,
+          "minimum": 2320
+        },
+        "attempt_p99_ns": {
+          "maximum": 3540,
+          "median": 3500,
+          "minimum": 3380
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 783957,
+          "median": 560186,
+          "minimum": 149967
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 2765.959280014038,
+          "median": 2724.0290212631226,
+          "minimum": 2676.866774559021
+        },
+        "logical_p50_ns": {
+          "maximum": 2560,
+          "median": 2510,
+          "minimum": 2480
+        },
+        "logical_p99_ns": {
+          "maximum": 3810,
+          "median": 3800,
+          "minimum": 3680
+        },
+        "recovery_open_ns": {
+          "maximum": 292055694,
+          "median": 260380639,
+          "minimum": 253466019
+        },
+        "recovery_validation_ns": {
+          "maximum": 12070192,
+          "median": 11158031,
+          "minimum": 11155764
+        },
+        "transactions_per_second": {
+          "maximum": 1359137.6917773923,
+          "median": 1307048.4144119592,
+          "minimum": 1295692.7338307814
+        },
+        "wall_ns_per_commit": {
+          "maximum": 771.787919998169,
+          "median": 765.0826005935669,
+          "minimum": 735.7606267929077
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "read"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 2700,
+          "median": 2691,
+          "minimum": 2680
+        },
+        "attempt_p99_ns": {
+          "maximum": 4041,
+          "median": 4040,
+          "minimum": 4031
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 413750,
+          "median": 255452,
+          "minimum": 101165
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 3109.597311973572,
+          "median": 3101.287202835083,
+          "minimum": 3090.053650856018
+        },
+        "logical_p50_ns": {
+          "maximum": 2860,
+          "median": 2860,
+          "minimum": 2840
+        },
+        "logical_p99_ns": {
+          "maximum": 4321,
+          "median": 4310,
+          "minimum": 4301
+        },
+        "recovery_open_ns": {
+          "maximum": 281245373,
+          "median": 275490161,
+          "minimum": 252666922
+        },
+        "recovery_validation_ns": {
+          "maximum": 15951811,
+          "median": 15947979,
+          "minimum": 15779096
+        },
+        "transactions_per_second": {
+          "maximum": 1148294.3636770537,
+          "median": 1144413.2387216836,
+          "minimum": 1143335.27299161
+        },
+        "wall_ns_per_commit": {
+          "maximum": 874.6340847015381,
+          "median": 873.8102340698242,
+          "minimum": 870.8568391799927
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "read"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 2880,
+          "median": 2880,
+          "minimum": 2851
+        },
+        "attempt_p99_ns": {
+          "maximum": 10521,
+          "median": 10501,
+          "minimum": 10410
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 589285329,
+          "median": 585990033,
+          "minimum": 581956990
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 4451.057312011719,
+          "median": 4437.157775878906,
+          "minimum": 4372.18212890625
+        },
+        "logical_p50_ns": {
+          "maximum": 3050,
+          "median": 3041,
+          "minimum": 3030
+        },
+        "logical_p99_ns": {
+          "maximum": 10880,
+          "median": 10720,
+          "minimum": 10621
+        },
+        "recovery_open_ns": {
+          "maximum": 834582259,
+          "median": 775822990,
+          "minimum": 773542921
+        },
+        "recovery_validation_ns": {
+          "maximum": 10608595,
+          "median": 10493688,
+          "minimum": 10468481
+        },
+        "transactions_per_second": {
+          "maximum": 227760.38806455495,
+          "median": 224480.43548327606,
+          "minimum": 223674.5657390525
+        },
+        "wall_ns_per_commit": {
+          "maximum": 4470.781005859375,
+          "median": 4454.731201171875,
+          "minimum": 4390.5791015625
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "write"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 6080,
+          "median": 6061,
+          "minimum": 6050
+        },
+        "attempt_p99_ns": {
+          "maximum": 13971,
+          "median": 13831,
+          "minimum": 13751
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 548284197,
+          "median": 544874170,
+          "minimum": 540128740
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 7787.4547119140625,
+          "median": 7718.765686035156,
+          "minimum": 7714.9539794921875
+        },
+        "logical_p50_ns": {
+          "maximum": 6250,
+          "median": 6230,
+          "minimum": 6220
+        },
+        "logical_p99_ns": {
+          "maximum": 14261,
+          "median": 14100,
+          "minimum": 13961
+        },
+        "recovery_open_ns": {
+          "maximum": 788695303,
+          "median": 771824957,
+          "minimum": 753927558
+        },
+        "recovery_validation_ns": {
+          "maximum": 14469323,
+          "median": 14413876,
+          "minimum": 14410043
+        },
+        "transactions_per_second": {
+          "maximum": 129350.00579959193,
+          "median": 129319.82806209012,
+          "minimum": 128114.43020763109
+        },
+        "wall_ns_per_commit": {
+          "maximum": 7805.52197265625,
+          "median": 7732.7662353515625,
+          "minimum": 7730.962158203125
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "write"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 3130,
+          "median": 3121,
+          "minimum": 3110
+        },
+        "attempt_p99_ns": {
+          "maximum": 12450,
+          "median": 12060,
+          "minimum": 11920
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 2501013624,
+          "median": 2480013881,
+          "minimum": 2451281646
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 5341.2303466796875,
+          "median": 5297.99250793457,
+          "minimum": 5225.302444458008
+        },
+        "logical_p50_ns": {
+          "maximum": 3300,
+          "median": 3300,
+          "minimum": 3280
+        },
+        "logical_p99_ns": {
+          "maximum": 13271,
+          "median": 12921,
+          "minimum": 12710
+        },
+        "recovery_open_ns": {
+          "maximum": 3199608610,
+          "median": 3192992164,
+          "minimum": 3076140845
+        },
+        "recovery_validation_ns": {
+          "maximum": 12849102,
+          "median": 12801075,
+          "minimum": 10087610
+        },
+        "transactions_per_second": {
+          "maximum": 515953.29866856086,
+          "median": 487760.30576176464,
+          "minimum": 485296.45992538374
+        },
+        "wall_ns_per_commit": {
+          "maximum": 2060.5961151123047,
+          "median": 2050.1873321533203,
+          "minimum": 1938.159912109375
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "write"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 6150,
+          "median": 6120,
+          "minimum": 6110
+        },
+        "attempt_p99_ns": {
+          "maximum": 16411,
+          "median": 16331,
+          "minimum": 16261
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 2412010478,
+          "median": 2393960295,
+          "minimum": 2346975601
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 9091.082397460938,
+          "median": 8992.23844909668,
+          "minimum": 8852.075073242188
+        },
+        "logical_p50_ns": {
+          "maximum": 6311,
+          "median": 6280,
+          "minimum": 6271
+        },
+        "logical_p99_ns": {
+          "maximum": 16821,
+          "median": 16660,
+          "minimum": 16611
+        },
+        "recovery_open_ns": {
+          "maximum": 3242682497,
+          "median": 3206997880,
+          "minimum": 3186993265
+        },
+        "recovery_validation_ns": {
+          "maximum": 14368260,
+          "median": 14256609,
+          "minimum": 13944728
+        },
+        "transactions_per_second": {
+          "maximum": 316922.6577808393,
+          "median": 306955.47878598113,
+          "minimum": 306112.0333515637
+        },
+        "wall_ns_per_commit": {
+          "maximum": 3266.777816772461,
+          "median": 3257.8014373779297,
+          "minimum": 3155.343978881836
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "write"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 1740,
+          "median": 1731,
+          "minimum": 1720
+        },
+        "attempt_p99_ns": {
+          "maximum": 5700,
+          "median": 5661,
+          "minimum": 5650
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 784696790,
+          "median": 775997736,
+          "minimum": 755318372
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 2710.4737396240234,
+          "median": 2683.8099060058594,
+          "minimum": 2658.8403930664062
+        },
+        "logical_p50_ns": {
+          "maximum": 1890,
+          "median": 1890,
+          "minimum": 1871
+        },
+        "logical_p99_ns": {
+          "maximum": 5880,
+          "median": 5830,
+          "minimum": 5821
+        },
+        "recovery_open_ns": {
+          "maximum": 1035990976,
+          "median": 1024032740,
+          "minimum": 1007672658
+        },
+        "recovery_validation_ns": {
+          "maximum": 27901597,
+          "median": 27617698,
+          "minimum": 27590243
+        },
+        "transactions_per_second": {
+          "maximum": 374595.0094428968,
+          "median": 371082.915367717,
+          "minimum": 367427.70443912724
+        },
+        "wall_ns_per_commit": {
+          "maximum": 2721.6238403320312,
+          "median": 2694.8155212402344,
+          "minimum": 2669.5497131347656
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 1,
+      "workload": "rmw"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 3020,
+          "median": 3010,
+          "minimum": 2990
+        },
+        "attempt_p99_ns": {
+          "maximum": 7360,
+          "median": 7260,
+          "minimum": 7221
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 755674073,
+          "median": 732299911,
+          "minimum": 709869924
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 4341.678375244141,
+          "median": 4335.121673583984,
+          "minimum": 4315.981338500977
+        },
+        "logical_p50_ns": {
+          "maximum": 3171,
+          "median": 3160,
+          "minimum": 3140
+        },
+        "logical_p99_ns": {
+          "maximum": 7550,
+          "median": 7461,
+          "minimum": 7420
+        },
+        "recovery_open_ns": {
+          "maximum": 1025323405,
+          "median": 1022063172,
+          "minimum": 1012685169
+        },
+        "recovery_validation_ns": {
+          "maximum": 47919165,
+          "median": 47014434,
+          "minimum": 46804455
+        },
+        "transactions_per_second": {
+          "maximum": 230964.00037542928,
+          "median": 230081.02474470937,
+          "minimum": 229703.60810966176
+        },
+        "wall_ns_per_commit": {
+          "maximum": 4353.436187744141,
+          "median": 4346.294967651367,
+          "minimum": 4329.6790771484375
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 1,
+      "workload": "rmw"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 1800,
+          "median": 1780,
+          "minimum": 1770
+        },
+        "attempt_p99_ns": {
+          "maximum": 6761,
+          "median": 6731,
+          "minimum": 6720
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 3498654165,
+          "median": 3366272206,
+          "minimum": 3362288154
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 2947.5814247131348,
+          "median": 2938.0015907287598,
+          "minimum": 2922.3719215393066
+        },
+        "logical_p50_ns": {
+          "maximum": 1950,
+          "median": 1930,
+          "minimum": 1920
+        },
+        "logical_p99_ns": {
+          "maximum": 7171,
+          "median": 7030,
+          "minimum": 7020
+        },
+        "recovery_open_ns": {
+          "maximum": 4911157096,
+          "median": 4894074374,
+          "minimum": 4893626102
+        },
+        "recovery_validation_ns": {
+          "maximum": 38135597,
+          "median": 37234109,
+          "minimum": 36814324
+        },
+        "transactions_per_second": {
+          "maximum": 862335.4331344555,
+          "median": 860157.6369856916,
+          "minimum": 853341.608413579
+        },
+        "wall_ns_per_commit": {
+          "maximum": 1171.8636360168457,
+          "median": 1162.5775985717773,
+          "minimum": 1159.6415519714355
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 4,
+      "workload": "rmw"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 3030,
+          "median": 3030,
+          "minimum": 3020
+        },
+        "attempt_p99_ns": {
+          "maximum": 7290,
+          "median": 7190,
+          "minimum": 7141
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 3359090210,
+          "median": 3340645138,
+          "minimum": 3332772508
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 4573.355014801025,
+          "median": 4566.077289581299,
+          "minimum": 4559.19034576416
+        },
+        "logical_p50_ns": {
+          "maximum": 3180,
+          "median": 3180,
+          "minimum": 3170
+        },
+        "logical_p99_ns": {
+          "maximum": 7710,
+          "median": 7400,
+          "minimum": 7350
+        },
+        "recovery_open_ns": {
+          "maximum": 5035964877,
+          "median": 5028473738,
+          "minimum": 4909213293
+        },
+        "recovery_validation_ns": {
+          "maximum": 57843126,
+          "median": 57740453,
+          "minimum": 57609946
+        },
+        "transactions_per_second": {
+          "maximum": 535939.0458146086,
+          "median": 530095.1360250702,
+          "minimum": 529445.7215041141
+        },
+        "wall_ns_per_commit": {
+          "maximum": 1888.7677421569824,
+          "median": 1886.4538307189941,
+          "minimum": 1865.88383102417
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 1,
+      "workers": 4,
+      "workload": "rmw"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 5341,
+          "median": 5320,
+          "minimum": 5300
+        },
+        "attempt_p99_ns": {
+          "maximum": 12470,
+          "median": 11991,
+          "minimum": 11981
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 565125771,
+          "median": 543642875,
+          "minimum": 541830245
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 6752.12646484375,
+          "median": 6750.358337402344,
+          "minimum": 6724.681396484375
+        },
+        "logical_p50_ns": {
+          "maximum": 5510,
+          "median": 5490,
+          "minimum": 5461
+        },
+        "logical_p99_ns": {
+          "maximum": 12850,
+          "median": 12321,
+          "minimum": 12320
+        },
+        "recovery_open_ns": {
+          "maximum": 801911651,
+          "median": 767033954,
+          "minimum": 766127725
+        },
+        "recovery_validation_ns": {
+          "maximum": 11249255,
+          "median": 11084145,
+          "minimum": 10789666
+        },
+        "transactions_per_second": {
+          "maximum": 148325.96844142315,
+          "median": 147806.84733984843,
+          "minimum": 147748.92865118204
+        },
+        "wall_ns_per_commit": {
+          "maximum": 6768.238586425781,
+          "median": 6765.58642578125,
+          "minimum": 6741.907775878906
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "rmw"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 8601,
+          "median": 8530,
+          "minimum": 8490
+        },
+        "attempt_p99_ns": {
+          "maximum": 16191,
+          "median": 16181,
+          "minimum": 16121
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 516237760,
+          "median": 503177201,
+          "minimum": 500076552
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 10172.906860351562,
+          "median": 10131.8369140625,
+          "minimum": 10101.347351074219
+        },
+        "logical_p50_ns": {
+          "maximum": 8780,
+          "median": 8691,
+          "minimum": 8660
+        },
+        "logical_p99_ns": {
+          "maximum": 16460,
+          "median": 16431,
+          "minimum": 16381
+        },
+        "recovery_open_ns": {
+          "maximum": 785790978,
+          "median": 774289610,
+          "minimum": 767803345
+        },
+        "recovery_validation_ns": {
+          "maximum": 14665753,
+          "median": 14610643,
+          "minimum": 14397249
+        },
+        "transactions_per_second": {
+          "maximum": 98821.7812687596,
+          "median": 98540.43476588334,
+          "minimum": 98120.59239996244
+        },
+        "wall_ns_per_commit": {
+          "maximum": 10191.540588378906,
+          "median": 10148.118408203125,
+          "minimum": 10119.226623535156
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 1,
+      "workload": "rmw"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 5390,
+          "median": 5350,
+          "minimum": 5340
+        },
+        "attempt_p99_ns": {
+          "maximum": 15021,
+          "median": 14921,
+          "minimum": 14720
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 2432627861,
+          "median": 2415342119,
+          "minimum": 2405602536
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 7750.638076782227,
+          "median": 7679.490417480469,
+          "minimum": 7656.446548461914
+        },
+        "logical_p50_ns": {
+          "maximum": 5560,
+          "median": 5520,
+          "minimum": 5510
+        },
+        "logical_p99_ns": {
+          "maximum": 15451,
+          "median": 15261,
+          "minimum": 15121
+        },
+        "recovery_open_ns": {
+          "maximum": 3194447522,
+          "median": 3114436827,
+          "minimum": 3093576441
+        },
+        "recovery_validation_ns": {
+          "maximum": 12813626,
+          "median": 12732816,
+          "minimum": 9872838
+        },
+        "transactions_per_second": {
+          "maximum": 381860.346977367,
+          "median": 380116.82084503665,
+          "minimum": 375798.92537196213
+        },
+        "wall_ns_per_commit": {
+          "maximum": 2660.9974975585938,
+          "median": 2630.7701873779297,
+          "minimum": 2618.7584228515625
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "rmw"
+    },
+    {
+      "arm": "sto",
+      "contention": "low",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 8661,
+          "median": 8651,
+          "minimum": 8631
+        },
+        "attempt_p99_ns": {
+          "maximum": 19881,
+          "median": 19611,
+          "minimum": 18821
+        },
+        "conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        },
+        "drain_ns": {
+          "maximum": 2407523122,
+          "median": 2370266729,
+          "minimum": 2343881367
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 11563.162780761719,
+          "median": 11530.91926574707,
+          "minimum": 11338.206970214844
+        },
+        "logical_p50_ns": {
+          "maximum": 8830,
+          "median": 8820,
+          "minimum": 8791
+        },
+        "logical_p99_ns": {
+          "maximum": 20220,
+          "median": 19971,
+          "minimum": 19171
+        },
+        "recovery_open_ns": {
+          "maximum": 3203179950,
+          "median": 3200175969,
+          "minimum": 3179138931
+        },
+        "recovery_validation_ns": {
+          "maximum": 14705245,
+          "median": 14397364,
+          "minimum": 14128785
+        },
+        "transactions_per_second": {
+          "maximum": 262667.6205468668,
+          "median": 259980.87488713558,
+          "minimum": 256930.6882619022
+        },
+        "wall_ns_per_commit": {
+          "maximum": 3892.1002655029297,
+          "median": 3846.436782836914,
+          "minimum": 3807.0927734375
+        },
+        "warmup_conflicts": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "rmw"
+    },
+    {
+      "arm": "c-abi",
+      "contention": "high",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 3510,
+          "median": 3500,
+          "minimum": 3480
+        },
+        "attempt_p99_ns": {
+          "maximum": 9061,
+          "median": 9050,
+          "minimum": 9041
+        },
+        "conflicts": {
+          "maximum": 267916,
+          "median": 260862,
+          "minimum": 255007
+        },
+        "drain_ns": {
+          "maximum": 337287453,
+          "median": 336584331,
+          "minimum": 316996762
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 23894.496154785156,
+          "median": 23400.98516845703,
+          "minimum": 22759.278732299805
+        },
+        "logical_p50_ns": {
+          "maximum": 18331,
+          "median": 18291,
+          "minimum": 16191
+        },
+        "logical_p99_ns": {
+          "maximum": 85764,
+          "median": 85414,
+          "minimum": 82164
+        },
+        "recovery_open_ns": {
+          "maximum": 2593435320,
+          "median": 2584233185,
+          "minimum": 2582049125
+        },
+        "recovery_validation_ns": {
+          "maximum": 9047780,
+          "median": 8884074,
+          "minimum": 8845014
+        },
+        "transactions_per_second": {
+          "maximum": 143139.5988791874,
+          "median": 143082.56170559375,
+          "minimum": 141328.88808664886
+        },
+        "wall_ns_per_commit": {
+          "maximum": 7075.694244384766,
+          "median": 6988.971878051758,
+          "minimum": 6986.186965942383
+        },
+        "warmup_conflicts": {
+          "maximum": 51667,
+          "median": 51507,
+          "minimum": 47837
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "rmw"
+    },
+    {
+      "arm": "sto",
+      "contention": "high",
+      "metrics": {
+        "attempt_p50_ns": {
+          "maximum": 4790,
+          "median": 4770,
+          "minimum": 4750
+        },
+        "attempt_p99_ns": {
+          "maximum": 12360,
+          "median": 12320,
+          "minimum": 12250
+        },
+        "conflicts": {
+          "maximum": 334587,
+          "median": 324748,
+          "minimum": 318365
+        },
+        "drain_ns": {
+          "maximum": 294008202,
+          "median": 231927279,
+          "minimum": 227884215
+        },
+        "foreground_cpu_ns_per_commit": {
+          "maximum": 32526.276657104492,
+          "median": 32293.190139770508,
+          "minimum": 31696.68785095215
+        },
+        "logical_p50_ns": {
+          "maximum": 17511,
+          "median": 17371,
+          "minimum": 17181
+        },
+        "logical_p99_ns": {
+          "maximum": 174128,
+          "median": 171368,
+          "minimum": 166338
+        },
+        "recovery_open_ns": {
+          "maximum": 2572514264,
+          "median": 2567220604,
+          "minimum": 2541181771
+        },
+        "recovery_validation_ns": {
+          "maximum": 15997542,
+          "median": 13412364,
+          "minimum": 12991638
+        },
+        "transactions_per_second": {
+          "maximum": 95745.5225198667,
+          "median": 95732.2270511566,
+          "minimum": 95352.78787735381
+        },
+        "wall_ns_per_commit": {
+          "maximum": 10487.370346069336,
+          "median": 10445.803161621094,
+          "minimum": 10444.352630615234
+        },
+        "warmup_conflicts": {
+          "maximum": 82643,
+          "median": 70634,
+          "minimum": 60974
+        }
+      },
+      "repetitions": 3,
+      "tx": 4,
+      "workers": 4,
+      "workload": "rmw"
+    }
+  ],
+  "main_cells": 72,
+  "main_low_contention_conflicts": 0,
+  "main_sample_recovery_phases": 144,
+  "measurement_scope": "bounded foreground and separately drained/reopened main; no new sustained GC run",
+  "native_inputs_unchanged": 21,
+  "ratio_policy": "ratio of per-arm medians, three independent fresh-process repetitions each",
+  "source_files_unchanged": 256
+}

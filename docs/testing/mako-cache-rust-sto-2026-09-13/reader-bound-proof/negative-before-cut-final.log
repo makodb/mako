@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/lib.rs (/var/tmp/mako-fence-bound-model.deVBaQ/target/debug/deps/private_mako_fence_bound_model-5cbc66667b3ae84e)
+
+running 1 test
+test tests::bound_before_cut_can_omit_prefix_writer ... FAILED
+
+failures:
+
+---- tests::bound_before_cut_can_omit_prefix_writer stdout ----
+
+thread 'tests::bound_before_cut_can_omit_prefix_writer' (1812988) panicked at src/lib.rs:79:21:
+bounded scan omitted prefix slot
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::bound_before_cut_can_omit_prefix_writer
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

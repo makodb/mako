@@ -1,0 +1,88 @@
+diff --git a/crates/mako-engine-sto/src/holder.rs b/crates/mako-engine-sto/src/holder.rs
+--- a/crates/mako-engine-sto/src/holder.rs
++++ b/crates/mako-engine-sto/src/holder.rs
+@@ -20,15 +20,30 @@
+ /// One holder generation.
+-pub(crate) struct Holder {
+-    sealed: bool,
+-    key_len: u32,
+-    key_inline: [u8; INLINE_KEY_BYTES],
+-    key_overflow: Vec<u8>,
+-    /// Raw application value; the allocation is retained across generations.
+-    value: Vec<u8>,
+-    sequence: u64,
+-    table_id: u64,
+-    timestamp_stamp: u64,
+-}
++///
++/// Private diagnostic: keep the raw value owner, publication metadata, and
++/// the first eight inline key bytes in one aligned line. Longer arbitrary
++/// keys use the unchanged inline/overflow paths. No field is shared without
++/// the existing exclusive generation and publication protocol.
++#[repr(C, align(64))]
++pub(crate) struct Holder {
++    /// Raw application value; the allocation is retained across generations.
++    value: Vec<u8>,
++    sequence: u64,
++    table_id: u64,
++    timestamp_stamp: u64,
++    key_len: u32,
++    sealed: bool,
++    key_inline: [u8; INLINE_KEY_BYTES],
++    key_overflow: Vec<u8>,
++}
++
++// The diagnostic's intended 64-bit layout is checked, not inferred from
++// Rust's default field ordering. Correctness does not depend on cache lines.
++#[cfg(target_pointer_width = "64")]
++const _: () = {
++    assert!(std::mem::align_of::<Holder>() == 64);
++    assert!(std::mem::size_of::<Holder>() == 128);
++    assert!(std::mem::offset_of!(Holder, key_inline) + 8 <= 64);
++};
+ 
+ impl Holder {
+     const fn free() -> Self {
+diff --git a/crates/mako-engine-sto/src/prefetch.rs b/crates/mako-engine-sto/src/prefetch.rs
+--- a/crates/mako-engine-sto/src/prefetch.rs
++++ b/crates/mako-engine-sto/src/prefetch.rs
+@@ -32,4 +32,28 @@
++/// Private diagnostic hint for a producer-owned, live holder.
++///
++/// This does not inspect the holder, change its state, or establish any
++/// synchronization. The caller still performs every ordinary terminal check.
++#[inline]
++pub(crate) fn producer_holder(holder: &crate::holder::Holder) {
++    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
++    if supported() {
++        let address = std::ptr::from_ref(holder);
++        // SAFETY: the shared borrow keeps the initialized holder alive and
++        // unmoved through this instruction. PRFCHW uses the existing cached
++        // capability check. The hint neither reads nor modifies Rust fields.
++        unsafe {
++            core::arch::asm!(
++                "prefetchw [{address}]",
++                address = in(reg) address,
++                options(nostack, preserves_flags, readonly)
++            );
++        }
++    }
++    #[cfg(any(not(any(target_arch = "x86", target_arch = "x86_64")), miri))]
++    let _ = holder;
++}
++
+ #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
+ #[allow(unused_unsafe)]
+ #[inline]
+ fn supported() -> bool {
+diff --git a/crates/mako-engine-sto/src/txn.rs b/crates/mako-engine-sto/src/txn.rs
+--- a/crates/mako-engine-sto/src/txn.rs
++++ b/crates/mako-engine-sto/src/txn.rs
+@@ -1455,3 +1455,7 @@
+         let pool = unsafe { &*control.pool };
+         let holder = pool.holder_ptr(sequence.get());
++        // SAFETY: the live pool and unique producer lease own this initialized
++        // generation until ACK. End the shared hint borrow before the existing
++        // terminal creates its exclusive holder borrow. No check is bypassed.
++        crate::prefetch::producer_holder(unsafe { &*holder });
+         let per_worker = self.db.per_worker_allowed();

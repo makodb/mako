@@ -1,0 +1,30 @@
+   Compiling mako-cache v0.1.0 (/var/tmp/mako-read-fence.rNqyuM/reader-crates/mako-cache)
+error[E0596]: cannot borrow `reserved` as mutable, as it is not declared as mutable
+    --> mako-cache/src/lib.rs:4219:22
+     |
+4219 |         let pinned = reserved.pin_unknown().unwrap();
+     |                      ^^^^^^^^ cannot borrow as mutable
+     |
+help: consider changing this to be mutable
+     |
+4179 |         let mut reserved = lane
+     |             +++
+
+error[E0505]: cannot move out of `cache` because it is borrowed
+    --> mako-cache/src/lib.rs:4250:37
+     |
+4169 |         let cache = Arc::new(
+     |             ----- binding `cache` declared here
+...
+4178 |         let lane = cache.writeback.lane(slot).unwrap();
+     |                    ----- borrow of `cache` occurs here
+...
+4250 |         let cache = Arc::try_unwrap(cache).ok().unwrap();
+     |                                     ^^^^^ move out of `cache` occurs here
+...
+4256 |     }
+     |     - borrow might be used here, when `reserved` is dropped and runs the `Drop` code for type `writeback::BoundReservation`
+
+Some errors have detailed explanations: E0505, E0596.
+For more information about an error, try `rustc --explain E0505`.
+error: could not compile `mako-cache` (lib test) due to 2 previous errors

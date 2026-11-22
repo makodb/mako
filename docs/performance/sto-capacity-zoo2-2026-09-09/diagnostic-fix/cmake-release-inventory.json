@@ -1,0 +1,4121 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test",
+      "mako_add_masstree_tests",
+      "_mako_add_masstree_legacy_test"
+    ],
+    "files" : 
+    [
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/CMakeLists.txt",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/masstree/CMakeLists.txt",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2157,
+        "parent" : 0
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2165,
+        "parent" : 2
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2173,
+        "parent" : 4
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2181,
+        "parent" : 6
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2201,
+        "parent" : 8
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2227,
+        "parent" : 10
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2247,
+        "parent" : 12
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 14
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 16
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2270,
+        "parent" : 18
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2296,
+        "parent" : 20
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2315,
+        "parent" : 22
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2332,
+        "parent" : 24
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2349,
+        "parent" : 26
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2366,
+        "parent" : 28
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2384,
+        "parent" : 30
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2413,
+        "parent" : 32
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2437,
+        "parent" : 34
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2458,
+        "parent" : 36
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2659,
+        "parent" : 38
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2681,
+        "parent" : 40
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2694,
+        "parent" : 42
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2713,
+        "parent" : 44
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2720,
+        "parent" : 46
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2727,
+        "parent" : 48
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2734,
+        "parent" : 50
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2745,
+        "parent" : 52
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2775,
+        "parent" : 54
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2795,
+        "parent" : 56
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2822,
+        "parent" : 58
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 60
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 94,
+        "parent" : 61
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 63
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 101,
+        "parent" : 64
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 66
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 108,
+        "parent" : 67
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 69
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 116,
+        "parent" : 70
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 72
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 125,
+        "parent" : 73
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 75
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 134,
+        "parent" : 76
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 78
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 143,
+        "parent" : 79
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 81
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 151,
+        "parent" : 82
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 84
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 171,
+        "parent" : 85
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 87
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 178,
+        "parent" : 88
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 90
+      },
+      {
+        "command" : 2,
+        "file" : 1,
+        "line" : 211,
+        "parent" : 91
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 74,
+        "parent" : 92
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 94
+      },
+      {
+        "command" : 2,
+        "file" : 1,
+        "line" : 218,
+        "parent" : 95
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 74,
+        "parent" : 96
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 98
+      },
+      {
+        "command" : 2,
+        "file" : 1,
+        "line" : 229,
+        "parent" : 99
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 74,
+        "parent" : 100
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 1,
+        "file" : 0,
+        "line" : 2838,
+        "parent" : 102
+      },
+      {
+        "command" : 2,
+        "file" : 1,
+        "line" : 237,
+        "parent" : 103
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 74,
+        "parent" : 104
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2848,
+        "parent" : 106
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2897,
+        "parent" : 108
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2905,
+        "parent" : 110
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2913,
+        "parent" : 112
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2919,
+        "parent" : 114
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2934,
+        "parent" : 116
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2943,
+        "parent" : 118
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2949,
+        "parent" : 120
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2955,
+        "parent" : 122
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2961,
+        "parent" : 124
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2967,
+        "parent" : 126
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 2973,
+        "parent" : 128
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3012,
+        "parent" : 130
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3020,
+        "parent" : 132
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3100,
+        "parent" : 134
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3128,
+        "parent" : 136
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3150,
+        "parent" : 138
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3173,
+        "parent" : 140
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3174,
+        "parent" : 142
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3182,
+        "parent" : 144
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3186,
+        "parent" : 146
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3190,
+        "parent" : 148
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3194,
+        "parent" : 150
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3222,
+        "parent" : 152
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3246,
+        "parent" : 154
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3254,
+        "parent" : 156
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3279,
+        "parent" : 158
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3295,
+        "parent" : 160
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3301,
+        "parent" : 162
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3305,
+        "parent" : 164
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3361,
+        "parent" : 166
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3379,
+        "parent" : 168
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3399,
+        "parent" : 170
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3407,
+        "parent" : 172
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3447,
+        "parent" : 174
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 3469,
+        "parent" : 176
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 178
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 180
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 182
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 184
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 186
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 188
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 190
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 192
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 194
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 196
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 198
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 200
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 202
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 204
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 206
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 208
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 210
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 999,
+        "parent" : 212
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1002,
+        "parent" : 214
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 216
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 218
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 220
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 222
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 224
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 226
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 228
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 230
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 232
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 234
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 236
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 238
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 240
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 242
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 244
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 246
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 248
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 250
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 252
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 254
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 256
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 258
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 260
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 262
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 264
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 266
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 268
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 270
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 272
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 274
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 276
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 278
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 280
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 282
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 284
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 286
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 288
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 290
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 292
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 294
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 296
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 298
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 300
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 302
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 304
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 306
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 308
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 310
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 312
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 1005,
+        "parent" : 314
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 1,
+      "name" : "test_rocksdb_interface_lifecycle",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "masstree",
+            "rocks",
+            "sto"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 3,
+      "name" : "test_sto_tpcc_cpp_wrapper_smoke",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "masstree",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "name" : "test_sto_tpcc_cpp_wrapper_scan_smoke",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "masstree",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 7,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "cpp",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "cpp",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_cpp_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "cpp",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 9,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "cpp",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--expected-result-count",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards2-warehouses1.yml",
+        "--paxos-proc-name",
+        "localhost",
+        "--local-shards",
+        "0,1",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "cpp",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_cpp_multishard_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "cpp",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "multishard",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "rust",
+        "--expected-threads",
+        "1",
+        "--expected-warehouses",
+        "1",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_slow_exit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 13,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-engine",
+        "rust",
+        "--expected-threads",
+        "4",
+        "--expected-warehouses",
+        "4",
+        "--expected-seconds",
+        "1",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "4",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_concurrent",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 180.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=startup",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_startup_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_REGISTRY_MEMORY=1"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 17,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=load",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_load_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 19,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=run",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_run_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+            "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 21,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "TPCC_RESOURCE_EXHAUSTED phase=run",
+        "--expected-exit-code",
+        "3",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "4",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--runtime",
+        "30",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rust_concurrent_resource_exhausted",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
+            "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "capacity",
+            "concurrency",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 240.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 23,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "duplicate shard index 0",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--local-shards",
+        "0,0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_duplicate_local_shards",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 25,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "hybrid local/remote multi-shard topology is unsupported",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards3-warehouses1.yml",
+        "--local-shards",
+        "0,1",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_partial_local_shards",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 27,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "Rust STO TPC-C comparison supports one non-replicated shard",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/config/local-shards2-warehouses1.yml",
+        "--local-shards",
+        "0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_distributed_shard",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 29,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "Rust STO TPC-C comparison supports one non-replicated shard",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "1",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--is-replicated",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_replication",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 31,
+      "command" : 
+      [
+        "/usr/bin/python3",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+        "--expected-failure-text",
+        "worker count must be in [1, 111]",
+        "--expected-exit-code",
+        "2",
+        "--",
+        "/dev/shm/sto-output-regression.2V57O6/cmake/sto_tpcc_bench",
+        "--num-threads",
+        "112",
+        "--shard-config",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+        "--site-name",
+        "local_s0",
+        "--storage-engine",
+        "rust",
+        "--slow-exit"
+      ],
+      "name" : "test_sto_tpcc_rejects_rust_worker_limit",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "configuration",
+            "ffi",
+            "lifecycle",
+            "masstree",
+            "rust",
+            "sto",
+            "tpcc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 33,
+      "command" : 
+      [
+        "/dev/shm/sto-output-regression.2V57O6/cmake/test_benchmark_output"
+      ],
+      "name" : "test_benchmark_output",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "diagnostics",
+            "ffi",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 35,
+      "name" : "test_mtree_abi_c11_header",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "abi",
+            "c11",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 37,
+      "name" : "test_sto_tpcc_ffi_c11_header",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "c11",
+            "ffi",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 39,
+      "name" : "test_srpc_epoll_platform",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "epoll",
+            "ffi",
+            "rust",
+            "srpc"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 41,
+      "name" : "test_client_service",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 43,
+      "name" : "test_helper_queue",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "lifecycle",
+            "srpc"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 45,
+      "name" : "test_sharding_policy",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 47,
+      "name" : "test_sharding_policy_cache",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 49,
+      "name" : "test_shard_router",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 51,
+      "name" : "test_tpcc_sharding",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 53,
+      "name" : "test_config_kv_service",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 55,
+      "name" : "test_config_manager",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 57,
+      "name" : "test_shard_manager",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 59,
+      "name" : "test_ordered_index_kv_store",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 62,
+      "name" : "test_masstree",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 65,
+      "name" : "test_masstree_property",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 68,
+      "name" : "test_masstree_concurrent",
+      "properties" : 
+      [
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 71,
+      "name" : "test_masstree_linearizability",
+      "properties" : 
+      [
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 74,
+      "name" : "test_masstree_memory",
+      "properties" : 
+      [
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 77,
+      "name" : "test_masstree_layered",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 80,
+      "name" : "test_masstree_soak",
+      "properties" : 
+      [
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 83,
+      "name" : "test_masstree_headers",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 86,
+      "name" : "test_masstree_internals",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 89,
+      "name" : "test_masstree_multi_instance",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 93,
+      "name" : "test_masstree_legacy_string",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "legacy",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 97,
+      "name" : "test_masstree_legacy_atomics",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "legacy",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 101,
+      "name" : "test_masstree_legacy_json",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "legacy",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 105,
+      "name" : "test_masstree_legacy_msgpack",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "legacy",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 107,
+      "name" : "test_arc_mutex_thread",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 109,
+      "name" : "test_raft_messages",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 111,
+      "name" : "test_raft_application_log",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 113,
+      "name" : "test_legacy_raft_log",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 115,
+      "name" : "test_raft_transport_facade",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 117,
+      "name" : "test_raft_srpc_transport_compile",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 119,
+      "name" : "test_raft_quorum",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 121,
+      "name" : "test_raft_dispatcher_facade",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 123,
+      "name" : "test_raft_channel_transport",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 125,
+      "name" : "test_raft_memory_snapshot_manager",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 127,
+      "name" : "test_raft_test_cluster",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 129,
+      "name" : "raft_lab_standalone",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 131,
+      "name" : "test_txn_timeout",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 133,
+      "name" : "simpleTransaction",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 135,
+      "name" : "SiloVarintTests",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "rust",
+            "serializer",
+            "silo",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 137,
+      "name" : "SiloRCUThreadTests",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 139,
+      "name" : "SiloAllocatorTests",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 141,
+      "name" : "test_silo_runtime",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 143,
+      "name" : "test_silo_runtime_concurrency_lifecycle",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 145,
+      "name" : "test_silo_transitem_lifetime",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 147,
+      "name" : "test_silo_transaction_set_exact_chunk_boundary",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 149,
+      "name" : "test_silo_transaction_set_capacity_exhaustion",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 151,
+      "name" : "test_silo_transaction_install_exception_fail_stop",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "lifecycle",
+            "silo",
+            "transaction"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 120.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 153,
+      "name" : "test_mtree_abi",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "abi",
+            "ffi",
+            "masstree",
+            "rust",
+            "silo"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 155,
+      "name" : "test_mako_value_metadata",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "masstree",
+            "metadata",
+            "replay",
+            "rust",
+            "sto"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 157,
+      "command" : 
+      [
+        "/usr/bin/cmake",
+        "-DMAKO_NM=/home/users/shuai/.linuxbrew/opt/llvm@22/bin/llvm-nm",
+        "-DMAKO_ABI_ARTIFACT=/dev/shm/sto-output-regression.2V57O6/cmake/libmako.a",
+        "-P",
+        "/home/users/shuai/mako/.claude/worktrees/sto-rust/cmake/CheckMtreeAbiExports.cmake"
+      ],
+      "name" : "test_mtree_abi_exports",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "abi",
+            "exports",
+            "masstree"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 159,
+      "name" : "test_silo_multi_site_stress",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 161,
+      "name" : "test_silo_nontxn_api",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "masstree",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 163,
+      "name" : "test_silo_nontxn_api_mv_delete_delete_conflict",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "mv",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 165,
+      "name" : "test_silo_nontxn_api_mv_delete_update_conflict",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "concurrency",
+            "masstree",
+            "mv",
+            "nontransactional",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 167,
+      "name" : "test_config_manager_mbta",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 169,
+      "name" : "test_kv_backends",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 171,
+      "name" : "test_mako_nontxn_distributed",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "distributed",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 173,
+      "name" : "test_mako_nontxn_distributed_rcu_shutdown",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "distributed",
+            "lifecycle",
+            "rcu",
+            "silo"
+          ]
+        },
+        {
+          "name" : "RUN_SERIAL",
+          "value" : true
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 30.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 175,
+      "name" : "STOTransactionTests",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 177,
+      "name" : "STOTransactionRealTests",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake"
+        }
+      ]
+    },
+    {
+      "backtrace" : 179,
+      "name" : "rusty_arc_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 181,
+      "name" : "rusty_arc_mt_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 183,
+      "name" : "rusty_box_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 185,
+      "name" : "rusty_owned_fd_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 187,
+      "name" : "rusty_net_tcp_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 189,
+      "name" : "rusty_cell_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 191,
+      "name" : "rusty_option_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 193,
+      "name" : "rusty_refcell_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 195,
+      "name" : "rusty_result_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 197,
+      "name" : "rusty_mem_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 199,
+      "name" : "rusty_vec_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 201,
+      "name" : "rusty_function_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 203,
+      "name" : "rusty_array_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 205,
+      "name" : "rusty_error_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 207,
+      "name" : "rusty_arch_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 209,
+      "name" : "rusty_intrinsics_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 211,
+      "name" : "rusty_fmt_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 213,
+      "name" : "rusty_fmt_parity_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 215,
+      "name" : "rusty_iter_parity_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 217,
+      "name" : "rusty_for_in_lvalue_borrow_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 219,
+      "name" : "rusty_range_contains_width_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 221,
+      "name" : "test_traits",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 223,
+      "name" : "test_mutex",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 225,
+      "name" : "test_thread",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 227,
+      "name" : "test_channel",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 229,
+      "name" : "rusty_condvar_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 231,
+      "name" : "dispatch_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 233,
+      "name" : "test_external_annotations",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 235,
+      "name" : "test_simplified_external",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 237,
+      "name" : "test_stl_lifetimes",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 239,
+      "name" : "test_unified_annotations",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 241,
+      "name" : "hashset_set_algebra_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 243,
+      "name" : "rusty_umbrella_hashmap_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 245,
+      "name" : "std_port_set_algebra_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 247,
+      "name" : "std_port_map_drop_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 249,
+      "name" : "std_port_map_api_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 251,
+      "name" : "std_port_set_api_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 253,
+      "name" : "std_port_map_entry_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 255,
+      "name" : "std_port_map_mut_iter_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 257,
+      "name" : "std_port_static_init_order_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 259,
+      "name" : "btree_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 261,
+      "name" : "btree_port_set_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 263,
+      "name" : "vec_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 265,
+      "name" : "async_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 267,
+      "name" : "binary_heap_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 269,
+      "name" : "binary_heap_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 271,
+      "name" : "linked_list_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 273,
+      "name" : "eq_diff_len_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 275,
+      "name" : "vec_deque_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 277,
+      "name" : "vec_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 279,
+      "name" : "arc_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 281,
+      "name" : "rc_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 283,
+      "name" : "string_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 285,
+      "name" : "btree_set_hash_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 287,
+      "name" : "btree_tests_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 289,
+      "name" : "binary_heap_port_push_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 291,
+      "name" : "binary_heap_port_pop_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 293,
+      "name" : "binary_heap_port_comprehensive_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 295,
+      "name" : "binary_heap_port_iter_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 297,
+      "name" : "binary_heap_port_advanced_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 299,
+      "name" : "binary_heap_port_full_api_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 301,
+      "name" : "cell_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 303,
+      "name" : "rc_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 305,
+      "name" : "arc_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 307,
+      "name" : "vec_deque_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 309,
+      "name" : "linked_list_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 311,
+      "name" : "string_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 313,
+      "name" : "borrow_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    },
+    {
+      "backtrace" : 315,
+      "name" : "ascii_port_module_test",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/dev/shm/sto-output-regression.2V57O6/cmake/third-party/rusty-cpp"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

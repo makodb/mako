@@ -357,8 +357,9 @@ public:
   // is initialized via `Config::get_tot_req()` at worker construction
   // and a follow-up sweep can chase the Config wiring.
   int tot_num = 0;
-  int cur_epoch;
-  int is_leader;
+  // @safe - Match ElectionState's initial epoch before any replay callback.
+  int cur_epoch = 0;
+  int is_leader = 0;
   // removed `int bulk_writer = 0;` and
   // `int bulk_reader = 0;` — only used inside the now-deleted
   // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
@@ -397,7 +398,7 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  // take MarshallDeputy (matches RegLearnerAction
+  // take MarshallDeputy (matches reg_learner_action
   // signature in deptran/scheduler.h).
   int Next(int, janus::Command);
   void WaitForSubmit();

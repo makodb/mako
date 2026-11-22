@@ -1,0 +1,6 @@
+# Preserve only this completed final benchmark's reports and source archive.
+!*.json
+!*.jsonl
+!*.txt
+!*.log
+!source-final-production.tar.gz

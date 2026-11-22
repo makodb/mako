@@ -1,0 +1,152 @@
+[
+  {
+    "complete_blocks": 3,
+    "cpp_new_over_old": {
+      "approx_log_t_95_percent_interval": [
+        97.4785928953592,
+        100.62095367482688
+      ],
+      "geometric_mean_percent": 99.03731104998381,
+      "max_percent": 99.45948629483664,
+      "median_percent": 99.34376660884449,
+      "min_percent": 98.31271440332799,
+      "ratios": [
+        0.9831271440332799,
+        0.9945948629483663,
+        0.9934376660884449
+      ]
+    },
+    "median_throughput": {
+      "new_cpp": 40592.12519684828,
+      "new_rust": 57809.82847194234,
+      "old_cpp": 40812.72356114672,
+      "old_rust": 58122.06058976747
+    },
+    "new_rust_over_cpp": {
+      "approx_log_t_95_percent_interval": [
+        141.2828983039389,
+        143.4980237465323
+      ],
+      "geometric_mean_percent": 142.38615345530457,
+      "max_percent": 142.89992944032593,
+      "median_percent": 142.16887394876133,
+      "min_percent": 142.09105386559742,
+      "ratios": [
+        1.4209105386559742,
+        1.4216887394876134,
+        1.4289992944032592
+      ]
+    },
+    "normalized_rust_new_over_old_percent": [
+      101.17108570682969,
+      99.6916425271918,
+      100.2873988781917
+    ],
+    "old_rust_over_cpp": {
+      "approx_log_t_95_percent_interval": [
+        138.849618049659,
+        144.90492279344355
+      ],
+      "geometric_mean_percent": 141.8449617835789,
+      "max_percent": 142.60861828009652,
+      "median_percent": 142.4904135901372,
+      "min_percent": 140.44630723578894,
+      "ratios": [
+        1.4044630723578895,
+        1.4260861828009652,
+        1.4249041359013719
+      ]
+    },
+    "rust_new_over_old": {
+      "approx_log_t_95_percent_interval": [
+        98.81576183980161,
+        100.01822517909058
+      ],
+      "geometric_mean_percent": 99.415175496182,
+      "max_percent": 99.62927947963168,
+      "median_percent": 99.46404054970166,
+      "min_percent": 99.15279553642986,
+      "ratios": [
+        0.9946404054970167,
+        0.9915279553642986,
+        0.9962927947963167
+      ]
+    },
+    "threads": 1
+  },
+  {
+    "complete_blocks": 3,
+    "cpp_new_over_old": {
+      "approx_log_t_95_percent_interval": [
+        97.68176015621624,
+        100.11660529199018
+      ],
+      "geometric_mean_percent": 98.8916893666336,
+      "max_percent": 99.34590828023501,
+      "median_percent": 98.95861265451784,
+      "min_percent": 98.37297492836818,
+      "ratios": [
+        0.9837297492836817,
+        0.9934590828023501,
+        0.9895861265451783
+      ]
+    },
+    "median_throughput": {
+      "new_cpp": 653218.382191715,
+      "new_rust": 838432.8181739568,
+      "old_cpp": 660802.6734981873,
+      "old_rust": 842308.2804321821
+    },
+    "new_rust_over_cpp": {
+      "approx_log_t_95_percent_interval": [
+        119.97127652609998,
+        134.02488758079147
+      ],
+      "geometric_mean_percent": 126.80353642282456,
+      "max_percent": 128.66672738447605,
+      "median_percent": 128.2161936216543,
+      "min_percent": 123.590463963053,
+      "ratios": [
+        1.23590463963053,
+        1.2866672738447604,
+        1.282161936216543
+      ]
+    },
+    "normalized_rust_new_over_old_percent": [
+      98.28044273415506,
+      100.43928161386663,
+      100.04795768628142
+    ],
+    "old_rust_over_cpp": {
+      "approx_log_t_95_percent_interval": [
+        123.95815447109567,
+        130.7981726746979
+      ],
+      "geometric_mean_percent": 127.33224294320446,
+      "max_percent": 128.15473357657086,
+      "median_percent": 128.10399010929638,
+      "min_percent": 125.75285634127695,
+      "ratios": [
+        1.2575285634127695,
+        1.2810399010929636,
+        1.2815473357657086
+      ]
+    },
+    "rust_new_over_old": {
+      "approx_log_t_95_percent_interval": [
+        94.53953220397524,
+        102.5869448168514
+      ],
+      "geometric_mean_percent": 98.48107317256526,
+      "max_percent": 99.78231658943888,
+      "median_percent": 99.00607091552313,
+      "min_percent": 96.6813952903596,
+      "ratios": [
+        0.9668139529035961,
+        0.9978231658943888,
+        0.9900607091552313
+      ]
+    },
+    "threads": 16
+  }
+]

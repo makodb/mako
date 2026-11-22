@@ -1,0 +1,16 @@
+tests::put_resolving_checked_health_failure_poisons_table_and_core_before_staging: test
+tests::put_resolving_checked_healthy_commit_abort_and_tombstone_both_policies: test
+tests::put_resolving_cold_lookup_once_and_hits_keep_current_occ_state: test
+tests::put_resolving_health_rejects_poisoned_table_in_both_token_modes: test
+tests::put_resolving_keeps_own_publication_and_foreign_phantom_accounting: test
+tests::put_resolving_publication_abort_and_foreign_tokens: test
+   Compiling rustversion v1.0.23
+   Compiling masstree v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/masstree)
+   Compiling mtree-sys v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mtree-sys)
+   Compiling sto-masstree v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/sto-masstree)
+   Compiling mako-history v0.1.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mako-history)
+   Compiling arc-swap v1.9.2
+   Compiling sto-core v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/sto-core)
+   Compiling sto-test-datatypes v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/sto-test-datatypes)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.05s
+     Running unittests src/lib.rs (/var/tmp/mako-private-resolved-miri.vR9DWr/target/miri/x86_64-unknown-linux-gnu/debug/build/sto-masstree/04f2008cc68a12b6/out/sto_masstree-04f2008cc68a12b6)

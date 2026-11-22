@@ -275,9 +275,7 @@ int main(int argc, char *argv[]) {
     for (unsigned i = 0; i < arraysize(initial_seeds); ++i)
         initial_seeds[i] = random();
 
-    pthread_t advancer;
-    pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-    pthread_detach(advancer);
+    Transaction::start_epoch_advancer();
 
     // Run a parallel test with lots of transactions doing pushes and pops
     for (auto test : tests) {

@@ -16,11 +16,18 @@
 # what a consumer gets.
 #
 # Usage:  scripts/run_microbench.sh          (or: cd bench && cargo run --release)
+#
+# A second binary, src/bin/rpc_echo.rs, measures RPC round-trip latency and
+# pipelined throughput over TCP through the public Server/Client API: the
+# Rust-lane stand-in for rpcbench while the C++ lane cannot build.
+# Usage:  scripts/run_rpc_echo_bench.sh [--compare <ref-a> <ref-b>]
 [package]
 name = "srpc-bench"
 version = "0.0.0"
 edition = "2021"
 publish = false
+# The codec harness stays what a bare `cargo run` runs.
+default-run = "srpc-bench"
 
 # Own single-package workspace, independent of the srpc workspace root.
 [workspace]

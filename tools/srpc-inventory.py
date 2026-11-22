@@ -481,9 +481,9 @@ def classify(decl: Decl) -> tuple[str, list[str]]:
         return "needs-transpiler", notes
     # Custom destructor. `impl Drop` emits a real dtor — verified
     # 2026-09-16 against pin a1f8fef8: the generated
-    # `inline ConfigWatcher::~ConfigWatcher() noexcept(false)` at
-    # src/cluster/config_watcher.h:260 is transpiled from a DSL
-    # `impl Drop`, and src/rrr carries 12 more `impl Drop` blocks
+    # `inline ConfigWatcher::~ConfigWatcher() noexcept(false)` was transpiled
+    # from a DSL `impl Drop`. That sharding watcher is now retired; this is
+    # historical evidence. The SRPC sources also carried `impl Drop` blocks
     # (rpc/server.rs, rpc/client.rs, rpc/tcp_channel.rs,
     # rpc/fiber_channel.rs, rpc/utils.rs, reactor/reactor.rs). The
     # emitted dtor is guarded by `_rusty_forgotten` so it drops once,

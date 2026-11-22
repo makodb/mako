@@ -18,9 +18,9 @@ class HelperQueue {
 public:
     HelperQueue(int id,bool is_req);
 
-    bool is_req_buffer_full() { return req_cnt == HELPER_QUEUE_SIZE;};
-    bool is_req_buffer_empty() { return req_cnt == 0;};
-    size_t get_size() {return req_cnt;} ;
+    bool is_req_buffer_full() const;
+    bool is_req_buffer_empty() const;
+    size_t get_size() const;
     bool add_one_req(void *req_handle, size_t msg_size);
     bool free_one_req();
     void suspend();
@@ -28,13 +28,13 @@ public:
     bool fetch_one_req(void **req_handle, size_t &msg_size);
     void request_stop();
     bool should_stop() const { return stop_flag_.load(std::memory_order_acquire); }
+
+private:
     int req_buffer_reader_idx;
     int req_buffer_writer_idx;
     int req_cnt;
-
-private:
     std::pair<void*, size_t>req_buffer[HELPER_QUEUE_SIZE];
-    std::mutex condition_mutex;
+    mutable std::mutex condition_mutex;
 
     /* used for wakeup*/
     std::condition_variable cv;

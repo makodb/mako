@@ -49,7 +49,10 @@ compiler and an archiver. `build.rs` uses `CC` and `AR` when set, otherwise `cc`
 `ar`, and selects the fiber assembly for the target architecture. The native build
 currently assumes those tools produce code for the Cargo target.
 
-The root Cargo package has no production Rust dependencies. Its property tests use
+The root Cargo package's only production dependencies are the Lion runtime crates
+`lion-reactor` and `lion-executor`, path dependencies into the `third-party/lion`
+submodule built without their `mio` feature. They bring the other Lion crates and
+Verus's erased `vstd` library from Verus's git repository. Its property tests use
 `proptest` as a development dependency. The library is consumed from a checkout;
 `Cargo.toml` currently sets `publish = false`.
 
@@ -58,13 +61,16 @@ The root Cargo package has no production Rust dependencies. Its property tests u
 ```sh
 git clone https://github.com/stonysystems/srpc
 cd srpc
+git submodule update --init third-party/lion
 cargo test --locked --workspace --all-targets
 cargo test --locked --workspace --doc
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo doc --locked --no-deps --open
 ```
 
-These commands need no submodule initialization. For an application beside the
+These commands need only the `third-party/lion` submodule. The first build
+fetches `vstd` from Verus's git repository and a few crates.io crates for its
+proc-macros; after that Cargo also works offline. For an application beside the
 checkout, create a Cargo project and add a path dependency:
 
 ```sh
@@ -202,8 +208,8 @@ modules; it does not re-export every type at the crate root.
 
 Use ordinary Rust ownership and error handling: `Arc`, `Rc`, `Box`, `Option`,
 `Result`, closures and standard futures. An `Arc<T>` does not make `T` thread-safe.
-In particular, each application thread owns its own `Client`; reactor events and
-fibers also stay on their creating thread.
+`Client` is `Send + Sync`, so one `Arc<Client>` may be used from several threads;
+reactor events and fibers, by contrast, stay on their creating thread.
 
 There are three different future mechanisms:
 
@@ -231,7 +237,7 @@ The source layout groups responsibilities without creating separate Rust crates.
 | --- | --- |
 | `base/` | Numeric and timing helpers, logging, diagnostics and synchronization helpers |
 | `misc/` | Serialization, payload containers, statistics and randomness |
-| `reactor/` | Epoll polling, stackful fibers, events, fiber futures and standard-future scheduling |
+| `reactor/` | The `PollThread` driver and the epoll backend its Lion runtime runs on, stackful fibers, events, fiber futures and standard-future scheduling |
 | `rpc/` | Services, clients, transports, wire framing, request policies and connection state |
 
 `Client`, `ClientConnection`, `ClientPool` and the RPC `Future` are all in
@@ -252,16 +258,19 @@ flowchart TD
     RPC --> TCP["TCP transport"]
     RPC --> Memory["In-memory transport"]
     Memory --> Inline["Peer callback on the sending thread"]
-    TCP --> Poll["PollThread and epoll"]
+    TCP --> Poll["PollThread: Lion runtime over epoll"]
     Poll --> Reactor["Thread-local Reactor"]
     Reactor --> Fiber["Fibers and standard futures"]
     Poll --> Native["Native C/assembly kernel"]
     Fiber --> Native
 ```
 
-A `PollThread` owns a worker thread that services commands and I/O. Each worker has
-its own thread-local reactor. Commands cross that boundary through synchronized
-queues; the reactor's fibers and events do not move to the submitting thread.
+A `PollThread` owns a worker thread that services commands and I/O. That thread
+runs a Lion runtime over sRPC's epoll backend: the executor, I/O reactor and
+timer wheel come from the pinned `lion-executor` and `lion-reactor` crates
+(Chapter 4). Each worker has its own thread-local reactor. Commands cross that
+boundary through synchronized queues; the reactor's fibers and events do not
+move to the submitting thread.
 
 A server freezes service registration before dispatch. Its shared service context
 owns boxed `Service` implementations, whose `Send + Sync` bounds and shared dispatch
@@ -269,9 +278,11 @@ receiver let the implementation synchronize application state explicitly. With T
 one server currently uses one dispatch poll thread. The `Server` configuration and lifecycle
 handle is not itself a freely shared Rust value.
 
-Clients retain shared connections and RPC futures, but the `Client` handle contains
-thread-confined configuration and a connection slot. Connection state, future
-completion and reliability managers use their own synchronization. Keep the
+Clients retain shared connections and RPC futures. The `Client` handle itself is
+`Send + Sync`: its connection slot and staged configuration are behind mutexes and its
+scalars are atomics, so a reply callback on the poll thread may issue the next request
+through the same handle. Connection state, future completion and reliability managers
+use their own synchronization. Keep the
 properties of these types separate when designing a multithreaded application.
 
 ### The path of one request
@@ -339,8 +350,11 @@ canonical code must validate both consumers as described in [CLAUDE.md](../CLAUD
 
 A fiber lets a handler suspend in the middle of an ordinary function and resume
 with its local variables intact. sRPC uses stackful fibers for handlers that need
-to wait for another RPC. Each fiber has its own stack, but fibers on one reactor
-share one operating-system thread and run cooperatively.
+to wait on an sRPC event, a fiber sleep or a `FiberChannel` receive. Waiting for
+the reply to another RPC is not one of these: the client `Future` blocks the OS
+thread even inside a fiber (see "Where fibers come from in the RPC path"). Each
+fiber has its own stack, but fibers on one reactor share one operating-system
+thread and run cooperatively.
 
 `srpc::reactor::{Fiber, Reactor}` contains the scheduler and fiber handles.
 `srpc::fiber::this_fiber` provides operations on the currently running fiber.
@@ -392,9 +406,10 @@ fn main() {
 ```
 
 Cooperative scheduling does not relax Rust's aliasing rules. Do not keep an
-exclusive borrow of shared state across a call that can suspend, including an
-RPC wait. A retained `RefMut` will make a competing borrow panic; constructing
-another mutable reference with a raw pointer can instead cause undefined behavior.
+exclusive borrow of shared state across a call that can suspend, such as an
+event wait or a fiber sleep. A retained `RefMut` will make a competing borrow
+panic; constructing another mutable reference with a raw pointer can instead
+cause undefined behavior.
 
 ### The fiber API
 
@@ -494,10 +509,21 @@ or arrange for waiting fibers to resume and return before tearing down the owner
 ### Where fibers come from in the RPC path
 
 A service registers an ordinary handler with `Server::reg_rpc`. Dispatch then
-starts a fiber for that request, so the handler can make a nested RPC and wait
-cooperatively. A handler registered with `reg_fast_rpc` runs inline in the
-transport's frame callback. With TCP, that callback runs on the poll thread.
-A fast handler must return promptly or start work that can complete later.
+starts a fiber for that request, so the handler can suspend on sRPC events and
+fiber sleeps while other work on its thread proceeds. A handler registered with
+`reg_fast_rpc` runs inline in the transport's frame callback. With TCP, that
+callback runs on the poll thread. A fast handler must return promptly or start
+work that can complete later.
+
+A fiber handler cannot wait cooperatively for a nested RPC. The client
+`Future`'s `wait`, `get_error_code`, `get_reply` and `wait_with_options` block
+the OS thread on a condition variable, inside a fiber or not, so nothing else on
+that poll thread runs until the wait returns. With TCP, if the nested call's
+`Client` uses the handler's own `PollThread`, both the request's send and the
+reply's delivery need that blocked thread, so the wait can only end at its
+timeout, one second by default, with error 110. A client on another `PollThread`
+can complete the call, but the handler's poll thread stays blocked for the whole
+round trip. Arrange asynchronous completion instead, as Chapter 14 describes.
 
 ### Implementation: the C engine and the assembly
 
@@ -578,16 +604,21 @@ fn main() {
 ```
 
 Spawn polls once inline. If that poll completes, the completion callback runs
-inside the spawn call and no parked task remains. Otherwise the reactor retains
-the task and polls it again when its waker fires. A wake during the initial poll
-is retained, as this example requires. The callback runs after releasing the
+inside the spawn call and no parked task remains. Otherwise the task is kept and
+polled again when its waker fires. On a thread with no `PollThread`, as in this
+example, the reactor retains it, and a wake during the initial poll is retained
+too, as this example requires. On a `PollThread`, the task becomes a task on
+that thread's Lion runtime instead. The callback runs after releasing the
 reactor's mutable borrow of the completed task, so it can submit more work.
 
 Spawn and future polling belong to the owner thread. A cloned standard `Waker`
-can cross threads: the wake records a request in synchronized storage, and the
-owner drains that queue during `run_loop`. It does not move the future or the
-reactor to the waking thread. Copy `cx.waker()` with `clone()` when registering a
-notification; never retain a reference to the temporary `Context`.
+can cross threads. On a thread with no `PollThread`, the wake records a request
+in synchronized storage, and the owner drains that queue during `run_loop`. On a
+`PollThread`, the wake goes to the thread's Lion runtime, whose cross-thread
+queue and the epoll backend's eventfd bring it back to that thread. Neither
+moves the future or the reactor to the waking thread. Copy `cx.waker()` with
+`clone()` when registering a notification; never retain a reference to the
+temporary `Context`.
 
 sRPC does not supply a ready-made standard `Future` adapter for its events.
 A future's `poll` must return promptly instead of using a stackful event wait.
@@ -610,9 +641,10 @@ stack reuse; they are not synchronized cross-thread metrics.
 ## 4. The reactor pattern
 
 sRPC separates scheduling from I/O ownership. `Reactor` schedules local fibers,
-events, and standard futures. `PollThreadWorker` owns epoll registrations, jobs,
-and the I/O loop. `PollThread` is a shareable handle that sends commands to that
-worker. All three live in `srpc::reactor`.
+events, and standard futures. Each `PollThread` runs one worker OS thread whose
+Lion runtime owns descriptor registrations, jobs, and the I/O loop; the
+`PollThread` value is a shareable handle that sends commands to that thread. Both
+live in `srpc::reactor`.
 
 ### The reactor
 
@@ -626,18 +658,22 @@ poll worker uses `get_reactor()`; obtaining the disk reactor does not start a
 background disk executor.
 
 The reactor keeps a registry of fibers, an optional fiber reuse pool, and separate
-queues for waiting, timed, composite, and ready events. It also retains parked
-future pollers and a queue of task indices ready to be polled again. It does not
-own socket descriptors or perform `epoll_wait`.
+queues for scanned waiting and composite events. Events that wake on change use a
+per-thread ready queue instead, timed waits a per-thread deadline map, and
+composites per-thread links from their children (see "Which events the loop
+tests"). It also retains parked future pollers and a queue
+of task indices ready to be polled again. It does not own socket descriptors or
+perform `epoll_wait`.
 
 ### Running the loop
 
 For a manually driven reactor, call `run_loop(false, true)` to process available
 work and check deadlines. The arguments are `infinite` and `do_check_timeout`.
 
-A pass polls ready standard futures, tests waiting and composite events, and
-optionally checks timeout deadlines. It then resumes fibers whose events became
-ready or timed out. The event's weak fiber reference must still upgrade to a
+A pass polls ready standard futures, tests the scanned waiting and composite
+events, optionally serves the deadlines that have passed, in deadline order, and
+takes the events that queued themselves when they became ready. It then resumes
+fibers whose events became ready or timed out. The event's weak fiber reference must still upgrade to a
 fiber in this reactor's registry. Normal readiness becomes `DONE` before the
 continuation; a timeout stays `TIMEOUT` so the resumed code can inspect it.
 The loop repeats while it finds more ready work.
@@ -669,8 +705,9 @@ fn main() {
 }
 ```
 
-Setting `do_check_timeout` to false skips the deadline queue. Event predicates
-can still become ready, but `wait_timeout` deadlines need a timeout-enabled pass.
+Setting `do_check_timeout` to false skips the deadline map: neither a
+`wait_timeout` deadline nor a `TimeoutEvent` progresses without a pass that
+checks deadlines.
 `run_loop(true, true)` repeatedly scans even when idle. It can busy-spin, so use
 the poll worker for a long-lived network runtime. An owner-thread callback can
 clear `reactor.looping_` to stop an infinite loop once the current work drains.
@@ -689,17 +726,25 @@ boxed callback type and has the same immediate-entry behavior. Prefer
 `Fiber::create_run` for ordinary use. It constructs the callback and selects the
 current reactor for you.
 
-### PollThread and PollThreadWorker
+### PollThread and its worker thread
 
 `PollThread::create()` starts a native Rust worker thread and returns
 `Arc<PollThread>`. Cloning that handle shares the command sender and shutdown
 state. It does not expose the worker's reactor for use on another thread.
 
-The worker waits for I/O, handles readiness callbacks and commands, runs jobs,
-and calls its own `Reactor::run_loop(false, true)`. `Epoll::Wait` uses a 1 ms
-maximum idle wait. This keeps an idle worker checking timers frequently; it is
-not a guaranteed timer resolution or a promise of 1000 passes per second.
-Callbacks and operating-system scheduling can delay a pass.
+The worker thread runs a Lion runtime over SRPC's epoll backend. One task on
+it, the driver, handles commands, runs jobs and calls the thread's own
+`Reactor::run_loop(false, true)`. Each TCP connection on the thread is a
+reader task and a writer task over one descriptor registration, and each TCP
+listener an accept task; any other pollable registered with `add_proxy` has a
+task that waits for its descriptor and calls its readiness callbacks. The
+worker does not poll: commands, pings, event wakes and timer deadlines each
+wake the driver, a send wakes its connection's writer, and an idle worker
+sleeps until one of them does. Timers are
+millisecond-granular: the driver sleeps until the next deadline rounded up to
+a whole millisecond. A job whose `Ready()` is false is re-checked every
+millisecond while it waits, because `Job` has no wake. Callbacks and
+operating-system scheduling can still delay a wake.
 
 The handle's thread identifier is a native kernel thread ID used to avoid
 joining the worker from itself. The reactor's Rust `ThreadId` checks are a
@@ -828,6 +873,8 @@ A custom readiness predicate is stored in `event.state_.test_` as
 `Option<Box<dyn Fn(i32) -> bool>>`. On a fresh event, assign
 `Some(Box::new(predicate))` through `borrow_mut()`, then release that borrow
 before waiting or setting. This overrides the usual target comparison.
+The loop never evaluates the predicate on its own: `set`, `test` or a ping does
+(see "Which events the loop tests").
 Use it sparingly; named event types make ordinary conditions easier to follow.
 
 ### TimeoutEvent
@@ -1026,12 +1073,52 @@ needs to signal it. Do not copy that pattern. For several local waiters, keep a
 separate fresh `IntEvent` for each waiter and signal those through shared event
 handles. Custom `IntEvent` predicates also avoid the mutable counter wrapper.
 
-### Composite events need the loop to poll them
+### Which events the loop tests
 
-Child changes do not directly resume a fiber waiting on a composite. The owner
-must call `run_loop` to test `WaitAny`, `WaitAll`, and quorum conditions and then
-resume ready fibers. The poll worker does this on each pass. A manually driven
-reactor must do it explicitly, including timeout checking for timed waits.
+Every event waited on its owner thread wakes on change: `BoxEvent`, `IntEvent`
+with or without a predicate, `QuorumEvent`, `TimeoutEvent`, `NeverEvent`,
+`WaitAny` and `WaitAll`. Their `set`, `vote_yes`, `vote_no` and `test` calls
+move a waiting event to `READY` and queue it on the owner thread; the next
+`run_loop` pass resumes the waiter without testing the event again. The call
+itself never resumes the waiter. Code that writes such an event's fields
+directly while a fiber waits, such as `n_voted_yes_` or `value_`, must call
+`test()` afterwards, because the loop does not look at the event again. Install
+an `IntEvent` predicate before waiting on it. Only the owner thread queues the
+event: a `set` from another thread marks it `READY` without waking the waiter,
+so post that work to the owner thread instead.
+
+Timers use a per-thread deadline map instead of a scan. Every timed wait, and
+every `TimeoutEvent` from its creation, has an entry at its deadline, and a pass
+that checks deadlines serves the ones that have passed in deadline order. A
+`TimeoutEvent` becomes ready at its own deadline even if nothing waits on it
+yet. At a timed wait's deadline the waiter resumes as ready if its event is
+ready, even if nothing tested it, and otherwise as `TIMEOUT`. So a timed wait
+whose event was set from another thread, or written without `test()`, still
+completes, but only at its deadline.
+
+A `WaitAny` or `WaitAll` hears from its children. Each child keeps a list of the
+composites it belongs to, and a `set` or `test` that finds the child ready tests
+each of them, so a waiting composite becomes `READY` and is queued like any other
+event; a child `TimeoutEvent` does this at its deadline. Child changes still do
+not resume the composite's fiber directly: the next `run_loop` pass does. As with
+a leaf, a child whose fields are written directly needs a `test()` before its
+composites see the change.
+
+An `IntEvent` predicate is evaluated only when the event is tested, so whatever
+changes the state it reads must say so. On the owner thread, call `set` or
+`test`. From another thread, publish the state, then call
+`event_ping::<()>(&ticket)` on an `EventPing` ticket (`event_ping_new`) that the
+owner armed with the event (`event_ping_arm`) before waiting on it and disarms
+afterwards (`event_ping_disarm`). The ping only queues the ticket; the owner's
+next `run_loop` pass tests the armed event, and a ready one resumes its waiter
+there. `FiberChannel` pings from its frame and close callbacks this way.
+
+The owner must call `run_loop` to serve pings and deadlines and resume ready
+fibers. A poll thread's driver does this each time it is woken. A manually
+driven reactor must do it explicitly, including the deadline check for timed
+waits. An event waited on a thread other than the one that created it, which
+only C++ can do, cannot use its owner's queue and is still re-tested on every
+pass of the waiting thread.
 
 ### Rules and gotchas
 
@@ -1052,18 +1139,20 @@ event alive; it does not authorize cross-thread mutation.
 
 ## 6. I/O layer: polling and connections
 
-The poll worker owns each registration until it has unregistered the descriptor.
-Its `Box<dyn PollableBase>` proxy can share a transport's synchronized state, but
-must retain the native descriptor for the registration's whole lifetime. This
-separation lets application code close a connection logically without racing
-an in-progress epoll operation against descriptor reuse.
+A poll thread owns each registration until it has unregistered the descriptor.
+A `Box<dyn PollableBase>` proxy registered with `add_proxy` can share a
+transport's synchronized state, but must retain the native descriptor for the
+registration's whole lifetime; the TCP transport's tasks hold a descriptor lease
+for the same reason. This separation lets application code close a connection
+logically without racing an in-progress epoll operation against descriptor reuse.
 
 | Source | Responsibility |
 |--------|----------------|
-| `reactor/epoll_wrapper.rs` | `srpc::epoll_wrapper`, including `Epoll`, `PollMode`, `PollReady`, and `Pollable` |
-| `reactor/srpc_epoll.c` | Linux epoll syscalls and event-record marshalling |
+| `reactor/epoll_wrapper.rs` | `srpc::epoll_wrapper`: `PollMode`, `PollReady`, and `SrpcEpollBackend`, the Lion runtime's epoll backend |
+| `reactor/srpc_epoll.c` | One Linux epoll or eventfd syscall per function, for that backend |
 | `rpc/pollable_proxy.rs` | `srpc::pollable_proxy::{PollableBase, PollableProxy}` and internal adapters |
-| `reactor/reactor.rs` | Poll-thread commands, worker state, loop, and job scheduling |
+| `reactor/reactor.rs` | Poll-thread commands, the Lion driver task, the pollable adapter, and job scheduling |
+| `rpc/tcp_channel.rs` | The TCP reader, writer, and accept tasks |
 | `base/misc.rs` | `srpc::misc::{Job, OneTimeJob}` |
 
 Most applications use `Client` and `Server` and let their TCP channels register
@@ -1090,54 +1179,40 @@ aarch64, which also have the required fiber context-switch assembly.
 | `PollReady::ERROR` | `0x4` | Error, hangup, or peer half-close notification |
 
 Interest and readiness are separate sets of bits. A write handler can return a
-new interest mask or `NO_CHANGE`; the worker updates epoll only when needed.
+new interest mask or `NO_CHANGE`; `PollReady` names readiness bits for custom
+code and is not passed to `PollableBase` handlers.
 
-### The Epoll wrapper
+### The epoll backend
 
-`Epoll::new()` eagerly creates an owned epoll descriptor. It is released on drop.
-The public method names retain their capitalization.
+`SrpcEpollBackend` is the operating-system backend of the Lion runtime each
+poll thread runs; it implements Lion's `OsBackend` contract over Linux epoll.
+Applications do not call it directly. Its rules matter to anyone writing a
+pollable, because they are the rules readiness arrives under.
 
-| Method | Arguments and behavior |
-|--------|------------------------|
-| `Add(fd, mode)` | Register a descriptor; returns an `i32` result |
-| `Remove(fd)` | Attempt unregistration; ignores the syscall result and returns zero |
-| `Update(fd, mode, old_mode)` | Replace interest; the current implementation ignores `old_mode` |
-| `Wait(on_ready)` | Perform one wait and invoke an `FnMut(i32, i32)` callback for each fd/readiness pair |
+Every registration is edge-triggered and always asks for `EPOLLRDHUP`, plus
+`EPOLLIN` for read interest and `EPOLLOUT` for write interest. The kernel stores
+Lion's registration token in the event's user data, not the descriptor number,
+and a wait reports at most 100 events. Readiness maps as in mio: `EPOLLIN` or
+`EPOLLPRI` is readable, `EPOLLOUT` writable, and an error or hang-up wakes both
+directions. A cross-thread wake is an eventfd registered under a reserved token
+that a wait drains and never reports. `EINTR` ends a wait with no events.
 
-`Wait` uses a fixed array of 100 events and a 1 ms timeout. It maps `EPOLLIN` to
-`READABLE`, `EPOLLOUT` to `WRITABLE`, and `EPOLLERR`, `EPOLLHUP`, or `EPOLLRDHUP`
-to `ERROR`. A failed or interrupted `epoll_wait` produces no callbacks for that
-pass. There is no dedicated EINTR retry inside `Wait`; the worker's next loop
-iteration calls it again.
-
-Registrations use edge-triggered epoll. `Add` always requests `EPOLLIN` and
-`EPOLLRDHUP`, plus `EPOLLOUT` when the supplied mode includes write interest.
-`Update` includes read and write interest according to its new mask. Custom
-nonblocking transports must consume readiness correctly, normally reading or
-writing until `WouldBlock` rather than assuming another edge will arrive while
-work remains.
-
-The wrapper has specific recovery rules. On `EEXIST`, `Add` deletes the old
-registration and retries once. An `EBADF` add returns `-1`; other unsuccessful
-adds assert. `Update` treats `ENOENT` and `EBADF` as a registration that has
-already disappeared, and otherwise asserts success. Creation failure also
-asserts. These APIs do not provide a general `io::Result` error-reporting layer.
-
-The epoll user data contains an integer fd, not a pointer to a transport object.
-Callbacks look up that fd in the worker's current map. The map and native socket
-ownership must still be correct: an integer fd can be reused after close.
+Because registrations are edge-triggered, a nonblocking transport must consume
+readiness: read or write until `WouldBlock` rather than assuming another edge
+will arrive while work remains.
 
 ### The native epoll boundary
 
-Canonical Rust chooses interest flags, handles registration recovery, and
-converts readiness into worker callbacks. `reactor/srpc_epoll.c` performs the
-individual Linux syscalls and copies the platform event records into the fixed
-layout declared by `reactor/srpc_epoll.h`. No native C code owns a reactor queue
-or decides which fiber runs next.
+Canonical Rust chooses interest flags and the reserved token, maps kernel
+events to Lion's readiness, and decides what `EINTR` and `EAGAIN` mean.
+`reactor/srpc_epoll.c` makes one system call per function and returns its result
+or `-errno`; a wait copies each event's token and flags into caller arrays, as
+declared in `reactor/srpc_epoll.h`. No native C code owns a reactor queue or
+decides which fiber runs next.
 
-### Pollable, PollableBase, and the proxy
+### PollableBase and the proxy
 
-`PollableBase: Send` is the trait the worker actually dispatches through.
+`PollableBase: Send` is the trait a poll thread dispatches `add_proxy` registrations through.
 `PollableProxy` is its owned type alias, `Box<dyn PollableBase>`.
 
 | Method | Receiver | Purpose |
@@ -1145,16 +1220,12 @@ or decides which fiber runs next.
 | `fd()` | `&self` | Registered descriptor |
 | `poll_mode()` | `&self` | Initial read/write interest |
 | `content_size()` | `&mut self` | Amount of buffered content |
-| `handle_read()` | `&mut self` | Process readable data; the worker currently ignores the returned boolean |
-| `handle_write()` | `&mut self` | Flush output and return an interest mask or `NO_CHANGE` |
-| `handle_error()` | `&mut self` | Handle the reported error or hangup |
-| `close()` | `&mut self` | Close after the worker unregisters |
-| `check_pending_write_update()` | `&self` | Consume a pending request for write interest |
-| `is_closed()` | `&self` | Report logical closure |
-
-`srpc::epoll_wrapper::Pollable` declares the same operations and remains accepted
-by compatibility methods such as `PollThread::remove`. The worker's registrations
-use `PollableBase`, so implementing `Pollable` alone does not register a transport.
+| `handle_read()` | `&mut self` | Drain readable data until `EAGAIN`; the poll thread ignores the returned boolean. It may run when nothing is readable (a new registration starts readable on the Lion reactor), so it must tolerate `EAGAIN`. An error or hang-up also arrives here, as a failed `recv` or end of file |
+| `handle_write()` | `&mut self` | Flush output and return an interest mask, or `NO_CHANGE` once `send` reported `EAGAIN` |
+| `handle_error()` | `&mut self` | Not called by the poll thread: an error or hang-up wakes the read side, so `handle_read` sees it |
+| `close()` | `&mut self` | Close after the poll thread unregisters |
+| `check_pending_write_update()` | `&self` | Report and consume a pending request for write interest; read after each `handle_read` and on every other wake of the registration |
+| `is_closed()` | `&self` | Report logical closure; a closed registration is unregistered, closed, and dropped |
 
 For an external Rust transport, implement `PollableBase` and transfer a boxed
 implementation to `add_proxy`. Its `Send` bound permits that transfer. The proxy
@@ -1164,29 +1235,31 @@ operation can replace or drop the object's interior socket owner.
 
 `make_pollable_proxy_from_typed_arc` uses the private `PollableSharedTarget`
 trait. It is an internal adapter rather than an extensible downstream Rust trait.
-Use a direct `PollableBase` implementation or the TCP transport's dedicated
-proxy factory, which also retains the socket registration's ownership.
+Use a direct `PollableBase` implementation.
 
 ### What is actually registered
 
-The TCP runtime registers connection and listener proxies. RPC `ClientConnection`
-and `ServerConnection` objects sit above the channel and do not become epoll
-registrations merely by having similarly named methods. In particular, a method
-on an RPC wrapper is not automatically a poll-loop hook.
+The TCP runtime does not register pollable proxies. Each connection is a reader
+task and a writer task on its PollThread, and each listener an accept task;
+they register the socket with the thread's Lion runtime themselves, so the
+only registrations `add_proxy` sees are an application's own pollables. RPC
+`ClientConnection` and `ServerConnection` objects sit
+above the channel and do not become epoll registrations merely by having
+similarly named methods. In particular, a method on an RPC wrapper is not
+automatically a poll-loop hook.
 
-Transport callbacks hand complete payload frames to RPC decoding. The worker
-owns its proxy and registration tables; channels and application handles can
-also own synchronized references to the underlying connection state.
+Transport callbacks hand complete payload frames to RPC decoding. The poll
+thread owns its proxy and registration tables; channels and application handles
+can also own synchronized references to the underlying connection state.
 
 ### PollThread: the cross-thread handle
 
 Clone `Arc<PollThread>` to send commands from another thread. The handle's public
-operations enqueue work; they do not directly edit the worker's tables.
+operations enqueue work; they do not directly edit the poll thread's tables.
 
 | Operation | Effect |
 |-----------|--------|
-| `add_proxy(proxy)` | Transfer an owned pollable proxy to the worker |
-| `remove(&mut pollable)` | Read its fd and request unregistration |
+| `add_proxy(proxy)` | Transfer an owned pollable proxy to the poll thread |
 | `remove_fd(fd)` | Request unregistration without calling `close()` |
 | `request_close(fd)` | Request unregistration followed by proxy `close()` |
 | `update_mode(fd, mask)` | Request a change to an existing registration |
@@ -1208,32 +1281,29 @@ error, while `update_mode` logs a disconnected channel. Submission is therefore
 not an acknowledgment that work completed. Use an explicit reply channel when
 the caller needs one, as in the job example below.
 
-### PollThreadWorker and the loop
+### The driver and the pollable adapter
 
-The worker owns an epoll descriptor, an fd-to-proxy map, the current interest
-map, a pending-removal set, and pending jobs keyed by object identity. Its
-thread-local current-worker slot lets transport code recognize execution on
-the owning worker. Callers should use `pollworker_is_on_poll_thread()` rather
-than accessing that internal pointer.
+The worker thread builds its Lion runtime and runs one driver task on it until
+shutdown. Each time it is woken, by a command, a ping, an event wake or a timer,
+the driver:
 
-One normal pass proceeds in this order.
+1. Drains the command channel.
+2. Applies the removals that batch requested.
+3. Runs ready jobs.
+4. Drives the local reactor with `run_loop(false, true)`.
+5. Sleeps on a Lion timer until the next event deadline, or until woken.
 
-1. Run ready jobs.
-2. Wait for epoll readiness and collect fd/bit pairs.
-3. Dispatch read, write, and error handlers, looking up each fd again as needed.
-4. Drain the command channel.
-5. Run ready jobs again.
-6. Apply deferred removals.
-7. Run ready jobs a third time.
-8. Drive the local reactor with `run_loop(false, true)`.
-9. Consume pending write-interest flags and update epoll.
-10. Sweep closed registrations, unregistering before closing and dropping them.
-
-Callbacks can request closure, so the worker retains ownership while it detaches
-and unregisters a proxy. On loop exit it unregisters the remaining descriptors
-and drops the maps. It does not explicitly invoke every remaining proxy's
-`close()` method during that final cleanup; ordinary ownership drops release
-whatever resources have no remaining owners.
+Each `add_proxy` registration gets its own task, which waits on the descriptor
+through Lion's `AsyncFd`. On a read edge it consumes the edge and calls
+`handle_read`; then it reads `check_pending_write_update()`, and while the mode
+includes write interest and the socket is writable it calls `handle_write`,
+keeping the write edge until `handle_write` returns `NO_CHANGE`. A registration
+found closed after either handler leaves the table and is unregistered, then
+closed, then dropped. On shutdown every remaining registration is unregistered
+and dropped without `close()`; ordinary ownership drops release whatever
+resources have no remaining owners. `pollworker_is_on_poll_thread()` reports
+whether the caller runs on a thread whose poll thread is running: in its driver,
+a job, a fiber it resumes, or one of its tasks.
 
 ### The command channel
 
@@ -1243,32 +1313,44 @@ whatever resources have no remaining owners.
 |---------|---------------|
 | `AddPollable` | Reject an invalid or closed incoming proxy and a duplicate live registration; retire a closed old registration before adding a replacement |
 | `RemovePollable` | Put the fd in the deferred-removal set |
-| `ClosePollable` | Detach, cancel pending removal, unregister, erase interest, then call `close()` |
-| `UpdateMode` | Ignore absent registrations; update epoll only when the mode changes |
+| `ClosePollable` | Detach, cancel pending removal, unregister, then call `close()` |
+| `UpdateMode` | Ignore absent registrations; record the mode and wake the registration's task |
 | `AddJob` / `RemoveJob` | Insert or remove the job by shared object identity |
 | `Shutdown` | Set the worker's stop flag |
 
-`RemovePollable` defers map changes until the removal phase. A remove request
+`RemovePollable` defers map changes until the command batch has drained. A remove request
 that refers to no current registration still counts as admitted if its command
 was accepted. `RemoveJob` exists in the command enum, but `PollThread` has no
 corresponding convenience method.
 
 TCP logical close shuts down the socket and clears the connection's fd slot.
-A registration proxy retains a separate socket owner until the worker has
-unregistered it. This prevents a close/reuse race from turning an epoll operation
-into an operation on an unrelated newly opened descriptor.
+The connection's transport tasks retain a separate socket owner until they have
+unregistered it, as an `add_proxy` proxy must. This prevents a close/reuse race
+from turning an epoll operation into an operation on an unrelated newly opened
+descriptor.
 
-### Handing write interest back to the poll thread
+### Handing output to the poll thread
 
-A send from another thread can append output while the connection is registered
-for reads only. TCP records pending write interest on the connection with an
-atomic flag. The worker consumes that flag and enables `READ | WRITE` for the
-still-registered proxy. It avoids sending a delayed raw-fd update that could
-outlive the connection to which it belonged.
+A send from any thread appends the frame to the connection's outbound buffer
+under its mutex. When that append makes the buffer non-empty, it wakes the
+connection's writer task directly, through the task's waker, which is kept under
+the same mutex; appends to a non-empty buffer need no wake, since the writer is
+already draining or waiting for the socket. One case skips the writer: a send
+from a thread other than the connection's poll thread that finds the buffer
+empty, on a connection whose last `send(2)` is at least `kTcpWriteThroughIdleUs`
+(20 microseconds) old, writes the frame itself under the same mutex and wakes
+the writer only for bytes the socket did not take. On the poll thread itself,
+for example a reply sent from a fast handler, the wake only queues the writer on
+that thread, and it runs after the handler's reader task. The writer drains
+until the buffer is empty or the socket reports `EAGAIN`, and then waits for
+write readiness.
 
-When output drains, `handle_write()` can return a read-only mask. Edge-triggered
-write notification should be enabled while there is output to flush, rather
-than treated as a recurring timer.
+Close and errors reach both tasks: a close from any thread wakes the writer,
+and the task that retires the connection wakes the other. A pollable
+registered with `add_proxy` asks for write interest from `handle_write`'s
+result or `check_pending_write_update()` when its task runs; nothing wakes the
+task for the latter alone, so from another thread it asks with
+`PollThread::update_mode`.
 
 ### The job system
 
@@ -1718,7 +1800,7 @@ The default factory creates TCP channels. Chapter 6 shows how to install an in-m
 
 `connect` builds a replacement connection and publishes it only after a successful dial. A failed replacement leaves the previous connection installed. `close` marks the current binding as closing and queues a close job that retains its owner until execution. The client retains its connection handle. Dropping `Client` also closes it.
 
-Keep the `Client` value on its owning thread. Its `Cell` and `RefCell` fields make it unsuitable for shared native Rust access across threads; putting it in an `Arc` does not change that. `ClientConnection` has synchronized shared state, and `client.connection()` returns an `Option<Arc<ClientConnection>>` after releasing the client's internal borrow. These are different ownership contracts.
+`Client` is `Send + Sync`, so one `Arc<Client>` may be used from several threads at once, including from reply callbacks on the poll thread. Its connection slot is a mutex held only while the handle is cloned out or replaced, and its staged settings and scalar fields are synchronized. `client.connection()` returns an `Option<Arc<ClientConnection>>` after releasing that lock; `ClientConnection` synchronizes its own shared state.
 
 ### Issuing a request
 
@@ -1861,7 +1943,7 @@ fn request_owned_reply(
 }
 ```
 
-The callback may run inline for an in-memory channel or on a transport worker. Keep it short, and retain only captures allowed by its `Send` bound. It cannot safely capture an `Arc<Client>` for cross-thread use. An owned message sent back to the client's owner is one way to request more work.
+The callback may run inline for an in-memory channel or on a transport worker. Keep it short, and retain only captures allowed by its `Send` bound. An `Arc<Client>` is one, so a callback may issue the next request through the same client.
 
 This path has no request-options coordinator, timeout timer, or disconnected-request buffering. It uses a fixed 16,384-entry callback array indexed by transaction ID modulo that size. An occupied slot rejects submission with `16`; a disconnected connection rejects it with `107`; send failure can return `5`. Transport teardown drains outstanding callbacks with a connection error.
 
@@ -2613,7 +2695,7 @@ Defaults are 10 seconds between probes, a 5-second response timeout, and three c
 
 The server recognizes the reserved heartbeat RPC and returns success with an empty body. Every inbound reply calls `on_pong_received`, so ordinary response traffic also counts as activity.
 
-Automatic client scheduling remains missing. Probe logic exists in `ClientConnection::check_pending_write_update`, but the registered TCP pollable uses its own dirty-flag update and does not call that method. Enabling heartbeat settings alone emits no periodic probes and provides no silent-peer timeout. Unit tests of `HeartbeatManager` validate its state machine, not an automatic timer connection.
+Automatic client scheduling remains missing. Probe logic exists in `ClientConnection::check_pending_write_update`, but the TCP transport never calls that method. Enabling heartbeat settings alone emits no periodic probes and provides no silent-peer timeout. Unit tests of `HeartbeatManager` validate its state machine, not an automatic timer connection.
 
 Kernel TCP keepalive is independent and does apply socket options through the channel capability. On Linux these are `SO_KEEPALIVE`, `TCP_KEEPIDLE`, `TCP_KEEPINTVL`, and `TCP_KEEPCNT`. Disabling keepalive clears `SO_KEEPALIVE` without resetting the tuning values.
 
@@ -2737,13 +2819,13 @@ requested but the worker may still be running when that call returns.
 ### Shared ownership does not imply thread safety
 
 Rust's `Arc<T>` controls the lifetime of `T`. Sending an `Arc<T>` across a thread
-also requires `T: Send + Sync`. The distinction matters because
-`Client::create()` returns `Arc<Client>`, while `Client` is not `Sync`.
+also requires `T: Send + Sync`. The distinction matters because several
+factories below return an `Arc` whose payload is still confined to one thread.
 
 | Value | Ownership and access |
 | --- | --- |
 | `Arc<PollThread>` | Share across threads to submit worker commands. |
-| `Arc<Client>` | Keep the client handle on its application thread. Its connection slot and staged settings use `RefCell` and `Cell`. |
+| `Arc<Client>` | Share across threads, including with reply callbacks. The connection slot is a mutex; staged settings and scalar fields are synchronized. |
 | `Server` | Keep lifecycle operations on its owning thread. The handle is not `Sync`. |
 | `Arc<ClientConnection>`, `Arc<ServerConnection>` | Shared connection owners synchronize transport slots and mutable connection state. |
 | `Arc<srpc::client::Future>` | Shared completion state uses mutexes and a condition variable. Its wait blocks an OS thread. |
@@ -2751,10 +2833,10 @@ also requires `T: Send + Sync`. The distinction matters because
 | Reactor events | Owner-thread values even where their factories return `Arc`. They contain unsynchronized fiber and event state. |
 | `WeakServerConnection` | `std::sync::Weak<ServerConnection>`. Upgrade it before replying and handle `None` after teardown. |
 
-For several application threads, construct a client on each thread. They may
-share a poll worker, or use separate workers if measurements justify the extra
-threads. Do not add an unsafe `Send` or `Sync` implementation to move a reactor,
-event or client handle around a compiler error.
+Several application threads may share one client, or construct one each for
+separate connections. Clients may share a poll worker, or use separate workers
+if measurements justify the extra threads. Do not add an unsafe `Send` or `Sync`
+implementation to move a reactor or event handle around a compiler error.
 
 ### Fibers share one thread
 
@@ -2824,11 +2906,14 @@ it must not assume that callbacks always run on a poll worker.
 
 ### Cross-thread completion and shutdown
 
-A standard Rust `Waker` for a reactor task may cross threads. Waking submits a
-ticket through a synchronized queue. The owning reactor drains that queue and
-polls the task; the waker does not transfer the reactor or execute the future on
-the waking thread. Reactor teardown closes wake admission, and later wakes do
-nothing.
+A standard Rust `Waker` for a stackless task may cross threads. On a thread with
+no `PollThread`, waking submits a ticket through the reactor's synchronized
+queue; on a `PollThread`, it pushes the task onto the thread's Lion runtime's
+cross-thread queue and wakes that thread through the epoll backend's eventfd.
+Either way the owning thread polls the task; the waker does not transfer the
+reactor or execute the future on the waking thread. Reactor teardown closes wake
+admission, and `PollThread` shutdown drops the tasks left on its runtime; later
+wakes run nothing.
 
 Use an ordinary channel to ask the server's owner to stop. `Server::do_shutdown`
 and `wait_for_shutdown` contain a mutex/condition-variable handshake, but they
@@ -2902,13 +2987,12 @@ The helper also has a comparison mode:
 scripts/run_microbench.sh --compare <commit-a> <commit-b>
 ```
 
-It creates detached worktrees, builds each revision and alternates runs. Its
-copy command has a limitation: when a revision already contains `bench/`, it
-can create `bench/bench/` and leave the old benchmark active. Inspect the
-benchmark files actually built on each side before claiming that a comparison
-used identical code. Keep the compiler, optimization settings, machine load
-and benchmark source consistent; report the spread across runs with the
-difference.
+It extracts each revision with `git archive`, plus the Lion submodule at the
+commit that revision records, replaces the revision's own `bench/` with the
+current one, and alternates runs. Before building each side it checks that the
+copied benchmark files match the current `bench/` and prints their digest. Keep
+the compiler, optimization settings and machine load consistent; report the
+spread across runs with the difference.
 
 The C++ companion describes the maintained `rpcbench` target and preserves the
 2026-08-29 and 2026-08-31 throughput tables. Those historical Rust TCP results

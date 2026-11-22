@@ -1,0 +1,11 @@
+{
+  "event": "planned_phase_boundary_stop",
+  "reason": "Run candidate foreground trials after the completed baseline120s sweep before deciding whether baseline960s runs remain useful",
+  "baseline_short_output": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2",
+  "precreated_next_output": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-960",
+  "mechanism": "The already-running shell uses a non-idempotent mkdir before its next phase; precreating that exact directory prevents the next workload from starting after the current coordinator completes",
+  "current_measurement_interrupted": false,
+  "next_phase_started": false,
+  "expected_shell_exit_after_short_phase": 1,
+  "interpretation": "Scheduling stop, not a failed workload or failed short-sweep verification"
+}

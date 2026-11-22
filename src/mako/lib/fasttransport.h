@@ -26,11 +26,14 @@
 #include <atomic>
 #include <netinet/in.h>
 #include <chrono>
+#include <functional>
 
 namespace mako { class SrpcRpcBackend; }
 
 void register_fasttransport_for_bench(std::function<int(int,int)>);
 void register_fasttransport_for_dbtest(std::function<int(int,int)>);
+void invoke_fasttransport_for_bench(int control, int value);
+void invoke_fasttransport_for_dbtest(int control, int value);
 void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
@@ -58,7 +61,7 @@ public:
                   uint8_t phy_port,
                   uint8_t numa_node,
                   int shardIdx,
-                  uint16_t id);
+                  uint16_t id, bool ephemeral_client = false);
 
     virtual ~FastTransport();
 

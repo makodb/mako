@@ -4,125 +4,139 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // bench.h first: its textual std/rcu/ticker includes must precede
 // any header that opens namespace std into the global namespace
 // (house pattern for import-std TUs; see server.cc).
 #include "benchmarks/bench.h"
 #include "ThreadPool.h"
-#include "storage/mbta_wrapper.hh"  // mbta_ordered_index (put_mbta cast)
+#include "replay_record.h"
 #include "lib/common.h"
+#include "lib/sharding_admission.h"
 
 import std;
 
-thread_local str_arena arena;
-thread_local void *buf = NULL;
-thread_local string obj_k;
-thread_local string obj_v;
+thread_local ThreadDBWrapperMbta::replay_attachment
+    ThreadDBWrapperMbta::replay_thread_attachment_;
+static thread_local std::vector<mako::ReplayRecordView> replay_records;
 
-// @unsafe: uses memcpy and reinterpret_cast with raw pointers
-void keystore_encode3_v2(std::string& s, uint32_t x) {
-    assert(s.length()>mako::EXTRA_BITS_FOR_VALUE);
-    memcpy ((void *)(s.data() + s.length() - mako::EXTRA_BITS_FOR_VALUE), &x, mako::BITS_OF_TT);
-    // for the later on takeovering from the old leader
-    mako::Node *header = reinterpret_cast<mako::Node *>((char*)(s.data() + s.length() - mako::BITS_OF_NODE));
-    header->data_size = 0;
+namespace {
+
+// @unsafe - Opt-in functional-test receipt after the selected backend consumed
+// a nonempty batch. This is not a payload digest: replay may compare-skip an
+// already newer version. Native integration tests check exact payload/metadata.
+void emit_protocol_replay_receipt(size_t processed_records,
+                                  uint32_t recovered_time_term) {
+    static const bool enabled = [] {
+        const char* value = getenv("MAKO_STO_PROTOCOL_RECEIPTS");
+        return value != nullptr && strcmp(value, "1") == 0;
+    }();
+    static thread_local bool emitted = false;
+    if (!enabled || emitted || processed_records == 0 || recovered_time_term == 0)
+        return;
+    const auto& config = BenchmarkConfig::getInstance();
+    fprintf(stderr,
+            "STO_PROTOCOL_REPLAY_RESULT {\"schema_version\":1,"
+            "\"engine\":\"%s\",\"shard\":%zu,"
+            "\"processed_records\":%zu,\"recovered_time_term\":%u}\n",
+            config.getStorageEngine().c_str(), config.getShardIndex(),
+            processed_records, recovered_time_term);
+    fflush(stderr);
+    emitted = true;
 }
 
-// @unsafe: uses memcpy with raw pointers
-inline uint32_t keystore_decode3_v2(const std::string& s){
-    uint32_t cid=0;
-    memcpy (&cid, (void *) (s.data () + s.length() - mako::EXTRA_BITS_FOR_VALUE), mako::BITS_OF_TT);
-    return cid;
+// @unsafe - Resolve every table before applying any record in the batch.
+void resolve_replay_tables(const std::vector<mako::ReplayRecordView>& records,
+                           abstract_db* db) {
+    if (db == nullptr) {
+        Panic("replay requires a database");
+    }
+    for (const auto& record : records) {
+        abstract_ordered_index* const index =
+            db->get_index_by_table_id(record.table_id);
+        if (index == nullptr) {
+            Panic("replay table_id is not registered: %u",
+                  static_cast<unsigned>(record.table_id));
+        }
+    }
 }
 
-// @unsafe: calls unsafe keystore_decode3_v2
-bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
-{
-    uint32_t commit_id_new = keystore_decode3_v2(newValue);
-    uint32_t commit_id_old = keystore_decode3_v2(oldValue);
-
-    return (commit_id_new%10 > commit_id_old%10) || (commit_id_new/10 > commit_id_old/10);
+// @unsafe - Calls the backend's source-metadata replay capability.
+size_t apply_replay_records(
+    const std::vector<mako::ReplayRecordView>& records,
+    size_t first_record_index, size_t record_count, uint32_t cid,
+    abstract_db* db) {
+    size_t put_ops = 0;
+    for (size_t record_index = first_record_index;
+         record_index < first_record_index + record_count; ++record_index) {
+        const auto& record = records[record_index];
+        // false means a definite conflict before publication. Fatal and
+        // indeterminate outcomes must escape, never enter the retry loop.
+        while (!db->replay_apply_record(
+            record.table_id, record.key, record.value, record.is_delete, cid)) {
+        }
+        ++put_ops;
+    }
+    return put_ops;
 }
 
-// @unsafe: uses reinterpret_cast and memcpy with raw pointers
-size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
+}  // namespace
+
+
+// @unsafe: parses and copies a raw replay buffer
+size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pairs */
                                                  uint32_t cid,  /* timestamp on current shard */
                                                  unsigned short int count,
                                                  unsigned int len,
                                                  abstract_db* db) {
-    size_t put_ops = 0;
+    // @unsafe - this function is exclusively replication-log row application.
+    // Admission is outside the OCC retry loop: a forbidden replay is not a
+    // transient transaction conflict and must not spin forever.
+    mako::ShardingReplicationReplay replay;
+    if (!mako::valid_replay_time_term(cid)) {
+        Panic("invalid replay source timestamp: %u", cid);
+    }
+    if (!mako::parse_replay_record_batch(
+            buffer, len, count, replay_records)) {
+        Panic("malformed replay record batch: count=%u len=%u",
+              static_cast<unsigned>(count), len);
+    }
+    resolve_replay_tables(replay_records, db);
+    db->observe_replay_timestamp(cid);
+    return apply_replay_records(
+        replay_records, 0, replay_records.size(), cid, db);
+}
 
-    unsigned short int *len_of_K=0, *len_of_V=0, *table_id=0;
-    size_t offset=0;
-    bool delete_true = false;
-    for(int i=0;i<count;i++) {
-        delete_true = false ;
-        // 1. len of K
-        len_of_K = reinterpret_cast<unsigned short int*>(buffer + offset);
-        offset += sizeof(unsigned short int) ;
-
-        // 2. content of K
-        obj_k.assign(buffer + offset, *len_of_K);
-        offset += *len_of_K;
-
-        // 3. len of V
-        len_of_V = reinterpret_cast<unsigned short int*>(buffer + offset);
-        offset += sizeof(unsigned short int) ;
-
-        // 4. content of V, add an extra sizeof(uint64) bytes
-        obj_v.resize(*len_of_V + mako::EXTRA_BITS_FOR_VALUE);
-        // reset next_ptr on followers (no multi-version)
-        mako::Node *next_ptr = reinterpret_cast<mako::Node *>((char*)(obj_v.data()+obj_v.length()-mako::BITS_OF_NODE));
-        next_ptr->data_size = 0;
-        memcpy((char*)obj_v.c_str(),buffer+offset, *len_of_V);
-        offset += *len_of_V;
-
-        // 5. table id
-        table_id = reinterpret_cast<unsigned short*>(buffer + offset);
-        offset += sizeof(unsigned short int) ;
-
-        if((*table_id) & (1 << 15)) {
-            delete_true = true;
-            *table_id = (*table_id) ^ (1 << 15);
+// @unsafe - Apply a fully validated log with original source metadata.
+size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
+                                abstract_db* db) {
+    // @unsafe - replication-log application only: one native replay admission
+    // for the whole validated log, outside every per-record OCC retry loop.
+    mako::ShardingReplicationReplay replay;
+    size_t next_record_index = 0;
+    for (const auto& transaction : log.transactions) {
+        if (transaction.first_record_index != next_record_index ||
+            transaction.record_count >
+                log.records.size() - next_record_index) {
+            Panic("validated replay log has an invalid record range");
         }
-
-        if (*table_id == 0 || *table_id > 10000) {
-            Warning("the table_id: %d", *table_id);
-            exit(1);
-        }
-
-        if (delete_true) {
-            obj_v.assign(1+mako::EXTRA_BITS_FOR_VALUE, 'B'); // special flags for DELETE
-            //value = string(1+mako::EXTRA_BITS_FOR_VALUE, 'B');  // special flags for DELETE
-        }
-
-        // 6. encode value + cid_v
-        keystore_encode3_v2 (obj_v, cid);
-        //keystore_encode3_v2 (value, cid);
-
-        // 7. put it into actual tables
-        int try_cnt = 1 ;
-        while (1) {
-            try {
-                //Warning("Info of KV: # of K: %d, # of V: %d, table_id: %d, is_deleted: %d,key:%s", *len_of_K, obj_v.length(), *table_id, delete_true,mako::printStringAsBit(obj_k).c_str());
-                void *txn = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
-                abstract_ordered_index *table_index = db->get_index_by_table_id(*table_id) ;
-                // put_mbta left the abstract interface (mbta-specific
-                // compare-and-put); replay tables are mbta by construction.
-                static_cast<mbta_ordered_index*>(table_index)
-                    ->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
-                auto ret = db->commit_txn_no_paxos(txn);// we should have ret>0, then retry
-                if (try_cnt > 1 && try_cnt % 20 == 0) {
-                    std::cout << "succeed at retry#:" << try_cnt << std::endl;
-                }
-                break ;
-            } catch (...) {   // if abort happens, replay it until it succeeds
-                try_cnt += 1 ;
-            }
-        }
-        put_ops ++;
+        next_record_index += transaction.record_count;
+    }
+    if (next_record_index != log.records.size()) {
+        Panic("validated replay log does not cover every record");
     }
 
+    resolve_replay_tables(log.records, db);
+    // Observe even an empty log's footer and transactions that compare/skip.
+    // Recovery must never admit a new coordinator below any recovered source.
+    db->observe_replay_timestamp(log.recovered_time_term);
+    size_t put_ops = 0;
+    for (const auto& transaction : log.transactions) {
+        put_ops += apply_replay_records(
+            log.records, transaction.first_record_index,
+            transaction.record_count, transaction.time_term, db);
+    }
+    emit_protocol_replay_receipt(put_ops, log.recovered_time_term);
     return put_ops;
 }

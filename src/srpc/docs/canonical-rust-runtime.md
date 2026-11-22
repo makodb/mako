@@ -1,58 +1,82 @@
 # Canonical Rust runtime and migration notes
 
-SRPC's Rust files own its runtime and protocol behavior. Cargo compiles those sources directly, and
-rusty-cpp generates the C++ named-module providers from the same files. The
+SRPC's Rust files own its protocol behavior and the SRPC-specific runtime: fibers, events, the
+`PollThread` driver, the epoll backend and the transport. Since the move onto Lion
+([lion-runtime-plan.md](dev/lion-runtime-plan.md)), the executor, the I/O reactor and the timer wheel
+are Lion's, compiled from the pinned `third-party/lion` crates. Cargo compiles SRPC's sources directly,
+and rusty-cpp generates the C++ named-module providers from the same files. The
 [translation audit](translation-parity-audit.md) records the earlier substitutes that prompted this
 repair. This document describes the changed implementation and public contracts. The historical
 validation below covers the earlier runtime repair based on SRPC `9bba8a7`, including the subsequent
 ThreadSanitizer and UndefinedBehaviorSanitizer passes recorded with `624c083` on 2026-09-11.
-Current facade-removal acceptance is tracked separately in
-[Rust lane independence](dev/facade-and-runtime-remaining.md).
+Facade-removal acceptance (2026-09-13) is tracked separately in
+[Rust lane independence](dev/facade-and-runtime-remaining.md); the Lion migration's measured results
+are in the plan's result notes.
 
 ## Implementation owners
 
-| Behavior | Canonical owner |
+| Behavior | Owner |
 | --- | --- |
-| Poll worker commands, jobs, fibers, timer/event waits, stackless task scheduling, and wake admission | [reactor/reactor.rs](../reactor/reactor.rs) |
-| Epoll interest flags, registration/error policy, and readiness dispatch | [reactor/epoll_wrapper.rs](../reactor/epoll_wrapper.rs) |
+| The executor (`block_on`, `spawn_local`, task wakes), the I/O reactor (`AsyncFd` registrations and readiness delivery to wakers), and the timer wheel | Lion: `lion-executor` and `lion-reactor` from the `third-party/lion` gitlink, with the Lion crates they bring (the timer wheel is `lion-timer-wheel`), compiled unmodified ([Cargo.toml](../Cargo.toml)) |
+| `PollThread` commands, jobs, the driver task and the `add_proxy` adapter; fibers; events, their ready queue, deadline map and pings; the per-thread `Reactor`, its stackless executor for threads with no `PollThread`, and that executor's wake admission | [reactor/reactor.rs](../reactor/reactor.rs) |
+| `SrpcEpollBackend`, the OS backend Lion runs on: registration flags, tokens, the eventfd interrupt, readiness mapping, timeout rounding, and `EINTR`/`EAGAIN` policy | [reactor/epoll_wrapper.rs](../reactor/epoll_wrapper.rs) |
 | Public fiber helpers and promise/future event behavior | [reactor/fiber.rs](../reactor/fiber.rs), [reactor/future.rs](../reactor/future.rs) |
 | Callback delivery converted into a suspended fiber receive | [rpc/fiber_channel.rs](../rpc/fiber_channel.rs) |
-| TCP connect policy, send buffering, framing, close, and accept policy | [rpc/tcp_channel.rs](../rpc/tcp_channel.rs) |
+| TCP connect policy, the reader, writer and accept tasks, send buffering and write-through, framing, close, and accept policy | [rpc/tcp_channel.rs](../rpc/tcp_channel.rs) |
 | RPC dispatch, request/reply ownership, completion, and teardown | [rpc/server.rs](../rpc/server.rs), [rpc/client.rs](../rpc/client.rs) |
 | Connection state, heartbeat, circuit breaker, and offline queue policy | [rpc/connection_state.rs](../rpc/connection_state.rs), [rpc/heartbeat.rs](../rpc/heartbeat.rs), [rpc/circuit_breaker.rs](../rpc/circuit_breaker.rs), [rpc/request_queue.rs](../rpc/request_queue.rs) |
 | Archives, serialization loops, payload holders, registry dispatch, and unpacking | [misc/serializable.rs](../misc/serializable.rs), [misc/any_message.rs](../misc/any_message.rs), [misc/serializable_envelope.rs](../misc/serializable_envelope.rs) |
 | Port search, I/O retry policy, and random range/selection policy | [rpc/utils.rs](../rpc/utils.rs), [misc/serializable.rs](../misc/serializable.rs), [misc/rand.rs](../misc/rand.rs) |
 
-Client, server, TCP, fiber helpers, and fiber futures use `crate::reactor` types and functions. Explicit
-canonical dependency anchors preserve the generated imports where the compiler needs them. There is
-no separate `rusty-rustc::srpc` scheduler, sleep recorder, yield counter, event implementation, RNG,
-archive implementation, or payload holder.
+Client, server, TCP, fiber helpers, and fiber futures use `crate::reactor` types and functions; the TCP
+transport also calls `lion_reactor` and `lion_executor` directly for its registrations and tasks.
+Explicit canonical dependency anchors preserve the generated imports where the compiler needs them.
+There is no separate `rusty-rustc::srpc` scheduler, sleep recorder, yield counter, event
+implementation, RNG, archive implementation, or payload holder.
 
 The reactor and its fiber/event state belong to one thread in both languages. Real native context
-switches suspend stackful handlers. The poll worker also pumps canonical stackless tasks. A foreign
-wake publishes through synchronized ingress and tickets; the owner thread polls the task and runs its
-completion. A retained waker owns its callback. Reactor teardown closes admission, so a later wake
-cannot dereference a destroyed context or resume a retired task.
+switches suspend stackful handlers. Each `PollThread` builds one Lion runtime over `SrpcEpollBackend`
+on its own thread and runs one driver task on it. Whenever something wakes the driver, it drains
+commands, runs ready jobs and calls `run_loop(false, true)`. It then sleeps on a Lion timer until the
+earliest deadline in the reactor's deadline map, or for at most a millisecond while a job waits to
+become ready. Fiber and event deadlines stay in that map; the driver's timer is SRPC's only use of
+Lion's timer wheel. On a `PollThread`, a stackless task still pending after its inline first poll
+becomes a Lion `spawn_local` task, and Lion's waker brings a wake from any thread back to the owner.
+On a thread with no `PollThread`, the `Reactor`'s own executor keeps the task: a foreign wake
+publishes through synchronized ingress and tickets, and the owner thread polls the task and runs its
+completion when it pumps `run_loop`. A retained waker owns its callback. Reactor teardown closes
+admission, so a later wake cannot dereference a destroyed context or resume a retired task.
+`PollThread` shutdown drops the tasks left on its Lion runtime on the poll thread itself.
 
 `FiberChannel` callbacks own a synchronized frame queue and closed flag. They do not retain a pointer
-to the wrapper or mutate its reactor event from another thread. Each receive creates its waiter on the
-owner thread, whose readiness predicate checks the shared state. Only one fiber may receive through a
-wrapper at a time.
+to the wrapper or mutate its reactor event from another thread: each publishes, then pings the
+wrapper's `EventPing`. Each receive creates its waiter on the owner thread and arms the ping with it;
+the owner re-tests the waiter's readiness predicate, which checks the shared state, on its next
+`run_loop` pass. Only one fiber may receive through a wrapper at a time.
 
 ## Permitted adapters and native kernels
 
-The canonical Cargo package has no production Rust dependencies. It uses Rust std
-and the C/assembly kernel described below. The `rusty-rustc` and `rusty-cpp-markers`
+The canonical Cargo package's production Rust dependencies are the Lion runtime
+crates, under an exact allowlist (docs/dev/lion-runtime-plan.md, D5): `lion-reactor`
+and `lion-executor` from the `third-party/lion` gitlink with `default-features =
+false`, the Lion crates they bring, the erased `vstd` library at the Verus revision
+Lion names, and the proc-macros' build-time closure. mio, flume, tokio, socket2,
+futures-task and pin-project-lite must stay out. Otherwise it uses Rust std and
+the C/assembly kernel described below. The `rusty-rustc` and `rusty-cpp-markers`
 packages have been removed. Standard Rust futures, contexts and wakers are polled
-by the canonical reactor; generated C++ uses the compiler's coroutine runtime.
-Scheduling and wake admission remain in canonical Rust.
+by Lion's executor on a `PollThread` and by the canonical `Reactor` on any other
+thread; generated C++ uses the compiler's coroutine runtime for the futures
+themselves. Fiber scheduling, events and the `Reactor`'s wake admission remain in
+canonical Rust.
 
 C++ type mappings, native declarations, module preambles and serialization
 forwarders remain build inputs for the generated C++ lane. Cargo does not compile
 or link the C++ runtime. The
-[Cargo independence check](../scripts/check_rust_independence.py) builds and tests
-a copied tree containing only Cargo inputs, canonical Rust and native C/assembly
-sources, with no C++ tool on its restricted tool path.
+[Cargo independence check](../scripts/check_rust_independence.py) enforces that
+allowlist on the manifest and on the resolved graph, then builds and tests a copied
+tree containing only Cargo inputs, canonical Rust, native C/assembly sources and
+the tracked files of the Lion crates in the closure, offline, with no C++ tool on
+its restricted tool path.
 
 The repaired C++ `Arc` adapter follows Rust's ownership contract: `get_mut` requires one strong
 owner and no `Weak` owners. If `new_cyclic` construction fails, it releases its temporary ownership;
@@ -78,17 +102,24 @@ of checking behavior that cannot be inferred from a function body alone.
 - `rpc/srpc_net.c`, `rpc/srpc_connect.c`, and `rpc/srpc_server.c` provide individual network and
   server platform operations.
 - `reactor/srpc_fiber.c` owns native stack/context resources and thread-local active context.
-- `reactor/srpc_epoll.c` performs epoll syscalls and copies platform event records into the fixed ABI.
+- `reactor/srpc_epoll.c` is six token-carrying leaves for `SrpcEpollBackend`: `srpc_epoll_create`,
+  `srpc_epoll_ctl_token`, `srpc_epoll_wait_tokens` and `srpc_epoll_eventfd_{create,signal,drain}`.
+  Each makes one system call and returns its result or `-errno`.
 
 The manifest selects `reactor/fiber_context_x86_64.S` or `reactor/fiber_context_aarch64.S` for the target
 architecture. The Rust build requires Linux, a supported architecture, a C compiler, and an archiver.
 Both build paths use the same fiber reuse configuration.
 
 OS layouts, errno capture, resource allocation, and context switching stay native. SRPC retry loops,
-port search, connect timeout/self-connect decisions, and epoll dispatch stay in canonical Rust. The
-small native event-record copy is ABI marshalling, with its layout declared in
-[reactor/srpc_epoll.h](../reactor/srpc_epoll.h). The old `epoll_platform_linux.cc` provider has been
-removed. No production inline-Rust DSL carrier remains.
+port search, connect timeout/self-connect decisions, and the epoll policy stay in canonical Rust: the
+registration flags, the reserved interrupt token 0, the mio-compatible readiness mapping, timeout
+rounding, and what `EINTR` and `EAGAIN` mean. Lion's reactor delivers the resulting readiness to task
+wakers. `srpc_epoll_ctl_token` stores a `u64` token in the kernel's event data, and
+`srpc_epoll_wait_tokens` copies each event's token and flags into two plain caller arrays (capacity 1
+to 100), so no event-record layout is shared with Rust or C++; see
+[reactor/srpc_epoll.h](../reactor/srpc_epoll.h). The fd-keyed seam (`srpc_epoll_open`/`_ctl`/`_wait`
+and `struct srpc_poll_event`) and the old `epoll_platform_linux.cc` provider have been removed. No
+production inline-Rust DSL carrier remains.
 
 [check_native_kernels.py](../scripts/check_native_kernels.py) checks the shared compilation manifest,
 its consumers, and the reviewed [native source/header inventory](../scripts/native-kernels.json).
@@ -164,7 +195,7 @@ intentional source and ABI changes; callers must rebuild against the generated i
 | Removed entry points | Migration and preserved behavior |
 | --- | --- |
 | `Client::set_valid` | This method did nothing. Use `connect`, `close`, and the connection-state queries to change or inspect the actual lifecycle. |
-| `ClientConnection::fd`, `content_size`, `poll_mode`, `handle_read`, `handle_write` | These were constant-returning compatibility hooks after TCP polling moved to `TcpConnection`. The canonical transport still performs descriptor polling, buffering, reads, and writes through its `Pollable` implementation. RPC clients should use the channel/request APIs. |
+| `ClientConnection::fd`, `content_size`, `poll_mode`, `handle_read`, `handle_write` | These were constant-returning compatibility hooks after TCP polling moved to `TcpConnection`. The canonical transport performs descriptor polling, buffering, reads, and writes in its reader and writer tasks on the PollThread (`rpc/tcp_channel.rs`). RPC clients should use the channel/request APIs. |
 | `ClientConnection::apply_keepalive_options` | The unused empty hook is removed. Keepalive configuration now reaches the real TCP socket through `Client::set_keepalive` and `ChannelConnectionBase::set_keepalive`, as described below. |
 | `clientconn_fiber_channel_ptr`, `sconn_proxy_ptr` | Unlocked raw-pointer access to replaceable channel slots is removed. Connection operations retain shared ownership through each call. `clientconn_run_recv_loop` snapshots its channel owner; `clientconn_recv_job_entry` now receives an owned `Arc<Box<FiberChannel>>` explicitly. |
 | `FiberChannel::on_inbound_frame`, `on_inbound_closed`, `signal_pending_recv`, `wait_for_signal` | Their raw-receiver callback/wait plumbing is replaced by owned queue/closed state and an owner-local waiter. Public `recv_frame`, `send_frame`, and `close` remain and take shared receivers. |
@@ -213,13 +244,18 @@ channels report that this capability is unsupported.
 for an fd that was not registered. Rejected commands after shutdown do not increment it.
 This is a synchronized request counter, not a count of successful epoll removals.
 
-TCP connection and listener registrations acquire a shared socket owner before enqueue and
-retain it through epoll removal. Logical close immediately clears the transport's socket slot
-and shuts down the socket; the registration prevents physical descriptor reuse until unregister.
-The worker rejects already-closed queued registrations and cancels pending removals when retiring
-an old registration. Rust and C++ regressions check these ownership boundaries and require actual
-epoll readiness and frame delivery after reuse. TCP write-interest updates stay on the connection's
-atomic pending flag so a delayed raw-descriptor command cannot target a replacement socket.
+A TCP connection's reader and writer tasks, and a listener's accept task, clone a shared socket
+owner (a descriptor lease) when they start on the `PollThread`, and release it only after their
+Lion `AsyncFd` registration has been dropped. Logical close immediately clears the transport's
+socket slot and shuts down the socket; the lease prevents physical descriptor reuse until Lion has
+deregistered the descriptor. A connection closed before its tasks start has no descriptor left,
+and no tasks start for it. A send wakes the connection's writer task through a waker kept under
+the outbound buffer's mutex, so no raw-descriptor command is involved. `add_proxy` registrations
+keep the older rules in the driver's adapter: it rejects an already-closed incoming proxy, retires
+a closed old registration before registering a reused fd, and cancels a pending removal when it
+closes a registration. `tcp_transport_rust` checks the TCP lease and close boundaries with real
+sockets. The earlier fd-reuse regressions were deleted with the pre-Lion worker they drove, and
+the adapter's reuse and cancellation branches have no direct test (plan item S7b).
 
 Close notification has its own exactly-once latch. A flush failure can mark a connection closed
 before teardown; the later close still delivers its callback and permits callback reentry.
@@ -229,7 +265,7 @@ before teardown; the later close still delivers its callback and permits callbac
 The Rust runtime tests link the actual native kernels. They exercise timer suspension, stackful
 handler overlap, owner-thread wake completion, real TCP success/failure, callback reentry, concurrent
 close, and retained wake lifetime. Useful focused tests include `rpc_runtime_rust`,
-`stackless_wake_pollthread_rust`, `task_waker_rust`, `fiber_channel_rust`, `epoll_wrapper_rust`,
+`stackless_wake_pollthread_rust`, `task_waker_rust`, `fiber_channel_rust`, `epoll_backend_rust`, `tcp_transport_rust`,
 `server_concurrency_rust`, `manager_concurrency_rust`, `client_replay_rust`,
 `client_runtime_ownership_rust`, `tcp_keepalive_rust`, and `pollthread_remove_count_rust`. The client concurrency tests cover cloned
 channel ownership and synchronized future state. Serialization tests require recovered payloads and

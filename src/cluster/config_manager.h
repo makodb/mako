@@ -43,8 +43,8 @@ export namespace janus {
  *   epoch                   — global speculative epoch number (uint64)
  *   node/<site>/addr        — node network address
  *   node/<site>/status      — alive, dead, decommissioning
- *   sharding/mode           — default routing mode "hash" or "range"
- *   sharding/policy/<table> — opaque serialized TableShardingPolicy bytes
+ *   sharding/mode           — stored mode label (metadata only)
+ *   sharding/policy/<table> — opaque policy bytes (persistence only, not routing)
  *   sharding/policy_tables  — comma-separated list of tables with a policy
  *
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the
@@ -94,8 +94,8 @@ impl ConfigManager {
         let mut result: std::string = std::string("");
         let mut i: usize = 0;
         while i < (*replicas).size() {
-            if i > 0 { result = result + std::string(","); }
-            result = result + (*replicas)[i];
+            if i > 0 { unsafe { result.append(std::string(",")); } }
+            unsafe { result.append((*replicas)[i]); }
             i = i + 1;
         }
         result
@@ -386,7 +386,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=11b2ff6cf88966c14f5e052f80aab7443884da2482b848ff7efe970938c6d3a2*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=c0afb41e1c28b29a0b5c6b031fdfbad00c217a78713a9f39d1c6dd17d80c01f2*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -430,9 +430,15 @@ inline std::string ConfigManager::join_replicas(const std::vector<std::string>& 
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((replicas)).size()) {
         if (rusty::detail::deref_if_pointer_like(i) > 0) {
-            result = rusty::detail::deref_if_pointer_like(result) + std::string(",");
+            // @unsafe
+            {
+                result.append(std::string(","));
+            }
         }
-        result = rusty::detail::deref_if_pointer_like(result) + (replicas)[i];
+        // @unsafe
+        {
+            result.append((replicas)[i]);
+        }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
     return std::move(result);
@@ -499,7 +505,7 @@ inline bool ConfigManager::set_shard_count(uint32_t count) {
 
 inline std::vector<std::string> ConfigManager::get_shard_replicas(uint32_t shard_id) {
     std::string value = std::string("");
-    if (!cm_kv_absent(((*this)).kv)) {
+    if (rusty::detail::rust_not(cm_kv_absent(((*this)).kv))) {
         const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replicas");
         rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
         if (vopt.is_some()) {
@@ -523,7 +529,7 @@ inline std::string ConfigManager::get_shard_leader(uint32_t shard_id) {
         return std::string("");
     }
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/leader");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
@@ -537,7 +543,7 @@ inline std::string ConfigManager::get_shard_status(uint32_t shard_id) {
         return std::string("");
     }
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/status");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
@@ -717,7 +723,7 @@ inline std::string ConfigManager::get_node_addr(const std::string& site) {
         return std::string("");
     }
     const std::string key = ((std::string("node/") + site)) + std::string("/addr");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
@@ -731,7 +737,7 @@ inline std::string ConfigManager::get_node_status(const std::string& site) {
         return std::string("");
     }
     const std::string key = ((std::string("node/") + site)) + std::string("/status");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
@@ -745,7 +751,7 @@ inline std::string ConfigManager::get_sharding_mode() {
         return std::string("");
     }
     const std::string key = std::string("sharding/mode");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
@@ -762,13 +768,13 @@ inline std::string ConfigManager::get_sharding_policy(const std::string& table) 
         return std::string("");
     }
     const std::string key = std::string("sharding/policy/") + table;
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
     return vopt.unwrap_or(std::string(""));
 }
 
 inline std::vector<std::string> ConfigManager::list_sharding_policy_tables() {
     std::string value = std::string("");
-    if (!cm_kv_absent(((*this)).kv)) {
+    if (rusty::detail::rust_not(cm_kv_absent(((*this)).kv))) {
         const std::string key = std::string("sharding/policy_tables");
         rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
         if (vopt.is_some()) {
@@ -852,7 +858,5 @@ inline bool ConfigManager::delete_sharding_policy(const std::string& table) {
     return true;
 }
 /*RUSTYCPP:GEN-END id=config_manager.1*/
-/*RUSTYCPP:GEN-BEGIN*/
-/*RUSTYCPP:GEN-END*/
 
 }  // namespace janus

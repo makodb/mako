@@ -1,0 +1,9 @@
+
+running 4 tests
+test tests::commit_fence_exact_generation_does_not_bridge_worker_reuse ... ok
+test tests::commit_fence_read_only_closer_drains_an_enrolled_writer ... ok
+test tests::commit_fence_readers_take_independent_cuts_and_drain_the_same_writer ... ok
+test tests::commit_fence_writer_after_validation_cut_is_not_blocked ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 201 filtered out; finished in 0.00s
+

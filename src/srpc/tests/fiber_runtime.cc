@@ -46,79 +46,98 @@ TEST(FiberRuntimeTest, yield) {
   ASSERT_EQ(x, 3);
 }
 
-rusty::Rc<Fiber> xxx() {
-    int x;
-    auto fiber1 = Fiber::create_run([&x] () {
-        x = 1;
+// xxx() returns while its fiber is still paused, so the fiber must not
+// capture a reference to xxx()'s locals. It holds its own share of `x`.
+rusty::Rc<Fiber> xxx(std::shared_ptr<int> x) {
+    auto fiber1 = Fiber::create_run([x] () {
+        *x = 1;
         Fiber::current_fiber().unwrap()->yield_();
     });
     return fiber1;
 }
 
+// A fiber outlives the frame that created it and can then run to completion.
 TEST(FiberRuntimeTest, destruct) {
-    rusty::Rc<Fiber> c = xxx();
+    auto x = std::make_shared<int>(0);
+    rusty::Rc<Fiber> c = xxx(x);
+    ASSERT_EQ(*x, 1);             // ran up to its yield inside create_run
+    ASSERT_FALSE(c->finished());  // and is paused now that xxx() has returned
     c->continue_();
+    ASSERT_TRUE(c->finished());
 }
 
-// Test destroying a paused fiber (one that has yielded but not finished)
+// Test dropping the only caller handle to a paused fiber (one that has
+// yielded but not finished). Dropping the handle must not resume or finish
+// the fiber. The fiber is not destroyed either: the reactor's fibers_
+// registry also owns it (docs/srpc-book.md, "Abandoning a paused fiber").
+// The fiber therefore outlives this test, so its state is shared and
+// captured by value, never by reference to this frame.
 TEST(FiberRuntimeTest, destroy_paused_fiber) {
     std::cout << "=== Testing destruction of paused fiber ===" << std::endl;
 
-    int destructor_called = 0;
-    int step = 0;
+    struct State {
+        int destructor_called = 0;
+        int step = 0;
+    };
+    auto state = std::make_shared<State>();
 
     {
-        auto fiber = Fiber::create_run([&step, &destructor_called] () {
-            std::cout << "Fiber: Starting execution, step=" << step << std::endl;
-            step = 1;
+        auto fiber = Fiber::create_run([state] () {
+            std::cout << "Fiber: Starting execution, step=" << state->step << std::endl;
+            state->step = 1;
 
             std::cout << "Fiber: About to yield (step=1)" << std::endl;
             Fiber::current_fiber().unwrap()->yield_();
 
-            // This should NOT be reached if we destroy the fiber
-            std::cout << "Fiber: Resumed after first yield, step=" << step << std::endl;
-            step = 2;
+            // This should NOT be reached: nothing resumes the fiber
+            std::cout << "Fiber: Resumed after first yield, step=" << state->step << std::endl;
+            state->step = 2;
 
             std::cout << "Fiber: About to yield again (step=2)" << std::endl;
             Fiber::current_fiber().unwrap()->yield_();
 
             // This should definitely NOT be reached
-            std::cout << "Fiber: Final execution, step=" << step << std::endl;
-            step = 3;
-            destructor_called = 1;
+            std::cout << "Fiber: Final execution, step=" << state->step << std::endl;
+            state->step = 3;
+            state->destructor_called = 1;
         });
 
-        ASSERT_EQ(step, 1);  // Fiber should have run until first yield
-        std::cout << "Main: Fiber yielded with step=" << step << std::endl;
+        ASSERT_EQ(state->step, 1);  // Fiber should have run until first yield
+        std::cout << "Main: Fiber yielded with step=" << state->step << std::endl;
 
         // Now we exit the scope WITHOUT calling Continue()
         // The fiber is still paused (has not finished execution)
-        std::cout << "Main: About to destroy paused fiber" << std::endl;
+        std::cout << "Main: About to drop the handle to the paused fiber" << std::endl;
     }
 
-    // After scope exit, the Rc<Fiber> is destroyed
-    std::cout << "Main: Fiber destroyed, step=" << step << std::endl;
-    std::cout << "Main: destructor_called=" << destructor_called << std::endl;
+    // After scope exit, the caller's Rc<Fiber> handle is destroyed
+    std::cout << "Main: Handle dropped, step=" << state->step << std::endl;
+    std::cout << "Main: destructor_called=" << state->destructor_called << std::endl;
 
-    // The fiber should have been destroyed while paused
-    ASSERT_EQ(step, 1);  // Should still be 1, never reached step 2 or 3
-    ASSERT_EQ(destructor_called, 0);  // Destructor logic never ran
+    // Dropping the handle neither resumed nor finished the paused fiber
+    ASSERT_EQ(state->step, 1);  // Should still be 1, never reached step 2 or 3
+    ASSERT_EQ(state->destructor_called, 0);  // Destructor logic never ran
+    // The registry still owns the paused fiber, and so its closure still
+    // holds the second share of `state`.
+    EXPECT_EQ(state.use_count(), 2);
 
     std::cout << "=== Test completed successfully ===" << std::endl;
 }
 
-// Test destroying a paused fiber that allocates resources
+// Test dropping the handle to a paused fiber that allocates resources
 TEST(FiberRuntimeTest, destroy_paused_fiber_with_cleanup) {
     std::cout << "=== Testing destruction of paused fiber with cleanup ===" << std::endl;
 
-    bool* heap_flag = new bool(false);
-    int cleanup_step = 0;
+    // Shared rather than a raw new/delete pair: the paused fiber outlives
+    // this test and keeps its share of both values.
+    auto heap_flag = std::make_shared<bool>(false);
+    auto cleanup_step = std::make_shared<int>(0);
 
     {
-        auto fiber = Fiber::create_run([&cleanup_step, heap_flag] () {
+        auto fiber = Fiber::create_run([cleanup_step, heap_flag] () {
             std::cout << "Fiber: Allocating local resource" << std::endl;
             int local_var = 42;
-            cleanup_step = 1;
+            *cleanup_step = 1;
 
             std::cout << "Fiber: local_var=" << local_var << ", yielding..." << std::endl;
             Fiber::current_fiber().unwrap()->yield_();
@@ -126,19 +145,21 @@ TEST(FiberRuntimeTest, destroy_paused_fiber_with_cleanup) {
             // If this runs, it means the fiber was properly resumed
             std::cout << "Fiber: Resumed! Setting heap flag" << std::endl;
             *heap_flag = true;
-            cleanup_step = 2;
+            *cleanup_step = 2;
         });
 
-        ASSERT_EQ(cleanup_step, 1);
+        ASSERT_EQ(*cleanup_step, 1);
         ASSERT_FALSE(*heap_flag);
-        std::cout << "Main: Destroying paused fiber with local_var still on stack" << std::endl;
+        std::cout << "Main: Dropping handle to paused fiber with local_var still on stack" << std::endl;
     }
 
-    std::cout << "Main: After destruction, cleanup_step=" << cleanup_step << std::endl;
-    ASSERT_EQ(cleanup_step, 1);  // Should not have progressed
+    std::cout << "Main: After handle drop, cleanup_step=" << *cleanup_step << std::endl;
+    ASSERT_EQ(*cleanup_step, 1);  // Should not have progressed
     ASSERT_FALSE(*heap_flag);     // Should not have been set
+    // The paused fiber, still owned by the registry, holds its shares.
+    EXPECT_EQ(cleanup_step.use_count(), 2);
+    EXPECT_EQ(heap_flag.use_count(), 2);
 
-    delete heap_flag;
     std::cout << "=== Test completed successfully ===" << std::endl;
 }
 TEST(FiberRuntimeTest, timeout) {
@@ -156,9 +177,15 @@ TEST(FiberRuntimeTest, timeout) {
   Reactor::get_reactor()->run_loop(true, true);
 }
 
+// A WaitAny over a 10s timer and an IntEvent resolves through the IntEvent,
+// long before the timer. Both fibers capture `inte` by value. Before this
+// fix they held a reference into this frame, and nothing checked that
+// fiber1 finished. It finished only because fiber2's create_run happens to
+// make a reactor pass.
 TEST(FiberRuntimeTest, orevent) {
   auto inte = create_sp_int_event(1);
-  auto fiber1 = Fiber::create_run([&inte](){
+  auto done = std::make_shared<bool>(false);
+  auto fiber1 = Fiber::create_run([inte, done]() mutable {
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
     auto sp_e1 = create_sp_timeout_event(timeout);
@@ -166,10 +193,18 @@ TEST(FiberRuntimeTest, orevent) {
     sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);
+    *done = true;
   });
-  auto fiber2 = Fiber::create_run([&inte](){
+  auto fiber2 = Fiber::create_run([inte](){
     inte->set(1);
   });
+  auto reactor = Reactor::get_reactor();
+  const uint64_t deadline = Time::now(true) + 5 * 1000000;
+  while (!*done && Time::now(true) < deadline) {
+    reactor->run_loop(false, true);
+    Time::sleep(100);
+  }
+  ASSERT_TRUE(*done);
 }
 
 TEST(SquareRootTest, PositiveNos) {

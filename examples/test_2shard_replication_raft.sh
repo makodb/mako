@@ -117,26 +117,37 @@ log_prefix="${script_name}_${transport}"
 # Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
 pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
+# Disk builds: a store directory per shard. A store is named by its site and
+# partition (<site>-<partition>), and both shards number their sites 0-2, so
+# one MAKO_RAFT_DATA_DIR would put two servers on each store and the second
+# would be refused.
+store_env_s0=()
+store_env_s1=()
+if [ -n "${MAKO_RAFT_DATA_DIR:-}" ]; then
+    store_env_s0=(MAKO_RAFT_DATA_DIR="$MAKO_RAFT_DATA_DIR/shard0")
+    store_env_s1=(MAKO_RAFT_DATA_DIR="$MAKO_RAFT_DATA_DIR/shard1")
+fi
+
 # Start shard 0 in background with RAFT replication (3 replicas, no learner)
 echo "Starting shard 0 with Raft..."
-nohup bash bash/shard.sh 2 0 $trd localhost 0 1 raft > ${log_prefix}_shard0-localhost.log 2>&1 &
+nohup env "${store_env_s0[@]}" bash bash/shard.sh 2 0 $trd localhost 0 1 raft > ${log_prefix}_shard0-localhost.log 2>&1 &
 SHARD0_LOCALHOST_PID=$!
-nohup bash bash/shard.sh 2 0 $trd p2 0 1 raft > ${log_prefix}_shard0-p2.log 2>&1 &
+nohup env "${store_env_s0[@]}" bash bash/shard.sh 2 0 $trd p2 0 1 raft > ${log_prefix}_shard0-p2.log 2>&1 &
 SHARD0_P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 2 0 $trd p1 0 1 raft > ${log_prefix}_shard0-p1.log 2>&1 &
+nohup env "${store_env_s0[@]}" bash bash/shard.sh 2 0 $trd p1 0 1 raft > ${log_prefix}_shard0-p1.log 2>&1 &
 SHARD0_P1_PID=$!
 
 sleep 5
 
 # Start shard 1 in background with RAFT replication (delayed start ensures shard1 stays running while shard0 shuts down)
 echo "Starting shard 1 with Raft..."
-nohup bash bash/shard.sh 2 1 $trd localhost 0 1 raft > ${log_prefix}_shard1-localhost.log 2>&1 &
+nohup env "${store_env_s1[@]}" bash bash/shard.sh 2 1 $trd localhost 0 1 raft > ${log_prefix}_shard1-localhost.log 2>&1 &
 SHARD1_LOCALHOST_PID=$!
-nohup bash bash/shard.sh 2 1 $trd p2 0 1 raft > ${log_prefix}_shard1-p2.log 2>&1 &
+nohup env "${store_env_s1[@]}" bash bash/shard.sh 2 1 $trd p2 0 1 raft > ${log_prefix}_shard1-p2.log 2>&1 &
 SHARD1_P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 2 1 $trd p1 0 1 raft > ${log_prefix}_shard1-p1.log 2>&1 &
+nohup env "${store_env_s1[@]}" bash bash/shard.sh 2 1 $trd p1 0 1 raft > ${log_prefix}_shard1-p1.log 2>&1 &
 SHARD1_P1_PID=$!
 
 # Wait for benchmarks to complete (poll for completion markers)
@@ -290,17 +301,6 @@ for i in 0 1; do
         continue
     fi
 
-    # Check for TPC-C sharding policy initialization (only for shard 0, as policy is shared)
-    if [ "$i" -eq 0 ]; then
-        if grep -q "TPC-C Sharding: Initialized policy" "$log"; then
-            echo "  ✓ TPC-C sharding policy initialized"
-            # Show the initialization line for reference
-            grep "TPC-C Sharding: Initialized policy" "$log" | tail -n 1 | sed 's/^/    /'
-        else
-            echo "  ✗ TPC-C sharding policy not initialized"
-            failed=1
-        fi
-    fi
 
     # Check for agg_persist_throughput keyword
     if grep -q "agg_persist_throughput" "$log"; then

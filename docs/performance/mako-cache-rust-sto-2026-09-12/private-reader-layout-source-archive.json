@@ -1,0 +1,10 @@
+{
+  "kind": "actual matched-layout compile source archive",
+  "archive": "/var/tmp/mako-engine-perf-20260912.trsFuD/source-reader-layout-matched.tar.gz",
+  "sha256": "249d60fa8966887e16714c67a5757ed0d009e9a57b5adf5152fe67e0fefe9241",
+  "source_file_count": 254,
+  "source_hash_comparison": "All archive file contents match private-reader-layout-build/verification.json source_sha256 exactly.",
+  "independent_owner_archive": "/var/tmp/mako-reader-layout.XBkX12/matched-source.tar.gz",
+  "independent_owner_archive_sha256": "1d9f9e96cc08cf7754022aca14c5b373b858c531133b69496c174c3afe774163",
+  "notes": "Both archives preserve source, not compiled probe modules or build caches. Container archive hashes differ; per-file source identities are authoritative. Original baseline and removed-field reader source archives are recorded separately in private-reader-fence-build.json."
+}

@@ -1,6 +1,8 @@
 #ifndef _SPINBARRIER_H_
 #define _SPINBARRIER_H_
 
+#include <atomic>
+
 #include "amd64.h"
 #include "macros.h"
 #include "util.h"
@@ -23,18 +25,21 @@ public:
 
   ~spin_barrier()
   {
-    ALWAYS_ASSERT(n == 0);
+    ALWAYS_ASSERT(n.load(std::memory_order_relaxed) == 0);
   }
 
   void
   count_down()
   {
-    // written like this (instead of using __sync_fetch_and_add())
-    // so we can have assertions
+    // Every decrement is a release RMW. A waiter that observes zero with
+    // acquire ordering also observes every participant's setup through the
+    // resulting release sequence.
     for (;;) {
-      size_t copy = n;
+      size_t copy = n.load(std::memory_order_relaxed);
       ALWAYS_ASSERT(copy > 0);
-      if (__sync_bool_compare_and_swap(&n, copy, copy - 1))
+      if (n.compare_exchange_weak(copy, copy - 1,
+                                  std::memory_order_release,
+                                  std::memory_order_relaxed))
         return;
     }
   }
@@ -42,12 +47,12 @@ public:
   void
   wait_for()
   {
-    while (n > 0)
+    while (n.load(std::memory_order_acquire) > 0)
       nop_pause();
   }
 
 private:
-  volatile size_t n;
+  std::atomic<size_t> n;
 };
 
 #endif /* _SPINBARRIER_H_ */

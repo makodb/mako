@@ -42,8 +42,12 @@ Welcome to the Mako documentation.
   - [Client-Server Roadmap](architecture/client-server-roadmap.md)
 - **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
+- **[Rust STO Paper / Whitepaper](architecture/rust-sto.md)** - Paper-style narrative following the original EuroSys 2016 STO paper, plus current implementation contracts and evaluation
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
+- **[Sharding and Range Migration Design](architecture/sharding-migration.md)** - End-to-end protocol, transaction integration, storage requirements, recovery, and implementation status
+  - [Live Native Sharding](mako-book.md#data-migration-protocol-live-native-sharding) - Production integration and operational boundaries
+  - [Specification and Verification](../tla/mako/README.md#native-rust-correspondence) - Ghost-log correspondence, guarantees, and trusted embedding contracts
 
 ---
 
@@ -101,6 +105,7 @@ Welcome to the Mako documentation.
 ## Performance
 
 - **[Profiling & Plotting](performance/profiling.md)** - CPU profiling, memory analysis, and plotting
+- **[Rust STO TPC-C PGO](performance/sto-tpcc-rust-pgo.md)** - Reproducible two-pass Rust-staticlib PGO build
 - **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
   - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
 
@@ -138,18 +143,15 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 
 ### Raft Migration (Paxos to Raft)
 
-- **[Raft Migration Overview](migration/raft/overview.md)** - Replace Paxos with Raft
-- **[Architecture Analysis](migration/raft/architecture-analysis.md)** - Architecture for Raft
-- **[Complete Architecture](migration/raft/complete-architecture.md)** - Complete Raft architecture
-- **[Mako Explained](migration/raft/mako-explained.md)** - Mako explanation
-- **[Raft Explained](migration/raft/raft-explained.md)** - Raft protocol explanation
-- **[Raft Helper](migration/raft/raft-helper.md)** - Raft helper implementation
-- **[Main Helper Implementation](migration/raft/main-helper-impl.md)** - Implementation details
-- **[Migration Status](migration/raft/status.md)** - Migration status tracking
+- **[Git History](migration/raft/git-history.md)** - Every commit of the Raft conversion, verification and disk persistence work
 
 ---
 
 ## Development Plans
+
+### Rust transaction cache
+
+- **[Silo-to-Mako transaction-cache roadmap](plans/rust-mako-transaction-cache.md)** — keep C++ Silo behind a C ABI first, add local transactional durability, port distributed Mako, then replace the local engine with native Rust.
 
 ### Config Node System
 
@@ -165,10 +167,6 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 | [Raft Integration](plans/log-persistence/phase1_3_raft_integration.md) | [Uncommitted Entries](plans/log-persistence/phase2_3_uncommitted_entries.md) | [Snapshot Storage](plans/log-persistence/phase3_3_snapshot_storage.md) | |
 | [Paxos Integration](plans/log-persistence/phase1_4_paxos_integration.md) | [State Machine Recovery](plans/log-persistence/phase2_4_state_machine_recovery.md) | [Log Compaction](plans/log-persistence/phase3_4_log_compaction.md) | |
 
-### Range Sharding
-
-- [Task 1](plans/range-sharding/task1.md) | [Task 2](plans/range-sharding/task2.md) | [Task 3](plans/range-sharding/task3.md) | [Task 4](plans/range-sharding/task4.md)
-
 ### Client-Server Unification
 
 - [Unify Interface](plans/client-server/unify_client_server_interface_plan.md)
@@ -178,7 +176,6 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 - [Evaluation](plans/client-server/client_server_evaluation.md)
 - [Test Client Service](plans/client-server/test_client_service_plan.md)
 - [Legacy API Removal](plans/client-server/legacy_api_removal_plan.md)
-- [Startup Tests](plans/client-server/task8_4_startup_tests_plan.md)
 
 ### Issue Fixes
 
@@ -255,4 +252,4 @@ Legacy documentation kept for reference:
 
 ---
 
-*Last updated: April 2026*
+*Last updated: August 2026*

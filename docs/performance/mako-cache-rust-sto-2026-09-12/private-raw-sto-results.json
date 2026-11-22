@@ -1,0 +1,1178 @@
+[
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 172032,
+          "VmRSS": 172032,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0010464377701282501
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.051372563932091
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.10173838213086128
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.1520701888948679
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.2026962391100824
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.2532360050827265
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.30354496091604233
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.35387646686285734
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.40427978709340096
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r1-w1-engine.ga9yourl",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1895.75,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4298.479,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 251724516,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1041392.409,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "engine",
+    "repetition": 1,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 217088,
+          "VmRSS": 217088,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.00114802410826087
+        },
+        {
+          "VmHWM": 14565376,
+          "VmRSS": 14565376,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.05148656107485294
+        },
+        {
+          "VmHWM": 14565376,
+          "VmRSS": 14565376,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.10183730768039823
+        },
+        {
+          "VmHWM": 14565376,
+          "VmRSS": 14565376,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.15214351285248995
+        },
+        {
+          "VmHWM": 14565376,
+          "VmRSS": 14565376,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.2024541487917304
+        },
+        {
+          "VmHWM": 14565376,
+          "VmRSS": 14565376,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.25281174574047327
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.30315452301874757
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r1-w1-raw-sto.vmhkjqil",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1489.736,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3516.505,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 196813875,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1331938.615,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "raw-sto",
+    "repetition": 1,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 147456,
+          "VmRSS": 147456,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001187825109809637
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.05180514510720968
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.1021204311400652
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.1524290358647704
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.20277787325903773
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.25308840814977884
+        },
+        {
+          "VmHWM": 16879616,
+          "VmRSS": 16879616,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.3033975432626903
+        },
+        {
+          "VmHWM": 16994304,
+          "VmRSS": 16994304,
+          "VmSize": 88723456,
+          "elapsed_seconds": 0.3537473911419511
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.40408799704164267
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r1-w4-engine.wpea9kud",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1953.433,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4308.853,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 261271340,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4013360.21,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "engine",
+    "repetition": 1,
+    "workers": 4
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 262144,
+          "VmRSS": 262144,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.011905444785952568
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.062267153058201075
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.11261485004797578
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.1629464360885322
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.21327368216589093
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.26362017914652824
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.3139581447467208
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r1-w4-raw-sto.e1eqd9ck",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1591.985,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3527.666,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 211436967,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4959284.154,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "raw-sto",
+    "repetition": 1,
+    "workers": 4
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 163840,
+          "VmRSS": 163840,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0010643303394317627
+        },
+        {
+          "VmHWM": 14569472,
+          "VmRSS": 14569472,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.05140121700242162
+        },
+        {
+          "VmHWM": 14569472,
+          "VmRSS": 14569472,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.10175940440967679
+        },
+        {
+          "VmHWM": 14569472,
+          "VmRSS": 14569472,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.15209206007421017
+        },
+        {
+          "VmHWM": 14569472,
+          "VmRSS": 14569472,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.20242500631138682
+        },
+        {
+          "VmHWM": 14569472,
+          "VmRSS": 14569472,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.25280477525666356
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.30313923116773367
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r2-w1-raw-sto.isvhpvu5",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1496.429,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3516.479,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 197383081,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1328097.619,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "raw-sto",
+    "repetition": 2,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 147456,
+          "VmRSS": 147456,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012413682416081429
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.05157695431262255
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.1018929691053927
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.15224443608894944
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.20255070133134723
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.25286073610186577
+        },
+        {
+          "VmHWM": 14475264,
+          "VmRSS": 14475264,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.3032146133482456
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.3535537892021239
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r2-w1-engine.z9c3mpek",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1845.85,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4298.479,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 243538222,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1076397.774,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "engine",
+    "repetition": 2,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 155648,
+          "VmRSS": 155648,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012029060162603855
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.05155125306919217
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.10186730837449431
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.15217609331011772
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.20252421032637358
+        },
+        {
+          "VmHWM": 16769024,
+          "VmRSS": 16769024,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.25283125415444374
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.30317283095791936
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r2-w4-raw-sto.5lyahkeh",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1588.206,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3526.298,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 210741653,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4975646.651,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "raw-sto",
+    "repetition": 2,
+    "workers": 4
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 147456,
+          "VmRSS": 147456,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0010428689420223236
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.05150646064430475
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.10184646677225828
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.1521794726140797
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.20254800096154213
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.25287714693695307
+        },
+        {
+          "VmHWM": 16830464,
+          "VmRSS": 16830464,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.3031575200147927
+        },
+        {
+          "VmHWM": 16945152,
+          "VmRSS": 16945152,
+          "VmSize": 88723456,
+          "elapsed_seconds": 0.35350388661026955
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.4038367928005755
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r2-w4-engine.q99syyqy",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1936.378,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4312.352,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 257316853,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4075038.179,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "engine",
+    "repetition": 2,
+    "workers": 4
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 143360,
+          "VmRSS": 143360,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011039921082556248
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.05144534818828106
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.10178563417866826
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.1521436208859086
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.20245375530794263
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.2527648899704218
+        },
+        {
+          "VmHWM": 14438400,
+          "VmRSS": 14438400,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.3031214070506394
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.353463483043015
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r3-w1-engine.47mvowyy",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1855.218,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4298.48,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 244856521,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1070602.486,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "engine",
+    "repetition": 3,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "1",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 159744,
+          "VmRSS": 159744,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001214797142893076
+        },
+        {
+          "VmHWM": 14585856,
+          "VmRSS": 14585856,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.05154658295214176
+        },
+        {
+          "VmHWM": 14585856,
+          "VmRSS": 14585856,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.10186398820951581
+        },
+        {
+          "VmHWM": 14585856,
+          "VmRSS": 14585856,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.15223849518224597
+        },
+        {
+          "VmHWM": 14585856,
+          "VmRSS": 14585856,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.20257086120545864
+        },
+        {
+          "VmHWM": 14585856,
+          "VmRSS": 14585856,
+          "VmSize": 52559872,
+          "elapsed_seconds": 0.25290312711149454
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.3032879652455449
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r3-w1-raw-sto.ovf5zou7",
+    "measurement": {
+      "acknowledged": 327680,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 262144,
+      "cycles_per_commit": 1472.378,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3516.535,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 194340837,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 1348887.882,
+      "value_bytes": 128,
+      "verified_keys": 256,
+      "warmup_per_worker": 65536,
+      "workers": 1
+    },
+    "mode": "raw-sto",
+    "repetition": 3,
+    "workers": 1
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "engine",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 151552,
+          "VmRSS": 151552,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0013402928598225117
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.051676228642463684
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.10202865488827229
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.15236043091863394
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.20269568683579564
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.25307017378509045
+        },
+        {
+          "VmHWM": 16695296,
+          "VmRSS": 16695296,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.30337519757449627
+        },
+        {
+          "VmHWM": 16809984,
+          "VmRSS": 16809984,
+          "VmSize": 88723456,
+          "elapsed_seconds": 0.3536823228932917
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.4040746409446001
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r3-w4-engine.3ts65k9d",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1953.506,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "facade",
+      "instructions_per_commit": 4309.731,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 259544616,
+      "mode": "engine",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4040060.688,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "engine",
+    "repetition": 3,
+    "workers": 4
+  },
+  {
+    "attempt": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/engine-compare-raw-attribution",
+        "raw-sto",
+        "--workers",
+        "4",
+        "--iterations",
+        "262144",
+        "--warmup",
+        "65536",
+        "--perf",
+        "1"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 118784,
+          "VmRSS": 118784,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011905049905180931
+        },
+        {
+          "VmHWM": 16805888,
+          "VmRSS": 16805888,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.05153215117752552
+        },
+        {
+          "VmHWM": 16805888,
+          "VmRSS": 16805888,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.10189530812203884
+        },
+        {
+          "VmHWM": 16805888,
+          "VmRSS": 16805888,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.15222887322306633
+        },
+        {
+          "VmHWM": 16805888,
+          "VmRSS": 16805888,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.20256106927990913
+        },
+        {
+          "VmHWM": 16805888,
+          "VmRSS": 16805888,
+          "VmSize": 88784896,
+          "elapsed_seconds": 0.25293041625991464
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.30326790222898126
+    },
+    "completed": true,
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/private-raw-sto-attribution/r3-w4-raw-sto.83wekbgl",
+    "measurement": {
+      "acknowledged": 1310720,
+      "allocation_profile": false,
+      "applied_before_abort": 0,
+      "checksum": "none",
+      "commits": 1048576,
+      "cycles_per_commit": 1598.323,
+      "drained": false,
+      "engine": "sto",
+      "implementation": "raw",
+      "instructions_per_commit": 3527.689,
+      "iterations_per_worker": 262144,
+      "keys_per_worker": 256,
+      "max_worker_nanoseconds": 213124391,
+      "mode": "raw-sto",
+      "perf_enabled": true,
+      "pmu_min_running_ratio": 1.0,
+      "protocol": "raw-sto-attribution-v1",
+      "queue_capacity_per_worker": 524288,
+      "queued_before_abort": 0,
+      "rust_allocated_bytes_per_commit": 0.0,
+      "rust_allocations_per_commit": 0.0,
+      "transactions_per_second": 4920018.751,
+      "value_bytes": 128,
+      "verified_keys": 1024,
+      "warmup_per_worker": 65536,
+      "workers": 4
+    },
+    "mode": "raw-sto",
+    "repetition": 3,
+    "workers": 4
+  }
+]

@@ -1,0 +1,104 @@
+{
+  "source": {
+    "branch": "codex/sto-rust",
+    "implementation_commit": "6936abb30000d45c310226ceee0f6f7796b611ad",
+    "clean_before_build": true,
+    "cargo_lock_sha256": "c9489a023ef448a9f054db261b255e784fa24a92b82abbb581eedfcbc4b92d52",
+    "runner_sha256": "bd7e12d9e1bbe7cb92ea8145a65e1f09ee7b80a6014e024b045c797191772a7f"
+  },
+  "run": {
+    "host": "zoo-002",
+    "started_at": "2026-08-28T12:57:44+00:00",
+    "ended_at": "2026-08-28T13:10:32+00:00",
+    "sample_count": 126,
+    "cell_count": 42,
+    "paired_cell_count": 21,
+    "repetitions": 3,
+    "warmup_ms": 1000,
+    "duration_ms": 5000,
+    "keyspace": 100000,
+    "operations_per_transaction": 10,
+    "write_percentages": [0, 5, 50],
+    "thread_counts": [1, 2, 4, 8, 16, 32, 64],
+    "seed": 1,
+    "schedule_seed": 24301,
+    "measured_logical_cpus": "0-63"
+  },
+  "host": {
+    "hostname": "zoo-002.lab.compas.cs.stonybrook.edu",
+    "os": "Ubuntu 24.04.4 LTS",
+    "kernel": "6.8.0-137-generic",
+    "architecture": "x86_64",
+    "cpu": "AMD EPYC 7702P 64-Core Processor",
+    "logical_cpus": 128,
+    "sockets": 1,
+    "cores_per_socket": 64,
+    "threads_per_core": 2,
+    "numa_nodes": 1,
+    "memory_bytes": 540654915584,
+    "measured_cpu_kind": "one hardware thread from each physical core",
+    "scaling_governor": "schedutil",
+    "boost_enabled": true,
+    "isolcpus": false,
+    "nohz_full": false
+  },
+  "toolchain": {
+    "cmake": "4.3.4",
+    "cxx": "Homebrew clang 22.1.8",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+    "python": "3.12.3"
+  },
+  "build": {
+    "cmake_build_type": "Release",
+    "cxx_effective_flags": [
+      "-O2",
+      "-g",
+      "-DNDEBUG",
+      "-march=native",
+      "-fno-omit-frame-pointer",
+      "-DREAD_MY_WRITES=OFF",
+      "-DHASHTABLE=OFF",
+      "-DSTO_OPACITY=OFF"
+    ],
+    "cxx_lto": false,
+    "rust_profile": {
+      "opt_level": 2,
+      "debug": 1,
+      "lto": "fat",
+      "codegen_units": 1
+    },
+    "rustflags": [
+      "-Dwarnings",
+      "-C target-cpu=native",
+      "-C force-frame-pointers=yes",
+      "-C link-arg=-Wl,-rpath,/home/users/shuai/.linuxbrew/opt/llvm@22/lib",
+      "-C link-arg=-Wl,--defsym=__rust_alloc_error_handler_should_panic=0"
+    ],
+    "allocator": "glibc malloc for both engines (USE_MALLOC_MODE=0)",
+    "native_integration": true
+  },
+  "abi": {
+    "version": 1,
+    "required_features": "0x0f7f",
+    "exported_symbols": 41,
+    "export_manifest_fnv1a": "0xdb5bed9b8f1490e3"
+  },
+  "binaries": {
+    "cpp-sto-masstree": {
+      "sha256": "47b58ab01ee960c6418f6501ca50c95c74b4e533c028abaa8dee3365c3bff6e3",
+      "size_bytes": 94983336
+    },
+    "rust-sto-masstree": {
+      "sha256": "3f36e375453739dc36795070aa308a462993601d22cd53ce774c0c0128bce227",
+      "size_bytes": 5555864
+    }
+  },
+  "host_gate": {
+    "accepted_idle_percent": 99.55,
+    "shared_host": true,
+    "taskset_not_worker_pinning": true,
+    "known_lxd_restart_loop": true,
+    "note": "The main matrix used balanced adjacent pairs and continuous pidstat/vmstat monitoring. The only flagged cell received a separate five-pair confirmation."
+  }
+}

@@ -72,5 +72,11 @@ fn main() {
     }
     run(Command::new(ar).arg("crs").arg(&archive).args(objects));
     println!("cargo:rustc-link-search=native={}", out.display());
-    println!("cargo:rustc-link-lib=static=srpc_native");
+    // `static:-bundle=` rather than `static=`: link the native archive, but
+    // do not copy its objects into the rlib. Mako compiles this same manifest
+    // into libsrpc.a through CMake, so bundling put a second copy of every
+    // kernel into libraft.a and left the choice to archive order. The final
+    // link still gets them -- from libsrpc.a in Mako's build, and from
+    // OUT_DIR here -- so standalone `cargo test` is unaffected.
+    println!("cargo:rustc-link-lib=static:-bundle=srpc_native");
 }

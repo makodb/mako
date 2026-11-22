@@ -1,0 +1,47 @@
+{
+  "schema": "private-mako-post-cut-fence-bound-proof-v1",
+  "verdict": "positive-models-pass-negative-control-fails-as-expected",
+  "production_runtime_changed": false,
+  "native_code_linked": false,
+  "rustc": "1.95.0",
+  "rustc_commit": "59807616e1fa2540724bfbac14d7976d7e4a3860",
+  "loom": "0.7.2",
+  "generator": "0.8.9",
+  "preemption_bound": null,
+  "permutation_bound": null,
+  "loom_environment_overrides": {},
+  "source_sha256": "06c2c29e82a25e99519b1025831306931b0a0390b2d0ecc5e67a76c5105683d2",
+  "cargo_lock_sha256": "5de4b1a67c77e8a80b37dbdaefecb0b7a19a3ebb3e07d5303c02587b2964cfa6",
+  "cargo_manifest_sha256": "e0a6da91481000ab9badb5c0a5fe4bc5a3e39c46db90024f207a14ee43ded65d",
+  "audited_production_source_sha256": {
+    "crates/mako-cache/src/lib.rs": "6b752728553931efe678e69d8be6b165bdace112fcb945d3c25056c019e65911",
+    "crates/mako-clock/src/lib.rs": "9f3ceb505da3b440069cbaa0617c7599a556f14b0a655d3b9ae337edba94bb55",
+    "crates/mako-engine-sto/src/txn.rs": "b9519555d7aed8bbe4fa0762a44a47f91ab9f6d32c7f2ff3a95ea69071d501d1",
+    "crates/mako-engine-sto/src/db.rs": "40602d64f5c8c03af972e4083ecbcd6b28a5319a40b7b80fd953a6c26485017d",
+    "crates/mako-local/src/lib.rs": "2616bbf21059b99f4af7bad464cbc8d184a69ef04175c9dd5d9e5af3081d9dc8",
+    "src/mako/sto/Transaction.cc": "e7eb58cafa0dafbf931958baa9ccd0d0824b502e37141c7593bc8237ea46ea5c"
+  },
+  "command_prefix": ["env", "-u", "RUSTFLAGS", "-u", "RUSTDOCFLAGS", "-u", "CARGO_ENCODED_RUSTFLAGS", "-u", "CARGO_BUILD_TARGET", "RUSTUP_TOOLCHAIN=1.95.0", "CARGO_TARGET_DIR=/var/tmp/mako-fence-bound-model.deVBaQ/target", "cargo", "test", "--offline", "--locked", "--manifest-path", "/var/tmp/mako-fence-bound-model.deVBaQ/Cargo.toml", "--lib"],
+  "positive": {
+    "arguments_after_prefix": ["bound_after_cut", "--", "--test-threads=1"],
+    "log": "positive-final.log",
+    "log_sha256": "3a2b32ec772c4c5037a36548b5f5e236f89cc3ac166a45c5e481cfe9b4c91b1c",
+    "returncode": 0,
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "test_seconds": 180.71
+  },
+  "negative_control": {
+    "arguments_after_prefix": ["tests::bound_before_cut_can_omit_prefix_writer", "--", "--exact", "--ignored", "--test-threads=1"],
+    "log": "negative-before-cut-final.log",
+    "log_sha256": "fb8725ea03a0405292f2b55b45e66de3350faf77d02e6b58878af5b856d77c18",
+    "returncode": 101,
+    "passed": 0,
+    "failed": 1,
+    "expected_assertion": "bounded scan omitted prefix slot"
+  },
+  "qualification": "Finite Loom ordering proof only. Existing exact generation draining and STO validation remain required; no native or performance acceptance claimed.",
+  "interrupted_non_acceptance_model": "model-overlarge.rs",
+  "interrupted_non_acceptance_log": "positive-overlarge-interrupted.log"
+}

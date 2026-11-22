@@ -312,6 +312,11 @@ CockroachDB or TiKV — it's MongoDB.
 
 ## Why MongoDB is the closest architectural analog for Mako
 
+> **Historical Mako comparison.** The Mako-specific analysis from this section
+> onward predates the native Rust cutover. `ClusterConfig`, `ConfigWatcher`,
+> and the C++ policy graph it assumes have been retired. These paragraphs
+> explain the design motivation, not current routing APIs or recovery guarantees.
+
 MongoDB occupies the middle ground: **a small number of consensus
 groups, each owning many key ranges.** That's exactly Mako's shape.
 

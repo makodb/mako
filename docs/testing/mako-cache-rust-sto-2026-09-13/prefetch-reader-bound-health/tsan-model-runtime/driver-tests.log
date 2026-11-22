@@ -1,0 +1,20 @@
+test_a_missing_quarantine_name_is_a_gate_failure (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_a_missing_quarantine_name_is_a_gate_failure) ... ok
+test_child_timeout_is_a_reported_failure (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_child_timeout_is_a_reported_failure) ... ok
+test_ignored_only_is_not_a_pass (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_ignored_only_is_not_a_pass) ... ok
+test_only_suppression_entries_are_removed (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_only_suppression_entries_are_removed) ... ok
+test_ordinary_and_exact_quarantine_runs_use_separate_leak_options (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_ordinary_and_exact_quarantine_runs_use_separate_leak_options) ... ok
+test_outcome_parser_keeps_exact_names (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_outcome_parser_keeps_exact_names) ... ok
+test_passing_test_does_not_hide_an_unreviewed_ignored_regression (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_passing_test_does_not_hide_an_unreviewed_ignored_regression) ... ok
+test_required_native_and_fixed_admission_suites_execute_with_leak_checks (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_required_native_and_fixed_admission_suites_execute_with_leak_checks) ... ok
+test_required_suite_inventory_rejects_missing_duplicate_and_extra_names (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_required_suite_inventory_rejects_missing_duplicate_and_extra_names) ... ok
+test_required_suites_reject_ignored_zero_execution_and_child_failure (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_required_suites_reject_ignored_zero_execution_and_child_failure) ... ok
+test_startup_exception_must_not_hide_lost_transaction_buffers (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_startup_exception_must_not_hide_lost_transaction_buffers) ... ok
+test_thread_sanitizer_only_separates_exact_model_binaries (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_thread_sanitizer_only_separates_exact_model_binaries) ... ok
+test_thread_sanitizer_separate_model_child_failure_is_fatal (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_thread_sanitizer_separate_model_child_failure_is_fatal) ... ok
+test_thread_sanitizer_separate_models_must_all_execute (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_thread_sanitizer_separate_models_must_all_execute) ... ok
+test_zero_executed_tests_is_not_a_pass (test_run_rust_sto_cache_tests.SanitizerDriverTests.test_zero_executed_tests_is_not_a_pass) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.058s
+
+OK

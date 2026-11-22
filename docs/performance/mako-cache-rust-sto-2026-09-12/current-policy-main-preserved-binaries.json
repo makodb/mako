@@ -1,0 +1,17 @@
+{
+  "kind": "preserved executable locations after build-cache reuse",
+  "as_built_manifest": "current-policy-main-build.json",
+  "note": "The original manifest records build output paths. Before those target directories were reused for a new private experiment, independent copies were checked against the original hashes. No measured binary, source identity, or original manifest was relabeled.",
+  "binaries": {
+    "c-abi": {
+      "local_path": "/var/tmp/mako-engine-perf-20260912.trsFuD/mako-cache-bench-c-abi-main-frozen",
+      "zoo_002_path": "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-main",
+      "sha256": "97df73c4edd09a1ae28a2731395a07b85457b4846962fa5d5a7492b0e4aae031"
+    },
+    "sto": {
+      "local_path": "/var/tmp/mako-engine-perf-20260912.trsFuD/mako-cache-bench-sto-main-frozen",
+      "zoo_002_path": "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-sto-main",
+      "sha256": "e2f1b57e2f9ccb912f35f86f00e6d3b655e232aacd12a6affdca3eca8c939c5a"
+    }
+  }
+}

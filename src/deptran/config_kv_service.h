@@ -58,7 +58,7 @@ private:
  * ConfigKvServiceProxy. The proxy must outlive the returned function.
  * Production wires this on a non-shard-0 node, pointed at shard 0's
  * leader; the resulting ReadFn goes into a RemoteKvStore, which a
- * ConfigManager/ConfigWatcher reads through.
+ * ConfigManager reads through.
  */
 // @unsafe - issues an RPC per get.
 inline RemoteKvStoreReadFn make_config_read_fn(ConfigKvServiceProxy* proxy) {

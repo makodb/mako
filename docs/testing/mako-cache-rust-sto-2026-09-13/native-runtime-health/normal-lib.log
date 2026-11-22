@@ -1,0 +1,51 @@
+
+running 21 tests
+test db::tests::healthy_runtime_diagnostic_does_not_attach_or_quarantine ... ok
+test prefetch::tests::hint_does_not_allocate_a_stamp_or_change_the_gate ... ok
+test record::tests::crc32c_matches_the_reference_vector ... ok
+test record::tests::encoding_refuses_a_wrong_extent ... ok
+test record::tests::one_put_v6_record_has_the_documented_layout ... ok
+test record::tests::v5_record_carries_a_crc_over_every_preceding_byte ... ok
+test touched::tests::recycled_log_forgets_effects_and_preserves_small_storage ... ok
+test touched::tests::recycling_caps_retained_transaction_memory ... ok
+test txn::local_version_tests::facade_tables_use_local_versions_and_preserve_mixed_ordered_writes ... ok
+test txn::ownership_tests::holder_publication_transfers_empty_and_overflow_values_across_ring_reuse ... ok
+test txn::ownership_tests::terminal_version_capacity_is_not_a_transaction_size_error ... ok
+test txn::poison_tests::actual_hook_poison_retires_existing_and_new_workers_and_releases_gate ... 
+thread '<unnamed>' (2037460) panicked at mako-engine-sto/src/txn_poison_tests.rs:138:9:
+injected pre-install observer panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ok
+test txn::poison_tests::committed_cleanup_panic_keeps_the_definite_commit ... 
+thread '<unnamed>' (2037466) panicked at mako-engine-sto/src/txn_poison_tests.rs:27:9:
+injected core payload cleanup panic
+ok
+test txn::poison_tests::dropped_transaction_retires_worker_after_real_core_cleanup_panic ... 
+thread '<unnamed>' (2037468) panicked at mako-engine-sto/src/txn_poison_tests.rs:27:9:
+injected core payload cleanup panic
+ok
+test txn::poison_tests::explicit_abort_reports_real_core_cleanup_poison ... 
+thread '<unnamed>' (2037470) panicked at mako-engine-sto/src/txn_poison_tests.rs:27:9:
+injected core payload cleanup panic
+ok
+test txn::poison_tests::failed_operation_preserves_real_abort_cleanup_uncertainty ... 
+thread '<unnamed>' (2037472) panicked at mako-engine-sto/src/txn_poison_tests.rs:27:9:
+injected core payload cleanup panic
+ok
+test txn::poison_tests::mid_install_panic_is_indeterminate_and_does_not_emit_all_installed ... 
+thread '<unnamed>' (2037474) panicked at mako-engine-sto/src/txn_poison_tests.rs:251:13:
+injected first-of-two installed writes panic
+ok
+test txn::poison_tests::post_install_panic_keeps_record_bound_and_outcome_unknown ... 
+thread '<unnamed>' (2037481) panicked at mako-engine-sto/src/txn_poison_tests.rs:208:9:
+injected post-install observer panic
+ok
+test txn::poison_tests::rejected_record_preserves_real_abort_cleanup_uncertainty ... 
+thread '<unnamed>' (2037486) panicked at mako-engine-sto/src/txn_poison_tests.rs:27:9:
+injected core payload cleanup panic
+ok
+test txn::pool_tests::fused_success_recycles_owned_log_before_caller_forgets_facade ... ok
+test worker::lsan_tests::lost_transaction_log_is_reported_with_startup_exceptions ... ignored, deliberately lost payload; run only as the LSan negative control
+
+test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

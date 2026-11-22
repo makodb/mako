@@ -1,0 +1,47 @@
+[
+  {
+    "complete_blocks": 1,
+    "cpp_new_over_old": {
+      "max_percent": 99.30180649917111,
+      "median_percent": 99.30180649917111,
+      "min_percent": 99.30180649917111,
+      "ratios": [
+        0.9930180649917111
+      ]
+    },
+    "median_throughput": {
+      "new_cpp": 651606.31399957,
+      "new_rust": 827341.2239123137,
+      "old_cpp": 656187.77439362,
+      "old_rust": 848775.9904054579
+    },
+    "new_rust_over_cpp": {
+      "max_percent": 126.96949156831832,
+      "median_percent": 126.96949156831832,
+      "min_percent": 126.96949156831832,
+      "ratios": [
+        1.2696949156831832
+      ]
+    },
+    "normalized_rust_new_over_old_percent": [
+      98.15997274888107
+    ],
+    "old_rust_over_cpp": {
+      "max_percent": 129.3495586975554,
+      "median_percent": 129.3495586975554,
+      "min_percent": 129.3495586975554,
+      "ratios": [
+        1.293495586975554
+      ]
+    },
+    "rust_new_over_old": {
+      "max_percent": 97.47462619873298,
+      "median_percent": 97.47462619873298,
+      "min_percent": 97.47462619873298,
+      "ratios": [
+        0.9747462619873297
+      ]
+    },
+    "threads": 16
+  }
+]

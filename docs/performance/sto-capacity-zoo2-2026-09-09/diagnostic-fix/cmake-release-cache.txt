@@ -1,0 +1,5 @@
+CMAKE_BUILD_TYPE:STRING=Release
+CMAKE_CXX_COMPILER:STRING=/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang++
+MAKO_ASAN:BOOL=OFF
+MAKO_TSAN:BOOL=OFF
+MAKO_UBSAN:BOOL=OFF

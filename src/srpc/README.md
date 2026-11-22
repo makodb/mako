@@ -15,11 +15,13 @@ a C compiler and an archiver, then run:
 ```sh
 git clone https://github.com/stonysystems/srpc
 cd srpc
+git submodule update --init third-party/lion
 cargo test --locked --workspace --all-targets
 cargo test --locked --workspace --doc
 ```
 
-Cargo needs no submodules or C++ toolchain. See the book for
+Cargo needs the `third-party/lion` submodule (the Lion runtime crates) and no
+C++ toolchain. See the book for
 [setup and dependencies](docs/srpc-book.md#building-and-testing-srpc) and
 [focused checks](docs/srpc-book.md#use-the-cargo-checks).
 The [test coverage inventory](docs/test-coverage.md) maps historical C++ tests to

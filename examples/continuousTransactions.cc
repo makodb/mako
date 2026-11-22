@@ -65,7 +65,7 @@ public:
                     // Generate key
                     uint64_t key_id = key_counter++ % MAX_KEYS;
                     string key = "key_w" + to_string(worker_id_) + "_" + to_string(key_id);
-                    string value = Encode("value_" + to_string(worker_id_) + "_" + to_string(key_counter));
+                    string value = mako::Encode("value_" + to_string(worker_id_) + "_" + to_string(key_counter));
 
                     // Check which shard this key belongs to
                     int key_shard = table->check_shard(key);
@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nthreads; i++) {
         workers.emplace_back(make_unique<ContinuousWorker>(db, i, &worker_commits[i]));
         worker_threads.emplace_back([&workers, i]() {
-            mako::initialize_per_thread(workers[i]->db_) ;
+            scoped_db_thread_ctx thread_context(workers[i]->db_, false);
             workers[i]->executeTransactions();
         });
     }

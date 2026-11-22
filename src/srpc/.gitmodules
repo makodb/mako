@@ -1,7 +1,11 @@
 [submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp.git
-	branch = codex/canonical-rust-std-support
+	branch = main
 [submodule "third-party/googletest"]
 	path = third-party/googletest
 	url = https://github.com/google/googletest.git
+[submodule "third-party/lion"]
+	path = third-party/lion
+	url = https://github.com/stonysystems/lion.git
+	branch = srpc-lion

@@ -1,0 +1,31 @@
+
+/var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a:     file format elf64-x86-64
+
+
+Disassembly of section .init:
+
+Disassembly of section .plt:
+
+Disassembly of section .plt.got:
+
+Disassembly of section .text:
+
+0000000000119490 <__tsan_func_entry>:
+  119490:	48 89 fe             	mov    %rdi,%rsi
+  119493:	48 c7 c0 00 f8 ff ff 	mov    $0xfffffffffffff800,%rax
+  11949a:	64 48 8b 78 28       	mov    %fs:0x28(%rax),%rdi
+  11949f:	48 8b 47 18          	mov    0x18(%rdi),%rax
+  1194a3:	48 8d 48 08          	lea    0x8(%rax),%rcx
+  1194a7:	f7 c1 f0 0f 00 00    	test   $0xff0,%ecx
+  1194ad:	0f 84 7d 77 ff ff    	je     110c30 <_ZN6__tsan21TraceRestartFuncEntryEPNS_11ThreadStateEm>
+  1194b3:	48 8d 14 b5 02 00 00 	lea    0x2(,%rsi,4),%rdx
+  1194ba:	00 
+  1194bb:	48 89 10             	mov    %rdx,(%rax)
+  1194be:	48 89 4f 18          	mov    %rcx,0x18(%rdi)
+  1194c2:	48 8b 47 10          	mov    0x10(%rdi),%rax
+  1194c6:	48 89 30             	mov    %rsi,(%rax)
+  1194c9:	48 83 c0 08          	add    $0x8,%rax
+  1194cd:	48 89 47 10          	mov    %rax,0x10(%rdi)
+  1194d1:	c3                   	ret
+
+Disassembly of section .fini:

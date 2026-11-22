@@ -168,9 +168,14 @@ shutdown_paxos()                               [line 415]
   +-- Phase 2: for each worker → ShutDown()
   |   (deletes RPC servers, destroys RaftServer)
   +-- raft_workers_g.clear()
-  +-- RandomGenerator::destroy()
   +-- Config::DestroyConfig()
 ```
+
+There is no `RandomGenerator::destroy()` step. It used to delete srpc's
+random-seed pthread key, which before any random draw meant pthread key 0,
+jemalloc's thread-state key. A later draw re-created key 0 for srpc, and a
+thread that registered its jemalloc state after that crashed at exit. The
+seed key now lives for the whole process.
 
 The two-phase approach ensures all in-flight RPCs complete before
 destructors run.  `WaitForShutdown()` blocks until the heartbeat RPC

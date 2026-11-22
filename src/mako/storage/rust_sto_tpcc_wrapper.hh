@@ -1,0 +1,292 @@
+#ifndef MAKO_STORAGE_RUST_STO_TPCC_WRAPPER_HH
+#define MAKO_STORAGE_RUST_STO_TPCC_WRAPPER_HH
+
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <rusty/box.hpp>
+#include <rusty/sync/atomic.hpp>
+#include <string>
+#include <string_view>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
+
+#include "abstract_db.h"
+#include "resource_exhausted.hh"
+#include "benchmarks/tpcc_fixed_batch.h"
+#include "sto_tpcc_ffi.h"
+
+class rust_sto_tpcc_wrapper;
+
+namespace rust_sto_tpcc_detail {
+
+// Exposed for the focused wrapper smoke test so worker admission, table-name
+// classification, registry bounds, and post-load sealing remain directly
+// testable closed-integration decisions. The config helper throws
+// std::invalid_argument before doing unchecked arithmetic when the configured
+// worker count cannot fit the shared C++/native attachment limit.
+sto_tpcc_db_config db_config_for_worker_count(size_t configured_workers);
+sto_tpcc_table_config table_config_for(std::string_view index_name);
+void validate_capacity_environment();
+bool table_has_static_directory(std::string_view index_name);
+
+#ifdef MAKO_RUST_STO_TEST_HOOKS
+enum class open_index_fault_stage : uint8_t {
+  none,
+  after_table_create,
+  after_facade_create,
+  after_tables_insert,
+  after_id_insert,
+  after_name_insert,
+};
+
+// The wrapper smoke target uses these hooks to inject one std::bad_alloc at a
+// catalog publication boundary. They do not exist in production builds.
+void fail_next_open_index_at(open_index_fault_stage stage) noexcept;
+size_t destroyed_table_count_for_testing() noexcept;
+#endif
+
+} // namespace rust_sto_tpcc_detail
+
+// Native Rust storage with affine participants and a narrow legacy RPC/log
+// bridge. Remote facades carry routing IDs, never independent local rows.
+class rust_sto_tpcc_ordered_index final : public FullOrderedIndex,
+                                          public TxnFixedReadCapability,
+                                          public TxnFixedModifyCapability,
+                                          public TxnFixedPutCapability {
+public:
+  rust_sto_tpcc_ordered_index(rust_sto_tpcc_wrapper *owner,
+                              sto_tpcc_table *table,
+                              int32_t table_id,
+                              std::string name,
+                              bool is_remote);
+  ~rust_sto_tpcc_ordered_index() noexcept override;
+
+  bool get(lcdf::Str key, std::string &value, size_t max_bytes_read) override;
+  bool put(lcdf::Str key, const std::string &value) override;
+  bool insert(lcdf::Str key, const std::string &value) override;
+  bool remove(lcdf::Str key) override;
+  void scan(const std::string &start_key, const std::string *end_key,
+            oi_scan_callback &callback, str_arena *arena) override;
+  void rscan(const std::string &start_key, const std::string *end_key,
+             oi_scan_callback &callback, str_arena *arena) override;
+  size_t size() const override;
+  oi_stats_map clear() override;
+  int32_t get_table_id() override;
+  bool get_is_remote() override;
+
+  bool tx_get(c_void *txn, lcdf::Str key, std::string &value,
+              size_t max_bytes_read) override;
+  void tx_visit_fixed(c_void *txn, const char *keys, size_t key_width,
+                      size_t key_count, size_t max_bytes_read,
+                      oi_fixed_read_callback &callback) override;
+  void tx_modify_fixed(c_void *txn, const char *keys, size_t key_width,
+                       size_t key_count,
+                       oi_fixed_modify_callback &callback) override;
+  oi_fixed_put_result
+  tx_put_fixed(c_void *txn, const char *keys, size_t key_width,
+               size_t key_count, const std::string_view *encoded_values,
+               oi_fixed_put_mode mode) override;
+  void tx_put(c_void *txn, lcdf::Str key, const std::string &value) override;
+  void tx_insert(c_void *txn, lcdf::Str key,
+                 const std::string &value) override;
+  void tx_remove(c_void *txn, lcdf::Str key) override;
+  void tx_scan(c_void *txn, const std::string &start_key,
+               const std::string *end_key, oi_scan_callback &callback,
+               str_arena *arena) override;
+  void tx_rscan(c_void *txn, const std::string &start_key,
+                const std::string *end_key, oi_scan_callback &callback,
+                str_arena *arena) override;
+  void tx_scan_remote_one(c_void *txn, const std::string &start_key,
+                          const std::string &end_key,
+                          std::string &value) override;
+
+  bool shard_get(lcdf::Str key, std::string &value,
+                 size_t max_bytes_read) override;
+  const c_char *shard_put(lcdf::Str key, const std::string &value) override;
+  bool shard_scan(const std::string &start_key, const std::string *end_key,
+                  oi_scan_callback &callback, str_arena *arena) override;
+
+private:
+  // @unsafe - Colocated replicated rows still use their owning participant.
+  bool routes_remotely() const noexcept;
+  rust_sto_tpcc_wrapper *owner_;
+  sto_tpcc_table *table_;
+  int32_t table_id_;
+  std::string name_;
+  bool is_remote_;
+
+  friend class rust_sto_tpcc_wrapper;
+};
+
+// Closed benchmark wrapper. Construct all tables during startup before its
+// bounded, long-lived transaction workers attach; live schema mutation is
+// outside the supported profile.
+class rust_sto_tpcc_wrapper final : public abstract_db,
+                                    public TxnInsertBatchCapability,
+                                    public TxnTpccPaymentCapability,
+                                    public TxnTpccNewOrderCapability,
+                                    public TxnTpccDeliveryCapability,
+                                    public TxnTpccStockLevelCapability {
+public:
+  rust_sto_tpcc_wrapper();
+  ~rust_sto_tpcc_wrapper() noexcept override;
+
+  void init() override;
+  void on_load_complete() override;
+  // Quiescent snapshots after loading, after workers join, and on failure.
+  void report_capacity_usage(const char *phase) const override;
+  void preallocate_open_index() override;
+  ssize_t txn_max_batch_size() const override;
+  size_t sizeof_txn_object(uint64_t txn_flags) const override;
+  void thread_init(bool loader, int source = 0) override;
+  void thread_end() override;
+  void *new_txn(uint64_t txn_flags, str_arena &arena, void *buf,
+                TxnProfileHint hint = HINT_DEFAULT) override;
+  bool commit_txn(void *txn) override;
+  bool commit_txn_no_paxos(void *txn) override;
+  void abort_txn(void *txn) override;
+  void abort_txn_local(void *txn) override;
+  TxnFixedReadCapability *txn_fixed_read_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnFixedModifyCapability *txn_fixed_modify_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnFixedPutCapability *txn_fixed_put_capability(
+      abstract_ordered_index *index) noexcept override;
+  TxnInsertBatchCapability *txn_insert_batch_capability() noexcept override;
+  TxnTpccPaymentCapability *txn_tpcc_payment_capability() noexcept override;
+  TxnTpccNewOrderCapability *
+  txn_tpcc_new_order_capability() noexcept override;
+  TxnTpccDeliveryCapability *
+  txn_tpcc_delivery_capability() noexcept override;
+  TxnTpccStockLevelCapability *
+  txn_tpcc_stock_level_capability() noexcept override;
+  oi_fixed_put_result
+  tx_insert_many(c_void *txn, const oi_insert_operation *operations,
+                 size_t operation_count) override;
+  bool payment_full_enabled() const noexcept override;
+  tpcc_fixed_batch::payment_full_result tx_payment_full(
+      const tpcc_fixed_batch::payment_full_request &request) override;
+  tpcc_fixed_batch::payment_prefix_result tx_payment_prefix(
+      const tpcc_fixed_batch::payment_prefix_request &request) override;
+  tpcc_fixed_batch::new_order_full_result tx_new_order_full(
+      const tpcc_fixed_batch::new_order_full_request &request) override;
+  tpcc_fixed_batch::delivery_full_result tx_delivery_full(
+      const tpcc_fixed_batch::delivery_full_request &request) override;
+  tpcc_fixed_batch::stock_level_full_result tx_stock_level_full(
+      const tpcc_fixed_batch::stock_level_full_request &request) override;
+
+  abstract_ordered_index *get_index_by_table_id(
+      unsigned short table_id) override;
+  abstract_ordered_index *open_index(const std::string &name,
+                                     size_t value_size_hint,
+                                     bool mostly_append = false,
+                                     bool use_hashtable = false) override;
+  abstract_ordered_index *open_index(const std::string &name,
+                                     int shard_index = -1) override;
+  void close_index(abstract_ordered_index *idx) override;
+
+  void shard_abort_txn(void *txn) override;
+  int shard_validate() override;
+  void shard_install(uint32_t timestamp) override;
+  void shard_serialize_util(uint32_t timestamp) override;
+  void shard_unlock(bool committed) override;
+  void shard_reset() override;
+  void shard_mutate(uint16_t table_id, lcdf::Str key,
+                    const std::string &value, uint8_t operation) override;
+  // @unsafe - Affine native participant and legacy replay boundary.
+  bool shard_participant_active() const noexcept override;
+  bool shard_participant_empty() const noexcept override;
+  bool shard_timestamp(uint32_t &timestamp) override;
+  void shard_set_term(uint32_t term) override;
+  bool replay_apply_record(uint16_t table_id, std::string_view key,
+                           std::string_view payload, bool is_delete,
+                           uint32_t source_time_term) override;
+  void replay_thread_init() override;
+  void replay_thread_select_partition(int partition) override;
+  void observe_replay_timestamp(uint32_t source_time_term) override;
+
+private:
+  // Table IDs are in [1, kTableIdLimit); tables_by_id_ has one slot for each.
+  static constexpr int32_t kTableIdLimit = 1 << 15;
+  // @unsafe - nullptr when the ID is out of range or not published.
+  rust_sto_tpcc_ordered_index *table_by_id(int32_t table_id) const noexcept;
+
+  sto_tpcc_db *db_;
+  std::map<int, int32_t> next_table_ids_;
+  bool protocol_mode_ = false;
+  bool replicated_ = false;
+  // open_index returns borrowed pointers. This wrapper owns every facade until
+  // close_index removes it or the wrapper itself is destroyed. Publication is
+  // all-or-nothing: a C++ exception after FFI creation destroys that table and
+  // does not consume its ID or leave a partial catalog entry.
+  std::vector<rusty::Box<rust_sto_tpcc_ordered_index>> tables_;
+  // A follower replays its leader's loading log while its own workload is
+  // still opening tables, so replay threads look IDs up while open_index
+  // publishes them. One slot per possible table ID, allocated once in the
+  // constructor: publication is one atomic store, lookup is one atomic load,
+  // and nothing is rehashed or moved under a reader. Unpublishing a slot
+  // (close_index, a failed open_index) still requires that no thread is using
+  // that index.
+  std::vector<rusty::sync::atomic::AtomicPtr<rust_sto_tpcc_ordered_index>>
+      tables_by_id_;
+  std::map<std::tuple<std::string, int>, rust_sto_tpcc_ordered_index *>
+      tables_by_name_;
+
+  static thread_local sto_tpcc_thread *tls_thread_;
+  static thread_local bool tls_transaction_active_;
+  static thread_local bool tls_benchmark_thread_initialized_;
+  static thread_local rust_sto_tpcc_wrapper *tls_owner_;
+  static thread_local uint32_t tls_term_;
+  static thread_local bool tls_protocol_;
+  static thread_local bool tls_suppress_log_;
+  static thread_local uint32_t tls_last_read_time_term_;
+  static thread_local std::vector<sto_tpcc_fixed_value> tls_fixed_values_;
+  static thread_local std::vector<sto_tpcc_insert_operation>
+      tls_insert_operations_;
+
+  [[noreturn]] static void throw_fatal(const char *operation,
+                                       sto_tpcc_status status);
+  static void require_ok(const char *operation, sto_tpcc_status status);
+  static void require_txn_handle(c_void *txn);
+  static void begin_current_transaction();
+  static void abort_current_transaction_noexcept();
+  // @unsafe - Synchronous legacy transport/replication callbacks never unwind.
+  static sto_tpcc_status protocol_callback(
+      void *context, sto_tpcc_protocol_request *request) noexcept;
+  static void mutate_protocol(const rust_sto_tpcc_ordered_index &index,
+                              lcdf::Str key, const std::string &value,
+                              uint8_t operation, bool lock_now);
+  static bool remote_get(const rust_sto_tpcc_ordered_index &index,
+                         lcdf::Str key, std::string &value,
+                         size_t max_bytes_read);
+
+  bool get_raw(const sto_tpcc_table *table, lcdf::Str key,
+               std::string &encoded_value,
+               size_t max_bytes_read = std::string::npos);
+  // The *_active_raw variants require the caller to have just validated the
+  // transaction handle. Checked raw entry points remain for standalone and
+  // shard-facing paths.
+  bool get_active_raw(const sto_tpcc_table *table, lcdf::Str key,
+                      std::string &encoded_value,
+                      size_t max_bytes_read = std::string::npos);
+  void put_raw(const sto_tpcc_table *table, lcdf::Str key,
+               const std::string &encoded_value, bool insert_only);
+  void put_active_raw(const sto_tpcc_table *table, lcdf::Str key,
+                      const std::string &encoded_value, bool insert_only);
+  bool remove_raw(const sto_tpcc_table *table, lcdf::Str key);
+  bool remove_active_raw(const sto_tpcc_table *table, lcdf::Str key);
+  void scan_raw(const sto_tpcc_table *table, bool reverse,
+                const std::string &start_key, const std::string *end_key,
+                oi_scan_callback &callback, bool strip_value_metadata);
+  void scan_active_raw(const sto_tpcc_table *table, bool reverse,
+                       const std::string &start_key,
+                       const std::string *end_key,
+                       oi_scan_callback &callback,
+                       bool strip_value_metadata);
+
+  friend class rust_sto_tpcc_ordered_index;
+};
+
+#endif

@@ -81,7 +81,7 @@ fn default_empty_callback_and_installed_callback_preserve_state_behavior() {
     machine.set_on_state_change(Some(Box::new(move |from, to| {
         callback_observed.set((from, to));
     })));
-    assert!(!machine.on_state_change.is_none());
+    assert!(machine.on_state_change.is_some());
 
     assert!(machine.transition_to(ConnectionState::CONNECTED));
     assert_eq!(

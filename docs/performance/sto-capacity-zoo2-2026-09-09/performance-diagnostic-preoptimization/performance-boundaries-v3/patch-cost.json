@@ -1,0 +1,92 @@
+[
+  {
+    "complete_blocks": 1,
+    "cpp_new_over_old": {
+      "max_percent": 99.77976730454797,
+      "median_percent": 99.77976730454797,
+      "min_percent": 99.77976730454797,
+      "ratios": [
+        0.9977976730454797
+      ]
+    },
+    "median_throughput": {
+      "new_cpp": 40626.790580049106,
+      "new_rust": 57844.808283398655,
+      "old_cpp": 40716.46154079308,
+      "old_rust": 58189.69360070974
+    },
+    "new_rust_over_cpp": {
+      "max_percent": 142.38094483349352,
+      "median_percent": 142.38094483349352,
+      "min_percent": 142.38094483349352,
+      "ratios": [
+        1.423809448334935
+      ]
+    },
+    "normalized_rust_new_over_old_percent": [
+      99.62671919592323
+    ],
+    "old_rust_over_cpp": {
+      "max_percent": 142.91441691810704,
+      "median_percent": 142.91441691810704,
+      "min_percent": 142.91441691810704,
+      "ratios": [
+        1.4291441691810705
+      ]
+    },
+    "rust_new_over_old": {
+      "max_percent": 99.40730858684762,
+      "median_percent": 99.40730858684762,
+      "min_percent": 99.40730858684762,
+      "ratios": [
+        0.9940730858684762
+      ]
+    },
+    "threads": 1
+  },
+  {
+    "complete_blocks": 1,
+    "cpp_new_over_old": {
+      "max_percent": 96.81641085412758,
+      "median_percent": 96.81641085412758,
+      "min_percent": 96.81641085412758,
+      "ratios": [
+        0.9681641085412758
+      ]
+    },
+    "median_throughput": {
+      "new_cpp": 635314.8629754535,
+      "new_rust": 801104.5893928091,
+      "old_cpp": 656205.7582703378,
+      "old_rust": 848657.5502372273
+    },
+    "new_rust_over_cpp": {
+      "max_percent": 126.09567886400308,
+      "median_percent": 126.09567886400308,
+      "min_percent": 126.09567886400308,
+      "ratios": [
+        1.2609567886400308
+      ]
+    },
+    "normalized_rust_new_over_old_percent": [
+      97.50070631014397
+    ],
+    "old_rust_over_cpp": {
+      "max_percent": 129.32796452048277,
+      "median_percent": 129.32796452048277,
+      "min_percent": 129.32796452048277,
+      "ratios": [
+        1.2932796452048276
+      ]
+    },
+    "rust_new_over_old": {
+      "max_percent": 94.39668440690528,
+      "median_percent": 94.39668440690528,
+      "min_percent": 94.39668440690528,
+      "ratios": [
+        0.9439668440690527
+      ]
+    },
+    "threads": 16
+  }
+]

@@ -376,18 +376,19 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # RefMut BufferSource proxy over the request body cursor
                         # to the archive's read API.
                         emit_typed_request_decode(input_fields, f)
-                        f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
+                        f.writeln("auto __typed_resp__ = rusty::Arc<%s>::make();" % response_struct_name)
                         f.writeln("auto __defer__ = srpc::DeferredReply::new_(")
                         with f.indent():
                             f.writeln("std::move(req),")
                             f.writeln("weak_sconn,")
-                            f.writeln("[__typed_resp__](srpc::BinaryWriteArchive& m) {")
+                            f.writeln("[__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {")
                             with f.indent():
                                 for _, field_name in output_fields:
                                     f.writeln("srpc::Serialize_::serialize(__typed_resp__->%s, m);" % field_name)
                             f.writeln("},")
                             f.writeln("[]() {});")
-                        f.writeln("this->%s(__typed_req__, *__typed_resp__, std::move(__defer__));" % func.name)
+                        f.writeln("// @unsafe - the handler owns mutation until it fires the deferred reply.")
+                        f.writeln("this->%s(__typed_req__, const_cast<%s&>(*__typed_resp__), std::move(__defer__));" % (func.name, response_struct_name))
                     elif func.attr == "fiber":
                         request_struct_name = typed_request_struct_name(func)
                         output_fields = typed_struct_fields(func.output, "out")

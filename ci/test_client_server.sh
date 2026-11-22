@@ -104,7 +104,7 @@ echo "--- Test 3: Client Connection Without Server ---"
 echo "Testing client gracefully handles missing server..."
 
 # Run client mode without server - should fail gracefully with connection error
-timeout 10 ./$BUILD_DIR/simpleTransactionRep --client localhost 31000 > /tmp/mako_client_test.log 2>&1 || true
+timeout 10 ./$BUILD_DIR/simpleTransactionRep --client localhost 31000 0x8000000000000001 > /tmp/mako_client_test.log 2>&1 || true
 
 # Check that client reports connection failure gracefully
 if grep -q "Failed to connect" /tmp/mako_client_test.log || grep -q "Connection refused" /tmp/mako_client_test.log; then

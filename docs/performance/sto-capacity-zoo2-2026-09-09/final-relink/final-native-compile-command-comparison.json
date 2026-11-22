@@ -1,0 +1,12 @@
+{
+  "added_commands": [],
+  "changed_commands": [],
+  "new_commands_file": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/native-ninja-commands.txt",
+  "new_compile_commands": 122,
+  "new_file_sha256": "773cb729d450f45a05d7face3bdf8bdb250e0184d113770c78fa4216216dd597",
+  "old_commands_file": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/native-ninja-commands-use.txt",
+  "old_compile_commands": 122,
+  "old_file_sha256": "773cb729d450f45a05d7face3bdf8bdb250e0184d113770c78fa4216216dd597",
+  "qualification": "All direct native C/C++ compilation commands containing source -c and output -o match exactly after shlex parsing. This supplements the final relink driver's exact link-argv, compiler-binary and native-input-hash checks.",
+  "removed_commands": []
+}

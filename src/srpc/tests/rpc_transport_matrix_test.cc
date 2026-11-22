@@ -12,6 +12,11 @@
 // fiber -- keeps the test synchronous and deterministic). It is run over:
 //   * the in-memory switchboard (set_channel_factory before start/connect);
 //   * TCP loopback (auto-installed; bind to port 0, read the real port back).
+//
+// TCP also carries the shared-client test: the owning thread and the
+// client's poll thread (reply callbacks) enter one rusty::Arc<Client> at
+// once, as rpcbench does. Its Rust counterpart is
+// tests/client_shared_handle_rust.rs.
 
 #include <stddef.h>
 #include <string.h>
@@ -188,6 +193,108 @@ TEST(RpcTransportMatrix, StackfulHandlerAllowsSameServiceDispatch) {
     deserialize_from(slow->get_reply(), value);
     EXPECT_EQ(value, 41);
     client->close();
+}
+
+
+// One client handle entered from two threads at once: rpcbench's pipeline.
+// The owning thread keeps issuing request_async while each reply callback,
+// which runs on the client's own poll thread, issues the next request
+// through a captured copy of the same rusty::Arc<Client>. Before the client
+// state was synchronized, Client::connection() read a RefCell whose borrow
+// counter is a plain int; concurrent borrows lost updates, and a later
+// borrow panicked "already mutably borrowed". C++ callable erasure lets this
+// capture compile regardless, so the contract has to hold at runtime.
+struct SharedClientCounters {
+    std::atomic<int64_t> chain_hops{0};
+    std::atomic<int64_t> chains_finished{0};
+    std::atomic<int64_t> caller_completed{0};
+    std::atomic<int64_t> errors{0};
+};
+
+constexpr int64_t kSharedChains = 32;
+constexpr int64_t kSharedHopsPerChain = 1500;
+constexpr int64_t kSharedCallerRequests = 20000;
+// Bound the owner's in-flight requests far below the 16,384 async slots.
+constexpr int64_t kSharedCallerWindow = 256;
+
+void chain_shared_client(rusty::Arc<Client> client,
+                         std::shared_ptr<SharedClientCounters> counters,
+                         int64_t hops_left) {
+    AsyncReplyCallback on_reply{
+        [client, counters, hops_left](int32_t error, const uint8_t*, size_t) {
+            if (error != 0) {
+                counters->errors.fetch_add(1);
+                counters->chains_finished.fetch_add(1);
+                return;
+            }
+            counters->chain_hops.fetch_add(1);
+            if (hops_left > 1) {
+                chain_shared_client(client, counters, hops_left - 1);
+            } else {
+                counters->chains_finished.fetch_add(1);
+            }
+        }};
+    auto sent = client->request_async(
+        ECHO_DOUBLE_RPC_ID,
+        [](BinaryWriteArchive& m) { Serialize_::serialize(int64_t{1}, m); },
+        std::move(on_reply));
+    if (sent.is_err()) {
+        counters->errors.fetch_add(1);
+        counters->chains_finished.fetch_add(1);
+    }
+}
+
+TEST(RpcTransportMatrix, TcpReplyCallbacksAndOwnerShareOneClient) {
+    auto server_poll = PollThread::create();
+    auto client_poll = PollThread::create();
+    auto server = Server::new_(rusty::Some(server_poll.clone()));
+    server.reg_service_typed(rusty::make_box<EchoDoubleService>());
+    ASSERT_EQ(server.start(reinterpret_cast<const int8_t*>("127.0.0.1:0")), 0);
+    const auto addr = "127.0.0.1:" + std::to_string(server.get_bound_port());
+    auto client = Client::create(client_poll.clone());
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
+
+    auto counters = std::make_shared<SharedClientCounters>();
+    for (int64_t i = 0; i < kSharedChains; ++i) {
+        chain_shared_client(client, counters, kSharedHopsPerChain);
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    int64_t issued = 0;
+    while (issued < kSharedCallerRequests) {
+        ASSERT_LT(std::chrono::steady_clock::now(), deadline) << "caller stalled at " << issued;
+        if (issued - counters->caller_completed.load() >= kSharedCallerWindow) {
+            std::this_thread::yield();
+            continue;
+        }
+        AsyncReplyCallback on_reply{[counters](int32_t error, const uint8_t*, size_t) {
+            if (error != 0) {
+                counters->errors.fetch_add(1);
+            }
+            counters->caller_completed.fetch_add(1);
+        }};
+        auto sent = client->request_async(
+            ECHO_DOUBLE_RPC_ID,
+            [](BinaryWriteArchive& m) { Serialize_::serialize(int64_t{1}, m); },
+            std::move(on_reply));
+        ASSERT_TRUE(sent.is_ok()) << "request " << issued;
+        ++issued;
+    }
+    while ((counters->chains_finished.load() < kSharedChains ||
+            counters->caller_completed.load() < kSharedCallerRequests) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    EXPECT_EQ(counters->errors.load(), 0);
+    EXPECT_EQ(counters->chains_finished.load(), kSharedChains);
+    EXPECT_EQ(counters->chain_hops.load(), kSharedChains * kSharedHopsPerChain);
+    EXPECT_EQ(counters->caller_completed.load(), kSharedCallerRequests);
+    EXPECT_EQ(client->metrics().in_flight_requests(), 0u);
+
+    client->close();
+    client_poll->shutdown();
+    server_poll->shutdown();
 }
 
 }  // namespace

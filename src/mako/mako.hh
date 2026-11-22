@@ -2,7 +2,9 @@
 #define _MAKO_COMMON_H_
 
 #include <fstream>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 #include <utility>
 #include <string>
@@ -25,6 +27,9 @@
 #include "benchmarks/bench.h"
 #include "sto/sync_util.hh"
 #include "storage/mbta_wrapper.hh"
+#if defined(MAKO_RUST_STO_TPCC)
+#include "storage/rust_sto_tpcc_wrapper.hh"
+#endif
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"
@@ -32,16 +37,25 @@
 
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
+#include "deptran/config.h"
+// deptran/config.h pulls in deptran/constants.h, whose object-like SUCCESS
+// macro would rewrite mako::ErrorCode::SUCCESS in any Mako header first
+// included after this point (the Rust line's simpleTransactionRep build broke
+// that way). Nothing reachable from here uses the deptran macro, so drop it.
+#ifdef SUCCESS
+#undef SUCCESS
+#endif
 
 // Cluster-config runtime bootstrap (shard-0 config service + watcher).
 #include "cluster_bootstrap.h"
 
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
-#include "lib/multi_transport_manager.h"
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/rust_wrapper.h"
+
+import rusty;
 
 // Initialize Rust wrapper: communicate with rust-based redis client
 /*
@@ -71,6 +85,7 @@ static void print_system_info()
   cerr << "  nshards     : " << benchConfig.getNshards()   << endl;
   cerr << "  is_micro    : " << benchConfig.getIsMicro()   << endl;
   cerr << "  is_replicated : " << benchConfig.getIsReplicated()   << endl;
+  cerr << "  storage_engine : " << benchConfig.getStorageEngine() << endl;
 #ifdef USE_VARINT_ENCODING
   cerr << "  var-encode  : yes"                           << endl;
 #else
@@ -101,8 +116,17 @@ static void print_system_info()
 #endif
 }
 
-// Global multi-transport manager (for multi-shard mode)
-static mako::MultiTransportManager* g_multi_transport_manager = nullptr;
+// @unsafe - Construct the configured backend at the native ownership boundary.
+static abstract_db* make_benchmark_db() {
+  const auto &engine = BenchmarkConfig::getInstance().getStorageEngine();
+#if defined(MAKO_RUST_STO_TPCC)
+  if (engine == "rust")
+    return new rust_sto_tpcc_wrapper;
+#endif
+  if (engine != "cpp")
+    throw std::runtime_error("unsupported storage engine: " + engine);
+  return new mbta_wrapper;
+}
 
 // Initialize database for a specific shard (multi-shard mode)
 // This allows creating isolated database instances for each shard
@@ -113,86 +137,214 @@ static abstract_db* initShardDB(int shard_idx, bool is_leader, const std::string
          shard_idx, cluster_role.c_str(), is_leader);
 
   // Create and initialize database instance for this shard
-  abstract_db *db = new mbta_wrapper;
+  abstract_db *db = make_benchmark_db();
   db->init();
 
   return db;
 }
 
-// Initialize and start transports for multi-shard mode.
-//
-// In multi-shard single-process mode the per-shard "server" FastTransports
-// bind base_port + 0 (e.g. 31000, 31100). Worker ShardClients bind
-// base_port + par_id (0..warehouses-1) on the same shard, so par_id=0 of
-// each shard collides with the manager and panics with AddressInUse.
-// ctx->transport is never read anywhere, so the manager's transports are
-// unused; skip binding entirely until cross-shard RPC is actually wired
-// through the manager instead of through per-worker ShardClients.
+// @unsafe - Per-shard RPC servers are started after the table catalogs exist.
+// They bind W+5+alpha, never the worker's base_port+partition listener.
 static bool initMultiShardTransports(const std::vector<int>& local_shard_indices) {
-  if (!BenchmarkConfig::getInstance().getConfig()) {
-    Warning("Cannot initialize multi-shard transports: no configuration");
+  auto& cfg = BenchmarkConfig::getInstance();
+  if (!cfg.getConfig() || local_shard_indices.empty())
     return false;
+  static bool initialized = false;
+  if (initialized)
+    return true;
+  initialized = true;
+  const int streams = cfg.getNshards() * cfg.getNthreads();
+  sync_util::sync_logger::local_timestamp_ =
+      std::vector<std::atomic<uint32_t>>(streams);
+#ifndef DISABLE_DISK
+  sync_util::sync_logger::disk_timestamp_ =
+      std::vector<std::atomic<uint32_t>>(streams);
+#endif
+  sync_util::sync_logger::Init(
+      cfg.getShardIndex(), cfg.getNshards(), streams,
+      cfg.getLeaderConfig(), cfg.getCluster(), cfg.getConfig());
+  for (int shard = 0; shard < cfg.getNshards(); ++shard) {
+    if (std::find(local_shard_indices.begin(), local_shard_indices.end(), shard)
+        != local_shard_indices.end())
+      continue;
+    for (int partition = 0; partition < cfg.getNthreads(); ++partition) {
+      const int slot = shard * cfg.getNthreads() + partition;
+      sync_util::sync_logger::local_timestamp_[slot].store(UINT32_MAX);
+#ifndef DISABLE_DISK
+      sync_util::sync_logger::disk_timestamp_[slot].store(UINT32_MAX);
+#endif
+    }
   }
-  Notice("Skipping MultiTransportManager init for %zu shards "
-         "(per-shard transports unused in single-process mode)",
-         local_shard_indices.size());
   return true;
 }
 
-// Stop multi-shard transports (cleanup)
-static void stopMultiShardTransports() {
-  if (g_multi_transport_manager) {
-    Notice("Stopping MultiTransportManager");
-    g_multi_transport_manager->StopAll();
-    delete g_multi_transport_manager;
-    g_multi_transport_manager = nullptr;
+
+static constexpr const char *kAllocatorMemoryEnvironment =
+    "MAKO_TPCC_ALLOCATOR_MEMORY";
+
+static size_t tpcc_allocator_memory_bytes() {
+  static constexpr const char *kEnvironment = kAllocatorMemoryEnvironment;
+  static constexpr const char *kDefault = "1G";
+  const char *configured = getenv(kEnvironment);
+  const std::string spec = configured == nullptr ? kDefault : configured;
+
+  const bool has_suffix =
+      !spec.empty() &&
+      (spec.back() == 'K' || spec.back() == 'M' || spec.back() == 'G');
+  const size_t digit_count = spec.size() - static_cast<size_t>(has_suffix);
+  if (digit_count == 0 || spec.front() == '0') {
+    throw std::runtime_error("invalid " + std::string(kEnvironment) + ": " +
+                             spec);
+  }
+
+  size_t amount = 0;
+  for (size_t index = 0; index < digit_count; ++index) {
+    const char digit = spec[index];
+    if (digit < '0' || digit > '9') {
+      throw std::runtime_error("invalid " + std::string(kEnvironment) + ": " +
+                               spec);
+    }
+    const size_t value = static_cast<size_t>(digit - '0');
+    if (amount > (std::numeric_limits<size_t>::max() - value) / 10) {
+      throw std::runtime_error(std::string(kEnvironment) +
+                               " exceeds size_t: " + spec);
+    }
+    amount = amount * 10 + value;
+  }
+
+  size_t multiplier = 1;
+  if (has_suffix) {
+    multiplier = static_cast<size_t>(1) << (spec.back() == 'G'   ? 30
+                                            : spec.back() == 'M' ? 20
+                                                                 : 10);
+  }
+  if (amount > std::numeric_limits<size_t>::max() / multiplier) {
+    throw std::runtime_error(std::string(kEnvironment) +
+                             " exceeds size_t: " + spec);
+  }
+  return amount * multiplier;
+}
+
+// @unsafe - Configure the selected native runtime before any loader pins an arena.
+static void initialize_benchmark_allocator() {
+  const auto& benchConfig = BenchmarkConfig::getInstance();
+  const size_t numa_memory = tpcc_allocator_memory_bytes();
+  if (numa_memory > 0) {
+    const size_t nthreads = benchConfig.getNthreads();
+    // Validate the rounded per-worker share before native allocator state exists.
+    const size_t maxpercpu = ::allocator::CheckedPerWorkerCapacity(
+        numa_memory, nthreads, ::allocator::GetHugepageSize(),
+        kAllocatorMemoryEnvironment);
+    ::allocator::Initialize(nthreads, maxpercpu);
   }
 }
 
-// init all threads (single-shard mode, backward compatible)
+// @unsafe - Single-shard startup through native allocation and database bridges.
 static abstract_db* initWithDB() {
   auto& benchConfig = BenchmarkConfig::getInstance();
 
-  //initialize_rust_wrapper();
-
-  // initialize the numa allocator
-  size_t numa_memory = mako::parse_memory_spec("1G");
-  if (numa_memory > 0) {
-    const size_t maxpercpu = util::iceil(
-        numa_memory / benchConfig.getNthreads(), ::allocator::GetHugepageSize());
-    numa_memory = maxpercpu * benchConfig.getNthreads();
-    ::allocator::Initialize(benchConfig.getNthreads(), maxpercpu);
-  }
+  initialize_benchmark_allocator();
 
   // Print system information
   print_system_info();
 
+  if (!benchConfig.getIsReplicated()) {
   sync_util::sync_logger::Init(benchConfig.getShardIndex(), benchConfig.getNshards(),
                                benchConfig.getNthreads(),
                                benchConfig.getLeaderConfig()==1, /* is leader */
                                benchConfig.getCluster(),
                                benchConfig.getConfig());
+  }
 
-  abstract_db *db = new mbta_wrapper; // on the leader replica
+  abstract_db *db = make_benchmark_db(); // on the leader replica
   db->init() ;
   return db;
 }
 
+// @unsafe - Replication IDs remain global on the wire; backend TLS is shard-local.
+static int select_replication_callback_partition(int partition) {
+  auto& cfg = BenchmarkConfig::getInstance();
+  const int shard = cfg.usesGlobalReplicationPartitions()
+      ? partition / cfg.getNthreads() : cfg.getShardIndex();
+  const int local = partition % cfg.getNthreads();
+  BenchmarkConfig::setThreadLocalShardIndex(shard);
+  TThread::set_shard_index(shard);
+  TThread::set_pid(local);
+  TThread::set_nshards(cfg.getNshards());
+  return cfg.getReplicationWatermarkPartition(shard, local);
+}
+
+// @unsafe - Process-owned state outlives every registered replication callback.
+// Callbacks publish the atomic terminal bit; the main thread owns peer handshakes.
+struct ReplicaDrainState {
+  int partition;
+  mako::NFSSync::DrainHandshake handshake;
+  rusty::Vec<mako::NFSSync::DrainHandshake::Peer> peers;
+  rusty::sync::atomic::AtomicBool ended{false};
+
+  // @safe - Reserve the configured peers once, outside transaction processing.
+  ReplicaDrainState(int partition_id, size_t peer_count)
+      : partition(partition_id),
+        peers(rusty::Vec<mako::NFSSync::DrainHandshake::Peer>::with_capacity(peer_count)) {}
+};
+
+// @safe - Initialized before callback registration, immutable membership afterward.
+static auto &replica_drains() {
+  static rusty::Vec<rusty::Box<ReplicaDrainState>> states;
+  return states;
+}
+
+// @unsafe - Announce every hosted stream before admitting benchmark work.
+static void initialize_replica_drains() {
+  const auto &config = BenchmarkConfig::getInstance();
+  auto *replication = janus::Config::GetConfig();
+  const auto sites = replication->GetMyServers();
+  if (sites.empty())
+    Panic("replication drain requires at least one hosted stream");
+  auto &states = replica_drains();
+  states = rusty::Vec<rusty::Box<ReplicaDrainState>>::with_capacity(sites.size());
+  for (const auto &site : sites) {
+    const auto members = replication->SiteIdsByPartitionId(site.partition_id_);
+    auto state = rusty::make_box<ReplicaDrainState>(site.partition_id_, members.size() - 1);
+    const int shard = config.usesGlobalReplicationPartitions()
+        ? site.partition_id_ / config.getNthreads() : config.getShardIndex();
+    state->handshake.announce(mako::NFSSync::drain_prefix(config) + "replica_" +
+        std::to_string(shard) + "_" +
+        std::to_string(site.partition_id_ % config.getNthreads()) + "_",
+        std::to_string(site.id));
+    for (int member : members) {
+      if (member != site.id) {
+        mako::NFSSync::DrainHandshake::Peer peer;
+        state->handshake.bind(peer, std::to_string(member));
+        state->peers.push(std::move(peer));
+      }
+    }
+    states.push(std::move(state));
+  }
+}
+
+// @safe - Borrowed only by callbacks; state survives replication worker shutdown.
+static const ReplicaDrainState &replica_drain_for_partition(int partition) {
+  for (const auto &state : replica_drains()) {
+    if (state->partition == partition)
+      return *state;
+  }
+  Panic("missing replica drain state for partition %d", partition);
+}
+
+// @unsafe - Registered Paxos/Raft callbacks bridge bytes to an affine worker.
 static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_db, int thread_id)
 {
   if (!BenchmarkConfig::getInstance().getIsReplicated()) { return ; }
-  //transport::ShardAddress addr = config->shard(shardIndex, mako::LEARNER_CENTER);
+  auto &terminal = replica_drain_for_partition(thread_id);
   register_for_follower_par_id_return([&,thread_id](const char*& log, int len, int par_id, int slot_id, std::queue<std::tuple<int, int, int, int, const char *>> & un_replay_logs_) {
     auto& benchConfig = BenchmarkConfig::getInstance();
+    par_id = select_replication_callback_partition(par_id);
     //Warning("receive a register_for_follower_par_id_return, par_id:%d, slot_id:%d,len:%d",par_id, slot_id,len);
     int status = mako::PaxosStatus::STATUS_INIT;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
-    abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
-    // SINGLE-RAFT FIX: getDB() calls TThread::set_id(par_id), changing the
-    // thread ID per partition. But the STO Transaction object caches threadid_
-    // at creation time. In single-Raft, all partitions share one thread, so
-    // the thread ID changes with each par_id. Sync Transaction's threadid_.
-    Sto::update_threadid();
+    abstract_db * db = replicated_db.getDBWrapper(
+        par_id % benchConfig.getNthreads())->getDB();
     bool noops = false;
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
@@ -214,7 +366,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
 #ifndef DISABLE_DISK
       sync_util::sync_logger::disk_timestamp_[par_id].store(min_so_far, memory_order_release) ;
 #endif
-      benchConfig.incrementEndReceived();
     }
 
     // deal with Paxos log
@@ -251,7 +402,23 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
           sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, sync_util::sync_logger::retrieveShardW()/10);
         }
       }else{
-        CommitInfo commit_info = get_latest_commit_info((char *) log, len);
+        static thread_local mako::ReplayLogView decoded_replay_log;
+        if (!mako::parse_replay_log(log, len, decoded_replay_log)) {
+          Panic("malformed follower replay log: len=%d", len);
+        }
+        // @unsafe - Reject a mixed/old topology before replay or watermark effects.
+        for (const auto& record : decoded_replay_log.records) {
+          if ((record.table_id - 1) / mako::NUM_TABLES_PER_SHARD !=
+              benchConfig.getShardIndex())
+            Panic("replication stream received a foreign-shard table: %u",
+                  unsigned(record.table_id));
+        }
+        // Floor the selected backend before publishing watermarks or queueing
+        // the log. Promotion may occur before a safety-delayed batch is drained.
+        db->observe_replay_timestamp(decoded_replay_log.recovered_time_term);
+        CommitInfo commit_info{
+          decoded_replay_log.latest_time_term,
+          decoded_replay_log.latency_tracker};
         timestamp = commit_info.timestamp;  // Store for return value encoding
         sync_util::sync_logger::local_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
 #ifndef DISABLE_DISK
@@ -268,7 +435,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         bool loading_phase = sync_util::sync_logger::noops_cnt.load(memory_order_acquire) == 0;
         if (loading_phase || sync_util::sync_logger::safety_check(commit_info.timestamp, w)) {
           benchConfig.incrementReplayBatch();
-          treplay_in_same_thread_opt_mbta_v2(par_id, (char*)log, len, db, benchConfig.getNthreads());
+          replay_validated_mbta_v2(decoded_replay_log, db);
           status = mako::PaxosStatus::STATUS_REPLAY_DONE;
         } else {
           status = mako::PaxosStatus::STATUS_SAFETY_FAIL;
@@ -300,7 +467,10 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
 
     while (un_replay_logs_.size() > 0) {
         auto it = un_replay_logs_.front() ;
-        if (sync_util::sync_logger::safety_check(std::get<0>(it), w)) {
+        // END is submitted only after every cross-shard coordinator drained:
+        // no speculative transaction remains unresolved, so finish the queued
+        // committed prefix even if the asynchronous watermark is still behind.
+        if (len == 0 || sync_util::sync_logger::safety_check(std::get<0>(it), w)) {
           //Warning("replay-2 par_id:%d, slot_id:%d,un_replay_logs_:%d", par_id, std::get<1>(it),un_replay_logs_.size());
           benchConfig.incrementReplayBatch();
           auto nums = treplay_in_same_thread_opt_mbta_v2(par_id, (char *) std::get<4>(it), std::get<3>(it), db, benchConfig.getNthreads());
@@ -335,6 +505,8 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         sync_util::sync_logger::reset();
       }
     }
+    if (len == 0 && !terminal.ended.swap(true, rusty::sync::atomic::Ordering::AcqRel))
+      benchConfig.incrementEndReceived();
     // Return timestamp * 10 + status (for safety check compatibility)
     return static_cast<int>(timestamp * 10 + status);
   }, 
@@ -346,8 +518,10 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
 static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& advanceWatermarkTracker, int thread_id)
 {
   if (!BenchmarkConfig::getInstance().getIsReplicated()) { return ; }
+  auto &terminal = replica_drain_for_partition(thread_id);
   register_for_leader_par_id_return([&,thread_id](const char*& log, int len, int par_id, int slot_id, std::queue<std::tuple<int, int, int, int, const char *>> & un_replay_logs_) {
     auto& benchConfig = BenchmarkConfig::getInstance();
+    par_id = select_replication_callback_partition(par_id);
     //Warning("receive a register_for_leader_par_id_return, par_id:%d, slot_id:%d,len:%d",par_id, slot_id,len);
     int status = mako::PaxosStatus::STATUS_NORMAL;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
@@ -370,7 +544,10 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
 #ifndef DISABLE_DISK
       sync_util::sync_logger::disk_timestamp_[par_id].store(min_so_far, memory_order_release) ;
 #endif
-      benchConfig.incrementEndReceivedLeader();
+      if (!un_replay_logs_.empty())
+        Panic("leader ended with unresolved replay for partition %d", thread_id);
+      if (!terminal.ended.swap(true, rusty::sync::atomic::Ordering::AcqRel))
+        benchConfig.incrementEndReceivedLeader();
     }
 
     if (len>0) {
@@ -408,7 +585,19 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
           sync_util::sync_logger::reset(); 
         }
       }else {
-        CommitInfo commit_info = get_latest_commit_info((char *) log, len);
+        static thread_local mako::ReplayLogView decoded_replay_log;
+        if (!mako::parse_replay_log(log, len, decoded_replay_log)) {
+          Panic("malformed leader replay log: len=%d", len);
+        }
+        for (const auto& record : decoded_replay_log.records) {
+          if ((record.table_id - 1) / mako::NUM_TABLES_PER_SHARD !=
+              benchConfig.getShardIndex())
+            Panic("replication stream submitted a foreign-shard table: %u",
+                  unsigned(record.table_id));
+        }
+        CommitInfo commit_info{
+          decoded_replay_log.latest_time_term,
+          decoded_replay_log.latency_tracker};
         timestamp = commit_info.timestamp;  // Store for return value encoding
         
         uint32_t end_time = mako::getCurrentTimeMillis();
@@ -434,16 +623,16 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
 static void setup_paxos_leader_callbacks(vector<pair<uint32_t, uint32_t>>& advanceWatermarkTracker)
 {
   if (!BenchmarkConfig::getInstance().getIsReplicated()) { return ; }
-  for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-    register_paxos_leader_callback(advanceWatermarkTracker, i);
+  for (const auto& site : janus::Config::GetConfig()->GetMyServers()) {
+    register_paxos_leader_callback(advanceWatermarkTracker, site.partition_id_);
   }
 }
 
 static void setup_paxos_follower_callbacks(TSharedThreadPoolMbta& replicated_db)
 {
   if (!BenchmarkConfig::getInstance().getIsReplicated()) { return ; }
-    for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-      register_paxos_follower_callback(replicated_db, i);
+    for (const auto& site : janus::Config::GetConfig()->GetMyServers()) {
+      register_paxos_follower_callback(replicated_db, site.partition_id_);
     }
 }
 
@@ -489,10 +678,11 @@ static void run_latency_tracking()
 #endif
 }
 
+// @unsafe - Keep replication services alive until every hosted stream and peer
+// has applied its terminal prefix. Missing peers fail closed, never time out OK.
 static void wait_for_termination()
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
-  bool isLearner = benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0 ;
 
   // Timeout while waiting for end signal from leader.
   // Docker runs can be noticeably slower than local runs, especially during
@@ -509,84 +699,41 @@ static void wait_for_termination()
               env, max_wait_seconds);
     }
   }
-  int wait_count = 0;
-
-  // in case, the Paxos streams on other side is terminated,
-  // not need for all no-ops for the final termination
-  while (!(benchConfig.getEndReceived() > 0 || benchConfig.getEndReceivedLeader() > 0)) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    wait_count++;
-
-    if (isLearner)
-      Notice("learner is waiting for being ended: %d/%zu, noops_cnt:%d, replay_batch:%d, wait_time:%ds\n",
-             benchConfig.getEndReceived(), benchConfig.getNthreads(),
-             sync_util::sync_logger::noops_cnt.load(), benchConfig.getReplayBatch(), wait_count);
-    else
-      Notice("follower is waiting for being ended: %d/%zu, noops_cnt:%d, replay_batch:%d, wait_time:%ds\n",
-             benchConfig.getEndReceived(), benchConfig.getNthreads(),
-             sync_util::sync_logger::noops_cnt.load(), benchConfig.getReplayBatch(), wait_count);
-
-    // Timeout check: exit gracefully if we've waited too long
-    if (wait_count >= max_wait_seconds) {
-      Warning("%s timed out waiting for end signal after %d seconds - exiting gracefully",
-              isLearner ? "Learner" : "Follower", max_wait_seconds);
+  const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::seconds(max_wait_seconds);
+  auto next_notice = std::chrono::steady_clock::now();
+  for (;;) {
+    size_t ended = 0;
+    size_t total = 0;
+    for (const auto &state : replica_drains()) {
+      ++total;
+      if (state->ended.load(rusty::sync::atomic::Ordering::Acquire))
+        ++ended;
+    }
+    bool all_peers_drained = ended == total;
+    if (all_peers_drained) {
+      for (auto &state : replica_drains()) {
+        for (auto &peer : state->peers) {
+          if (!state->handshake.acknowledge(peer))
+            all_peers_drained = false;
+        }
+      }
+    }
+    if (all_peers_drained) {
+      Notice("replication drained: %zu/%zu ended, replay_batch:%d",
+             ended, total, benchConfig.getReplayBatch());
       break;
     }
-    //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
-  }
-
-  // Drain the replay backlog before tearing down. The loop above exits on
-  // the FIRST partition's END marker, but each partition replays
-  // synchronously inside its own delivery callback — the other partitions'
-  // batch tails may still be undelivered (on throttled CI runners,
-  // hundreds of batches), and watermark-parked entries drain on later
-  // deliveries. Also keep printing the counter: the CI harness reads
-  // "replay_batch:N" from this log, and going silent here made it
-  // snapshot a stale mid-lag value (the shard1Replication mako-dev flake).
-  // Exit once the counter stops advancing for a few seconds (drained or
-  // genuinely stuck) or the overall budget runs out.
-  int drain_stall_limit = 5;
-  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_STALL_SECONDS")) {
-    char* endptr = nullptr;
-    long parsed = strtol(env, &endptr, 10);
-    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 600) {
-      drain_stall_limit = static_cast<int>(parsed);
-    } else {
-      Warning("Invalid MAKO_FOLLOWER_DRAIN_STALL_SECONDS='%s'; using default %d",
-              env, drain_stall_limit);
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline)
+      Panic("replication drain timed out: %zu/%zu ended, replay_batch:%d",
+            ended, total, benchConfig.getReplayBatch());
+    if (now >= next_notice) {
+      Notice("replication waiting: %zu/%zu ended, replay_batch:%d",
+             ended, total, benchConfig.getReplayBatch());
+      next_notice = now + std::chrono::seconds(1);
     }
-  }
-  int drain_max_seconds = 120;
-  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_MAX_SECONDS")) {
-    char* endptr = nullptr;
-    long parsed = strtol(env, &endptr, 10);
-    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 3600) {
-      drain_max_seconds = static_cast<int>(parsed);
-    } else {
-      Warning("Invalid MAKO_FOLLOWER_DRAIN_MAX_SECONDS='%s'; using default %d",
-              env, drain_max_seconds);
-    }
-  }
-  int last_replay_batch = benchConfig.getReplayBatch();
-  int drain_stall = 0;
-  for (int drain_time = 1; drain_time <= drain_max_seconds; drain_time++) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    int rb = benchConfig.getReplayBatch();
-    if (rb != last_replay_batch) {
-      last_replay_batch = rb;
-      drain_stall = 0;
-    } else {
-      drain_stall++;
-    }
-    Notice("%s draining replay backlog: %d/%zu ended, replay_batch:%d, stall:%ds, drain_time:%ds\n",
-           isLearner ? "learner" : "follower",
-           benchConfig.getEndReceived(), benchConfig.getNthreads(),
-           rb, drain_stall, drain_time);
-    if (drain_stall >= drain_stall_limit) {
-      Notice("%s replay drained: replay_batch:%d stable for %ds after %ds\n",
-             isLearner ? "learner" : "follower", rb, drain_stall, drain_time);
-      break;
-    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
   // Track and report latency if configured if tracked
@@ -630,7 +777,9 @@ static void setup_transport_callbacks()
         string log = "no-ops:" + to_string(get_epoch());
         auto& benchConfig = BenchmarkConfig::getInstance();
         for(int i = 0; i < benchConfig.getNthreads(); i++){
-          add_log_to_nc(log.c_str(), log.size(), i);
+          if (!add_log_to_nc(log.c_str(), log.size(),
+                  benchConfig.getReplicationPartition(benchConfig.getShardIndex(), i)))
+            Panic("replication rejected required epoch marker");
         }
 
         // start the worker threads
@@ -665,7 +814,9 @@ static void setup_leader_election_callbacks()
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         sync_util::sync_logger::exchange_running = false;
         auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+        sync_util::sync_logger::failed_shard_index.store(
+            static_cast<int>(benchConfig.getShardIndex()),
+            std::memory_order_relaxed);
         sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
         break;
       }
@@ -720,7 +871,9 @@ static void setup_leader_election_callbacks()
         //    1.3 issue no-ops within the old epoch
         //    1.4 start the controller
         auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+        sync_util::sync_logger::failed_shard_index.store(
+            static_cast<int>(benchConfig.getShardIndex()),
+            std::memory_order_relaxed);
 
         auto x0 = std::chrono::high_resolution_clock::now() ;
         sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
@@ -774,10 +927,14 @@ static void setup_leader_election_callbacks()
 static void cleanup_and_shutdown()
 {
   if (BenchmarkConfig::getInstance().getIsReplicated()) { 
-    std::this_thread::sleep_for(2s);
     pre_shutdown_step();
     shutdown_paxos();
   }
+#ifndef DISABLE_DISK
+  // @unsafe - Flush and close while RocksDB's background pools are still alive.
+  // Their process-exit destructors can run before our singleton destructor.
+  mako::RocksDBPersistence::getInstance().shutdown();
+#endif
 
   sync_util::sync_logger::shutdown();
   //std::quick_exit( EXIT_SUCCESS ); // don't exit early
@@ -866,6 +1023,7 @@ static char** prepare_paxos_args(const vector<string>& paxos_config_file,
   return argv_paxos;
 }
 
+// @unsafe - Initialize storage before registering any replication callbacks.
 static abstract_db * init_env() {
   auto& benchConfig = BenchmarkConfig::getInstance();
 
@@ -873,10 +1031,12 @@ static abstract_db * init_env() {
   setup_sync_util_callbacks();
 
   if (BenchmarkConfig::getInstance().getIsReplicated()) {
-    // We need replicated_db keep live for future replay!
+    // Replay, follower serving and promotion share the actual selected backend.
+    // The process-lifetime database outlives callbacks and their TLS workers.
+    abstract_db* db = make_benchmark_db();
+    db->init();
+    ThreadDBWrapperMbta::replay_thread_wrapper_db = db;
     static TSharedThreadPoolMbta replicated_db(benchConfig.getNthreads() + 1);
-    abstract_db *db = replicated_db.getDBWrapper(benchConfig.getNthreads())->getDB () ;
-    db->init() ;
 
     // failures handling callbacks
     setup_transport_callbacks();
@@ -888,6 +1048,15 @@ static abstract_db * init_env() {
     // even if --replication raft wasn't explicitly passed on the command line.
     detect_replication_type_from_config(benchConfig.getPaxosConfigFile());
 
+    // Every peer in a colocated deployment loads the same ordered topology.
+    // Ownership is a filter, never a renumbering of partition/site IDs.
+    janus::Config::mako_partitions_per_shard_ = benchConfig.getNthreads();
+    janus::Config::mako_shard_count_ = benchConfig.getNshards();
+    janus::Config::mako_hosted_shards_ =
+        benchConfig.getConfig()->multi_shard_mode
+        ? benchConfig.getConfig()->local_shard_indices
+        : std::vector<int>{static_cast<int>(benchConfig.getShardIndex())};
+
     int argc_paxos = 0;
     char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName(), argc_paxos);
     std::vector<std::string> ret = setup(argc_paxos, argv_paxos);
@@ -895,19 +1064,32 @@ static abstract_db * init_env() {
       Warning("paxos args errors");
       return db;
     }
+    benchConfig.setGlobalReplicationPartitions(
+        janus::Config::GetConfig()->GetNumPartition() > benchConfig.getNthreads());
+    initialize_replica_drains();
 
     // Setup Paxos callbacks have to be after setup() is called
     setup_paxos_leader_callbacks(benchConfig.getAdvanceWatermarkTracker());
     setup_paxos_follower_callbacks(replicated_db);
 
+    if (benchConfig.getConfig()->multi_shard_mode) {
+      if (!initMultiShardTransports(benchConfig.getConfig()->local_shard_indices))
+        throw std::runtime_error("cannot initialize colocated replication");
+    } else {
+      sync_util::sync_logger::local_timestamp_ =
+          std::vector<std::atomic<uint32_t>>(benchConfig.getNthreads());
+#ifndef DISABLE_DISK
+      sync_util::sync_logger::disk_timestamp_ =
+          std::vector<std::atomic<uint32_t>>(benchConfig.getNthreads());
+#endif
+      sync_util::sync_logger::Init(
+          benchConfig.getShardIndex(), benchConfig.getNshards(),
+          benchConfig.getNthreads(), benchConfig.getLeaderConfig(),
+          benchConfig.getCluster(), benchConfig.getConfig());
+    }
+
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
-
-    // Wire the cluster-config read path (shard-0 config service +
-    // per-node ConfigWatcher into the routing cache). No-op unless
-    // MAKO_CLUSTER_CONFIG=1 and the cluster has >1 shard.
-    // @unsafe { RPC I/O, storage index open, background thread }
-    janus::BootstrapClusterConfig(db);
 
 #ifndef DISABLE_DISK
     // Initialize RocksDB persistence layer ONLY on the leader
@@ -942,7 +1124,6 @@ static abstract_db * init_env() {
 
     // start a failure monitor on learners
     if (benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0) { // learner cluster
-      abstract_db * db = replicated_db.getDBWrapper(benchConfig.getNthreads())->getDB () ;
       bench_runner *r = start_workers_tpcc(1, db, benchConfig.getNthreads(), true);
       modeMonitor(db, benchConfig.getNthreads(), r) ;
     }
@@ -955,44 +1136,25 @@ static void send_end_signal() {
   if (BenchmarkConfig::getInstance().getIsReplicated()) {
     Warning("######--------------###### send endLlogs #####---------------######");
     std::string endLogInd = "";
-    for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
-        add_log_to_nc((char *)endLogInd.c_str(), 0, i);
-
-    // vector<std::thread> wait_threads;
-    // for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
-    // {
-    //     wait_threads.push_back(std::thread([i]() {
-    //        std::cout << "starting wait for par_id: " << i << std::endl;
-    //        wait_for_submit(i);
-    //     }));
-    // }
-    // for (auto &th : wait_threads)
-    // {
-    //     th.join();
-    // }
+    for (const auto& site : janus::Config::GetConfig()->GetMyServers()) {
+      if (!add_log_to_nc(endLogInd.c_str(), 0, site.partition_id_))
+        throw std::runtime_error("replication rejected required end marker");
+    }
   }
 }
 
 static void db_close() {
   auto& benchConfig = BenchmarkConfig::getInstance();
+  // @unsafe - no native queue, deferred reply, or watcher may outlive the DB.
+  janus::ShutdownClusterConfig();
   if (benchConfig.getLeaderConfig() && benchConfig.getIsReplicated()) {
     send_end_signal();
-    // Give followers/learners time to receive and process the end signal
-    // before we start cleanup. This prevents race condition where leader
-    // shuts down Paxos before end signal propagates.
-    Notice("Leader sent end signal, waiting 3 seconds for propagation...");
-    std::this_thread::sleep_for(std::chrono::seconds(3));
   }
 
-  mako::stop_helper();
-
-  // Stop multi-shard transports if running
-  stopMultiShardTransports();
-
-  // Wait for termination if not a leader
-  if (!benchConfig.getLeaderConfig()) {
+  if (benchConfig.getIsReplicated())
     wait_for_termination();
-  }
+
+  mako::stop_all_rpc_servers();
 
   // Cleanup and shutdown
   if (benchConfig.getIsReplicated())

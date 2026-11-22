@@ -1,0 +1,31 @@
+BLOCK 2026-09-09T07:58:37.792198+00:00 {'repetition': 1, 'threads': 1, 'variant': 'old', 'engines': ['rust', 'cpp'], 'pair_id': 'r01-c00-1t-old'}
+[guard] r01-c00-1t-old attempt=1 waiting for the next LXD restart after NRestarts=46925
+[guard] r01-c00-1t-old attempt=1 aligned after 63.534s at NRestarts=46926
+[11] rust TPC-C threads=warehouses=1 repetition=1 pair_attempt=1
+[guard] r01-c00-1t-old attempt=1 waiting for the next LXD restart after NRestarts=46926
+[guard] r01-c00-1t-old attempt=1 aligned after 43.492s at NRestarts=46927
+[12] cpp TPC-C threads=warehouses=1 repetition=1 pair_attempt=1
+PROGRESS {"complete_blocks": 2, "cpp_new_over_old": {"max_percent": 99.36456264806947, "median_percent": 99.27186172183143, "min_percent": 99.1791607955934, "ratios": [0.991791607955934, 0.9936456264806947]}, "median_throughput": {"new_cpp": 40445.73655265833, "new_rust": 57459.212563363384, "old_cpp": 40742.41410615993, "old_rust": 58248.67366601815}, "new_rust_over_cpp": {"max_percent": 142.394170096107, "median_percent": 142.06477875808338, "min_percent": 141.73538742005977, "ratios": [1.4173538742005976, 1.42394170096107]}, "normalized_rust_new_over_old_percent": [99.118953519512, 99.61742663432418], "old_rust_over_cpp": {"max_percent": 142.9952419666724, "median_percent": 142.9681331753484, "min_percent": 142.94102438402442, "ratios": [1.4299524196667242, 1.4294102438402443]}, "rust_new_over_old": {"max_percent": 98.98442029645769, "median_percent": 98.64488329324199, "min_percent": 98.30534629002629, "ratios": [0.983053462900263, 0.9898442029645769]}, "threads": 1}
+BLOCK 2026-09-09T08:01:04.890354+00:00 {'repetition': 1, 'threads': 16, 'variant': 'old', 'engines': ['cpp', 'rust'], 'pair_id': 'r01-c02-16t-old'}
+[guard] r01-c02-16t-old attempt=1 waiting for the next LXD restart after NRestarts=46927
+[guard] r01-c02-16t-old attempt=1 aligned after 44.537s at NRestarts=46928
+[13] cpp TPC-C threads=warehouses=16 repetition=1 pair_attempt=1
+[guard] r01-c02-16t-old attempt=1 waiting for the next LXD restart after NRestarts=46928
+[guard] r01-c02-16t-old attempt=1 aligned after 25.322s at NRestarts=46929
+[14] rust TPC-C threads=warehouses=16 repetition=1 pair_attempt=1
+Traceback (most recent call last):
+  File "/var/tmp/sto-capacity-20260909.kKklOX/sto_capacity_final_performance.py", line 308, in <module>
+    main()
+  File "/var/tmp/sto-capacity-20260909.kKklOX/sto_capacity_final_performance.py", line 270, in main
+    pair_results = runner.run_guarded_pair(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/run_sto_tpcc_compare.py", line 1145, in run_guarded_pair
+    raise execution_error
+  File "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/run_sto_tpcc_compare.py", line 1047, in run_guarded_pair
+    run_one(
+  File "/var/tmp/sto-capacity-20260909.kKklOX/sto_capacity_final_performance.py", line 159, in bounded_run_one
+    result = original_run_one(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/run_sto_tpcc_compare.py", line 965, in run_one
+    raise RuntimeError(
+RuntimeError: benchmark failed (-6): /usr/bin/taskset -c 10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 /var/tmp/sto-owner-gate-2770f9d0-20260907T1910Z.BOCOx1/candidate-pgo/sto_tpcc_bench --num-threads 16 --shard-config /home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml --site-name local_s0 --runtime 10 --storage-engine rust; see /var/tmp/sto-capacity-20260909.kKklOX/performance-final-batched/logs-20260909T075837Z/014-r01-c02-16t-old-attempt01-rust.stdout.log and /var/tmp/sto-capacity-20260909.kKklOX/performance-final-batched/logs-20260909T075837Z/014-r01-c02-16t-old-attempt01-rust.stderr.log

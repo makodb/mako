@@ -24,9 +24,8 @@ export namespace janus {
  *
  * Read-only: config mutation is shard-0-only. A read-only consumer that
  * tries to Put/Delete is a bug, so the writes are no-ops. Because
- * ConfigManager and ConfigWatcher only call get() when loading config,
- * wrapping a ConfigManager around a RemoteKvStore makes
- * ClusterConfig::load_from_config_manager work transparently against shard 0.
+ * ConfigManager only calls get() when reading metadata, wrapping it around
+ * a RemoteKvStore provides transparent metadata reads against shard 0.
  *
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the
  * `#if RUSTYCPP_RUST` block is the source of truth, the GEN block is the

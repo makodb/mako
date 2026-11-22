@@ -1,0 +1,365 @@
+[
+  {
+    "command": [
+      "/usr/bin/git",
+      "apply",
+      "--check",
+      "--include=crates/**",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/source.patch"
+    ],
+    "cwd": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/rust-source-snapshot",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.345974+00:00",
+    "log": "rust-source-patch-check.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.313607+00:00",
+    "timeout_seconds": 1800
+  },
+  {
+    "command": [
+      "/usr/bin/git",
+      "apply",
+      "--include=crates/**",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/source.patch"
+    ],
+    "cwd": "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/rust-source-snapshot",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.378469+00:00",
+    "log": "rust-source-patch-apply.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.346382+00:00",
+    "timeout_seconds": 1800
+  },
+  {
+    "command": [
+      "/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+      "-Vv"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.603389+00:00",
+    "log": "cargo-version.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.536046+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/home/users/shuai/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+      "-vV"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.637033+00:00",
+    "log": "rustc-version.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.603933+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/home/users/shuai/.linuxbrew/Cellar/llvm/22.1.8/bin/clang++",
+      "--version"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.754028+00:00",
+    "log": "clang-version.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.637524+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/var/tmp/sto-cmake-3.31.6/bin/cmake",
+      "--version"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.762597+00:00",
+    "log": "cmake-version.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.754567+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/usr/bin/pkg-config",
+      "--version"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:30:08.808521+00:00",
+    "log": "pkg-config-version.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.763155+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/var/tmp/sto-cmake-3.31.6/bin/cmake",
+      "--build",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build",
+      "--target",
+      "rust_sto_integration",
+      "test_silo_runtime",
+      "sto_tpcc_bench",
+      "--parallel",
+      "8"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:32:34.121884+00:00",
+    "log": "native-build.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:30:08.812351+00:00",
+    "timeout_seconds": 1800
+  },
+  {
+    "command": [
+      "/var/tmp/sto-cmake-3.31.6/bin/ctest",
+      "--test-dir",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build",
+      "--show-only=json-v1",
+      "-R",
+      "^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:32:45.460892+00:00",
+    "log": "ctest-descriptor.json",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:32:45.444601+00:00",
+    "timeout_seconds": 60
+  },
+  {
+    "command": [
+      "/var/tmp/sto-cmake-3.31.6/bin/ctest",
+      "--test-dir",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build",
+      "--output-on-failure",
+      "--no-tests=error",
+      "-R",
+      "^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$",
+      "-j1"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:26.019648+00:00",
+    "log": "ctest-boundaries.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:32:45.461996+00:00",
+    "timeout_seconds": 900
+  },
+  {
+    "command": [
+      "/usr/bin/ninja",
+      "-C",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build",
+      "-t",
+      "commands",
+      "sto_tpcc_bench"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:26.085258+00:00",
+    "log": "native-ninja-commands.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:26.020856+00:00",
+    "timeout_seconds": 60
+  },
+  {
+    "command": [
+      "/usr/bin/python3",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/prepare-native-relink.py",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build",
+      "/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang++",
+      "/var/tmp/sto-capacity-20260909.kKklOX/build/rust-sto-tpcc-target/release/libsto_tpcc_ffi.a",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-batched/cargo-use/release/libsto_tpcc_ffi.a",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+      "",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/relink.sh",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/relink-metadata.txt",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/native-link-inputs.txt",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/native-link-original.command",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/native-ninja-commands.txt"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:26.203093+00:00",
+    "log": "prepare-relink.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:26.088524+00:00",
+    "timeout_seconds": 60
+  },
+  {
+    "command": [
+      "/usr/bin/bash",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/relink.sh"
+    ],
+    "cwd": "/var/tmp/sto-capacity-20260909.kKklOX/build",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:28.332054+00:00",
+    "log": "relink.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:26.564053+00:00",
+    "timeout_seconds": 300
+  },
+  {
+    "command": [
+      "/usr/bin/ldd",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:28.631525+00:00",
+    "log": "optimized.ldd",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:28.599336+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/usr/bin/readelf",
+      "-n",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {},
+    "finished_at_utc": "2026-09-09T08:33:28.635933+00:00",
+    "log": "optimized-elf-notes.txt",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:28.632163+00:00",
+    "timeout_seconds": 30
+  },
+  {
+    "command": [
+      "/usr/bin/python3.12",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+      "--expected-failure-text",
+      "TPCC_RESOURCE_EXHAUSTED phase=startup",
+      "--expected-exit-code",
+      "3",
+      "--",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+      "--num-threads",
+      "1",
+      "--shard-config",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+      "--site-name",
+      "local_s0",
+      "--runtime",
+      "30",
+      "--storage-engine",
+      "rust",
+      "--slow-exit"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {
+      "MAKO_STO_TPCC_REGISTRY_MEMORY": "1"
+    },
+    "finished_at_utc": "2026-09-09T08:33:28.801176+00:00",
+    "log": "test_sto_tpcc_rust_startup_resource_exhausted-relinked.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:28.636711+00:00",
+    "timeout_seconds": 240
+  },
+  {
+    "command": [
+      "/usr/bin/python3.12",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+      "--expected-failure-text",
+      "TPCC_RESOURCE_EXHAUSTED phase=load",
+      "--expected-exit-code",
+      "3",
+      "--",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+      "--num-threads",
+      "1",
+      "--shard-config",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+      "--site-name",
+      "local_s0",
+      "--runtime",
+      "30",
+      "--storage-engine",
+      "rust",
+      "--slow-exit"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {
+      "MAKO_STO_TPCC_MAX_RETAINED_RECORDS": "1"
+    },
+    "finished_at_utc": "2026-09-09T08:33:28.966921+00:00",
+    "log": "test_sto_tpcc_rust_load_resource_exhausted-relinked.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:28.802260+00:00",
+    "timeout_seconds": 240
+  },
+  {
+    "command": [
+      "/usr/bin/python3.12",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+      "--expected-failure-text",
+      "TPCC_RESOURCE_EXHAUSTED phase=run",
+      "--expected-exit-code",
+      "3",
+      "--",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+      "--num-threads",
+      "1",
+      "--shard-config",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+      "--site-name",
+      "local_s0",
+      "--runtime",
+      "30",
+      "--storage-engine",
+      "rust",
+      "--slow-exit"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {
+      "MAKO_STO_TPCC_MAX_RETAINED_RECORDS": "350000",
+      "MAKO_TPCC_WORKLOAD_MIX": "100,0,0,0,0"
+    },
+    "finished_at_utc": "2026-09-09T08:33:31.789414+00:00",
+    "log": "test_sto_tpcc_rust_run_resource_exhausted-relinked.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:28.968087+00:00",
+    "timeout_seconds": 240
+  },
+  {
+    "command": [
+      "/usr/bin/python3.12",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/scripts/ci/run_sto_tpcc_ctest.py",
+      "--expected-failure-text",
+      "TPCC_RESOURCE_EXHAUSTED phase=run",
+      "--expected-exit-code",
+      "3",
+      "--",
+      "/var/tmp/sto-capacity-20260909.kKklOX/pgo-final-atomic-output/sto_tpcc_bench",
+      "--num-threads",
+      "4",
+      "--shard-config",
+      "/home/users/shuai/mako/.claude/worktrees/sto-rust/config/mako_sto_tpcc_local.yml",
+      "--site-name",
+      "local_s0",
+      "--runtime",
+      "30",
+      "--storage-engine",
+      "rust",
+      "--slow-exit"
+    ],
+    "cwd": "/home/users/shuai/mako/.claude/worktrees/sto-rust",
+    "extra_environment": {
+      "MAKO_STO_TPCC_MAX_RETAINED_RECORDS": "350000",
+      "MAKO_TPCC_WORKLOAD_MIX": "100,0,0,0,0"
+    },
+    "finished_at_utc": "2026-09-09T08:33:41.731063+00:00",
+    "log": "test_sto_tpcc_rust_concurrent_resource_exhausted-relinked.log",
+    "returncode": 0,
+    "started_at_utc": "2026-09-09T08:33:31.790922+00:00",
+    "timeout_seconds": 240
+  }
+]

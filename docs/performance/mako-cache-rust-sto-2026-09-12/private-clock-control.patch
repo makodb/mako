@@ -1,0 +1,12 @@
+--- crates/mako-engine-sto/src/prefetch.rs	2026-09-13 01:21:50.869932685 -0400
++++ control/crates/mako-engine-sto/src/prefetch.rs	2026-09-13 01:21:50.870932612 -0400
+@@ -19,7 +19,7 @@
+         // cache hint, not an access to or mutation of the packed clock word.
+         unsafe {
+             core::arch::asm!(
+-                "prefetchw [{address}]",
++                "/* {address} */",
+                 address = in(reg) address,
+                 options(nostack, preserves_flags, readonly)
+             );
+

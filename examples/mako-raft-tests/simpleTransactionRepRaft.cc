@@ -26,10 +26,6 @@ public:
         txn_obj_buf.resize(db->sizeof_txn_object(0));
     }
 
-    void initialize() {
-        scoped_db_thread_ctx ctx(db, false);
-    }
-
     void test_basic_transactions() {
         printf("\n--- Testing Basic Transactions Thread:%ld ---\n", std::this_thread::get_id());
 
@@ -374,17 +370,17 @@ void run_worker_tests(abstract_db *db, int worker_id,
                       spin_barrier *barrier_start) {
     printf("[Worker %d] Starting on thread %ld\n", worker_id, std::this_thread::get_id());
 
-    auto worker = new TransactionWorker(db, worker_id);
-    worker->initialize();
+    scoped_db_thread_ctx thread_context(db, false);
+    TransactionWorker worker(db, worker_id);
 
     barrier_ready->count_down();
     barrier_start->wait_for();
 
-    worker->test_basic_transactions();
-    worker->test_single_key_contention();
-    worker->test_overlapping_keys();
-    worker->test_cross_shard_contention();
-    worker->test_read_write_contention();
+    worker.test_basic_transactions();
+    worker.test_single_key_contention();
+    worker.test_overlapping_keys();
+    worker.test_cross_shard_contention();
+    worker.test_read_write_contention();
 
     printf("[Worker %d] Completed\n", worker_id);
 }
@@ -410,9 +406,13 @@ void run_tests(abstract_db* db) {
 }
 
 // Verify data integrity for all tests
+// @unsafe - Reads the replica's physical table through legacy storage APIs.
 bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
     mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
-    auto records = scan_tables(db, table);
+    // Verify replayed rows here, not a distributed scan of other live owners.
+    auto* replica_table = table->shard_for_index(
+        BenchmarkConfig::getInstance().getShardIndex());
+    auto records = scan_tables(db, replica_table);
 
     printf("\n=== Database contents (%zu rows) ===\n", records.size());
     for (const auto &entry : records) {

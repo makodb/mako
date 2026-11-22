@@ -727,9 +727,9 @@ timeout coverage) that previously had to rely on TCP timing.
 |------|---------|
 | 0 | Success |
 | ENOENT | RPC method not found |
-| EINVAL | Bad packet format |
+| EINVAL | Invalid call context/arguments or bad packet format |
 | ETIMEDOUT | Request timed out |
-| EAGAIN | Request rejected by queue policy (overflow/fail-fast) |
+| EAGAIN | Request rejected by queue policy, or `request_with_admission` not admitted to a full channel queue before its deadline (a plain `request` refused by a full channel queue reports `EIO`) |
 
 ---
 
@@ -737,8 +737,8 @@ timeout coverage) that previously had to rely on TCP timing.
 
 ### Client (Single Connection)
 
-`Client` is the public single-connection API (`ClientConnection` is an internal
-pollable implementation detail):
+`Client` is the public single-connection API. Its retained `ClientConnection`
+also exposes lower-level channel-admission control:
 
 ```cpp srpc-no-compile
 auto poll_thread = PollThread::create();
@@ -775,6 +775,58 @@ if (fu_result.is_ok()) {
     fu->wait();  // Block only when result is needed
 }
 ```
+
+### Bounded channel admission
+
+`ClientConnection::request_with_admission(rpc_id, attr, admission_timeout_us,
+write_fn)` serializes the request once and retains the same frame and request ID
+while a full channel returns `WouldBlock`. That result means **no frame bytes
+were accepted**. The method yields cooperatively until admission or its deadline;
+it never resubmits a frame after the channel accepts it.
+
+A positive deadline requires a running SRPC fiber. Retain the connection using
+`Client::connection()`, then release any `Client`/peer lock before calling this
+method. In Mako, `RpcPeer::WithClient` is used only to take that snapshot—not to
+enclose a yielding request. Calls outside a fiber return `EINVAL`; disconnected
+connections fail rather than entering the disconnected-request queue.
+
+Pre-admission validation errors return `Err` without a callback. Once a future
+exists, terminal admission failure completes that future and its callback;
+deadline exhaustion reports `EAGAIN`. Connection closure owns completion if it
+already removed the future from the pending map, preventing double notification.
+`Ok(future)` therefore does not prove successful admission or a successful RPC:
+consume the future's error/reply. A zero deadline preserves ordinary nonblocking
+`request` behavior.
+
+This is queue admission, not response-timeout retry. Mako's Paxos sender uses it
+for accepts, decisions and learner forwarding. Learner forwarding waits in a
+separate fiber so it cannot suspend an application-delivery batch; the learner
+applies only a contiguous slot prefix.
+
+Poll-worker dispatch processes one finite ready-event generation and one
+snapshot of the stackless ready queue per turn. Newly ready events and
+self-woken tasks remain queued for the next turn, so they cannot indefinitely
+prevent TCP polling or pending writable-interest updates. Creating a nested
+fiber still starts it inline, but does not recursively drain the reactor on a
+poll worker. Explicit non-poll `run_loop(false, true)` retains its full
+event-chain drain behavior. A Reactor the poll worker's driver does not drain
+(the disk reactor, or one constructed directly) keeps the full drain and the
+inline pump even on a poll thread. A Shutdown command restores the full drain
+for the driver's last poll, so work readied by a close job queued just before
+`PollThread::shutdown()` still runs.
+
+The native `test_mako_nontxn_distributed` executable includes real socketpair
+regressions for queue drain, deadline rejection without transmission, and close
+during admission, plus ordered learner delivery across gaps and duplicates.
+Its production-poller loopback cases exercise timed/ready-event pressure and
+stackless self-wakes while requiring ordered data/terminal frames and exactly
+one completion per request. These cases connect through `srpc::Client::connect`
+and pad each request to the transport's default outbound high-water mark
+(4 MiB), because a factory-created connection does not expose
+`set_outbound_high_water`. `src/srpc/tests/mako_bounded_turn_rust.rs` covers the
+bounded turn and the shutdown drain in Rust. The separate
+`test_srpc_reactor_manual_compatibility` CTest retains the existing manual
+event-chain and nested-fiber contracts; it does not run the standalone load test.
 
 ### ClientPool (Connection Pool)
 
@@ -1881,8 +1933,14 @@ Four entries that used to sit on this list are **retracted as of 2026-09-16**. E
 
 - **Templates, including template *methods*.** Generic free functions and generic structs lower straight to C++ templates (§8.9); `src/srpc` carries 48 generic `pub fn` sites today (excluding the `rusty-rustc` facade), and a generic *method* is ordinary — `pub fn reg_service_typed<T: Service + 'static>` sits inside `impl Server` (`src/srpc/rpc/server.rs:1180`). Generic structs likewise: `CallbackWrapper<F>` (`src/srpc/base/callback_wrapper.rs:5`) and `SerializableEnvelope<PayloadSet>` (`src/srpc/misc/serializable_envelope.rs:30`) are canonical Rust, and both files were once named as the permanent class-template floor (§8.24, whose framing §8.44 marks historical).
 - **Operator overloading.** Member `operator<<`/`>>` families convert as free operators (§8.4), and an overload family is spelled as a trait with one impl per type (§8.40) — live at `src/srpc/misc/serializable.rs:242` (`pub trait Serialize`, then `impl Serialize for i32`, `for i8`, …).
-- **Custom destructors.** `impl Drop for T` emits a real destructor — `impl Drop for Server` (`src/srpc/rpc/server.rs:788`); for the generated C++ side, see `ConfigWatcher::~ConfigWatcher()` at `src/cluster/config_watcher.h:260`, emitted inside the GEN block from the `impl Drop` at `:136`.
-- **`impl Trait for Type` not producing inheritance.** A *plain* impl still yields only an adapter wrapper — no is-a relationship, no upcast — but mark it `#[cpp_inherit]` and the emitter writes `struct Type : public Trait` with the base ctor prepended to each init-list: `#[cpp_inherit] impl<T: Service> Service for ServiceBoxShim<T>` (`src/srpc/rpc/server.rs:234`), or `src/mako/storage/masstree_ordered_index.hh:167`, whose GEN block emits `struct masstree_ordered_index : public OrderedIndex {` at `:219`. What the DSL does not target is multiple inheritance or a hand-written non-trait base (§4).
+- **Custom destructors.** `impl Drop for T` emits a real destructor — `impl Drop for Server` (`src/srpc/rpc/server.rs:788`). Historical generated-C++ evidence also came from `ConfigWatcher::~ConfigWatcher()`; that watcher was retired with the C++ sharding graph.
+- **`impl Trait for Type` not producing inheritance.** A plain impl yields an
+  adapter rather than an is-a relationship. The authenticated `cpp_inherit`
+  marker emits direct trait inheritance. Storage carriers use its compiler-owned
+  inert spelling, `#[cfg_attr(any(), cpp_inherit)]`, without a Cargo facade;
+  `masstree_ordered_index.hh` emits `struct masstree_ordered_index : public OrderedIndex`.
+  See [the storage regeneration contract](storage-interface.md#authoring--regenerating-the-dsl-blocks)
+  for the current marker, pinned compiler and ODR post-pass.
 
 The `tools/srpc-inventory.py` script scans `src/srpc` and produces a
 per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /

@@ -29,6 +29,12 @@ from extract_srpc_rust import ownership_exception
 ROOT = "src/srpc"
 EXTS = (".cpp", ".hpp", ".h", ".cc")
 
+# The hand-written C++ compatibility shims that remain. This list shrank from
+# twelve to two when srpc finished Goal 0: base/all.hpp, the four misc/ and six
+# rpc/ headers were deleted as canonical Rust took over their modules, so there
+# is no longer a hand-authored provider to account for. The census exists to
+# track exactly this shrinkage, so the list is the measurement, not a
+# convenience.
 COMPATIBILITY_HEADERS = (
     "src/srpc/std_compat.hpp",
     "src/srpc/srpc.hpp",

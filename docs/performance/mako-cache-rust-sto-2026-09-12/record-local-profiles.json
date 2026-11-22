@@ -1,0 +1,32 @@
+{
+  "binary_sha256": "e487077485d4de795266e5224265e468418e6513fb507b70a8445cb4d49a59b6",
+  "remote_directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/profile-record-local",
+  "local_directory": "/var/tmp/mako-engine-perf-20260912.trsFuD/profile-record-local",
+  "sampling": "cycles:u, 1999 Hz, frame-pointer call graph",
+  "scope": "Entire process capture including warmup and verification; retained text reports filter foreground TIDs with relative percentages, excluding background writeback, RocksDB, and main thread.",
+  "lost_samples": 0,
+  "all_workloads_passed_counts_values_environment": true,
+  "profiles": {
+    "engine-w1": {
+      "iterations_per_worker": 16777216,
+      "warmup_per_worker": 1048576,
+      "foreground_tids": [333125],
+      "whole_process_samples": 34623,
+      "perf_data_sha256": "98afcbda19f9d48ed77df66d089be952711177286a41bf94308ec78082533260"
+    },
+    "cache-ack-w1": {
+      "iterations_per_worker": 4194304,
+      "warmup_per_worker": 262144,
+      "foreground_tids": [333517],
+      "whole_process_samples": 33250,
+      "perf_data_sha256": "94ffa10d8a946934eaac23b33917e4454d3ef17542ee60741cedd1579db2c1cf"
+    },
+    "cache-ack-w32": {
+      "iterations_per_worker": 524288,
+      "warmup_per_worker": 65536,
+      "foreground_tids": [333562,333563,333564,333565,333566,333567,333568,333569,333570,333571,333572,333573,333574,333575,333576,333577,333578,333579,333580,333581,333582,333583,333584,333585,333586,333587,333588,333589,333590,333591,333592,333593],
+      "whole_process_samples": 137503,
+      "perf_data_sha256": "4a9cf59b424f889b8db76c097f33ce3d5bd5bf3f46bf28d0bb33cd886ad608cb"
+    }
+  }
+}

@@ -4,6 +4,12 @@
 
 > **About the examples.** This guide was distilled from migrating the `srpc` RPC framework. Concrete class names (`TcpConnection`, `RequestQueue`, `Reactor`), the underscore-suffix field convention (`fd_`, `closed_`), and the prefix-based free-function naming (`tcpconn_*`, `future_*`) are **srpc conventions** — adapt them to your codebase's style. Where a transpiler feature or footgun is tied to a specific `rusty-cpp` commit, that commit is noted so you can tell whether *your* checkout has it. Patterns are general; the proper nouns are illustrative.
 
+> **Retired sharding examples.** All citations and snippets using the C++
+> `ClusterConfig`, `ConfigWatcher`, `KeyExtractor`, `RangeMapping`,
+> `TableShardingPolicy`, or `ShardingPolicySet` graph are historical conversion
+> evidence, including source-line and regeneration-census references. The native
+> Rust cutover deleted that graph; these examples are not APIs to instantiate.
+
 > **If you are reading this inside the Mako repo**, this guide is the canonical *how*; these are its companions, and where they disagree with this file, they win on policy and this file wins on mechanics:
 >
 > | Document | Role |
@@ -361,7 +367,7 @@ So every rule in §3.2–§3.4 carries a **Floor** label saying which kind of ob
 | Floor label | What it means | What you do about it |
 |---|---|---|
 | `rust-language floor` | Rust itself has no spelling for the C++ shape — §8.45's four REAL verdicts (variadic parameter packs, per-field in-class default initialisers, default arguments, `nullptr`), plus the shapes the language rules out outright: two functions of one name in one scope, a trait that carries data, a type that inherits a type, an anonymous enum type, a name spelled with a Rust keyword. | Design around it permanently. The rule tells you what to write *instead*. |
-| `by-design floor` | The DSL is a memory-safe subset **and** a code generator, and each fact excludes something on purpose. Three families: the *unsafe substrate* sits at the boundary rather than inside — raw-pointer/`memcpy` byte kernels, assembly, third-party and generated wire types (§8.6); *compile-time type metaprogramming* has no DSL spelling at all — CRTP, `TypeList`, SFINAE conversion ctors (§8.6, R51); and the *generation model* fixes what a block may emit and what it can see — declaration and definition together, rewritten in place, no cross-file view, no authority over the GMF (R21, R36–R38, R40, R50). Raw **syscalls are not on that list**: §8.6's bullet still names them, §8.7 is the later ruling, and this row follows §8.7. | Put the boundary in the right place — convert *at the edge*, annotate `@unsafe`. For a syscall, try §8.7's two sanctioned in-DSL routes first: **route 1**, call an existing std-faithful wrapper straight from the DSL (`clientconn_monotonic_ms_now` calls `rusty::sys::time::clock_monotonic_us`, `src/srpc/rpc/client.rs:1916`); **route 2**, a DSL `unsafe {}` block calling libc directly (`epoll_add_impl` calls `epoll_ctl`, reading bare `errno` and the `EEXIST`/`EBADF` macros, `src/srpc/reactor/epoll_platform_linux.cc:62`). Only what neither route reaches — platform `#ifdef` splits, `va_list`, asm, a struct fill the grammar rejects — stays an `@unsafe` C++ kernel. |
+| `by-design floor` | The DSL is a memory-safe subset **and** a code generator, and each fact excludes something on purpose. Three families: the *unsafe substrate* sits at the boundary rather than inside — raw-pointer/`memcpy` byte kernels, assembly, third-party and generated wire types (§8.6); *compile-time type metaprogramming* has no DSL spelling at all — CRTP, `TypeList`, SFINAE conversion ctors (§8.6, R51); and the *generation model* fixes what a block may emit and what it can see — declaration and definition together, rewritten in place, no cross-file view, no authority over the GMF (R21, R36–R38, R40, R50). Raw **syscalls are not on that list**: §8.6's bullet still names them, §8.7 is the later ruling, and this row follows §8.7. | Put the boundary in the right place — convert *at the edge*, annotate `@unsafe`. For a syscall, try §8.7's two sanctioned in-DSL routes first: **route 1**, call an existing std-faithful wrapper straight from the DSL; **route 2**, a DSL `unsafe {}` block calling libc directly, reading bare `errno` and macros such as `EEXIST`/`EBADF`. The two `src/srpc` examples this row used to cite no longer exist: `clientconn_monotonic_ms_now` is now `Time::now(true) / 1000` (`src/srpc/rpc/client.rs`), and `epoll_add_impl` lived in `src/srpc/reactor/epoll_platform_linux.cc`, which has been removed. The `srpc.epoll_wrapper` module is now canonical `src/srpc/reactor/epoll_wrapper.rs`, and its syscalls sit in the C kernel `src/srpc/reactor/srpc_epoll.c`, declared through an `unsafe extern "C"` block (`srpc_epoll_ctl_token`). Only what neither route reaches — platform `#ifdef` splits, `va_list`, asm, a struct fill the grammar rejects — stays an `@unsafe` C++ kernel. |
 | `transpiler gap (pin a1f8fef8)` | A dated observation about one binary. | **Re-probe. Do not inherit.** |
 | `style` | No tool forces it. It makes the diff reviewable, the failure bisectable, and the next person's job smaller. | Do it anyway. |
 
@@ -521,6 +527,12 @@ impl mbta_ordered_index { /* tx_get, shard_get, ... */ }
 **Exception.** §4's "the DSL targets single-trait inheritance … keep it hand-written" is **stale** for composed *traits* — it still holds for a hand-written, non-trait base. A file whose trait arrives by import must leave the regen list and have its GEN hand-maintained.
 
 #### R3. Decide copyable aggregate vs move-only before you write the impl
+
+> **Historical examples in R3–R5.** `RangeMapping`, `ShardingPolicySet`,
+> `TableShardingPolicy`, and `ClusterConfig` below illustrate earlier DSL
+> conversion behavior. Their C++ sharding implementations and cited source
+> files have been retired by the native Rust cutover. Do not instantiate them
+> in new code; the language lessons remain applicable to other value types.
 
 **Rule.** A `pub struct` + **inherent** `impl X` lowers to a copyable aggregate with no synthesized ctor and no move ctor — keep that shape for value types that must live by value in `std::map`/`std::vector` and be default-constructed-then-filled. It carries no field initializers either, so a bare `RangeMapping r;` leaves every field **indeterminate** where the old constructor zeroed them — the only default construction that stays safe is the marshal reader's, which overwrites every field immediately; every other site takes the factory (R4). Attaching a trait with `#[cpp_inherit]` makes the type move-only with a synthesized fieldwise + move ctor. **Choose the shape first; it changes every call site.**
 
@@ -2253,7 +2265,7 @@ struct Serializable {                      // ZERO fields
 
 #### R50. Trust the drift guard for source edits only
 
-**Rule.** `scripts/srpc_dsl_check.sh` / `inline-rust --check` compares each block's recorded `rust_sha256` against the hash of the `#if RUSTYCPP_RUST` source. It does **not** re-run codegen and byte-compare the emitted C++, so it cannot see a GEN region that is stale with respect to the **transpiler**. Regenerate one file at a time, as part of converting something in it, and build. Know its present blast radius too: the glob (`scripts/srpc_dsl_check.sh:31-32`) now finds **five** carriers — `src/srpc/reactor/epoll_platform_linux.cc` and four tests — so "checked 5 files" is what a run prints; the storage/cluster census is covered instead by `scripts/regen_storage_dsl.sh --check`, a real regen-and-diff; and the 37 canonical `.rs` modules are regenerated from source on every build (`src/srpc/CMakeLists.txt:514-543`), so they have no GEN-drift axis at all.
+**Rule.** `inline-rust --check` compares each block's recorded `rust_sha256` against the hash of the `#if RUSTYCPP_RUST` source. It does **not** re-run codegen and byte-compare the emitted C++, so it cannot see a GEN region that is stale with respect to the **transpiler**. Regenerate one file at a time, as part of converting something in it, and build. Know its present blast radius too: `scripts/srpc_dsl_check.sh` is now a shim that runs `src/srpc/scripts/srpc_dsl_check.sh`, and that script no longer hash-checks anything. It scans `base/`, `misc/`, `reactor/` and `rpc/` for inline-carrier markers and fails unless it finds **zero**, printing "checked canonical sources: zero inline-Rust carriers". The last production carrier, `src/srpc/reactor/epoll_platform_linux.cc`, has been removed; four test files under `src/srpc/tests/` still hold inline blocks and sit outside that scan. The storage/cluster census is covered instead by `scripts/regen_storage_dsl.sh --check`, a real regen-and-diff; and the 37 canonical `.rs` modules are regenerated from source on every build (`src/srpc/CMakeLists.txt:514-543`), so they have no GEN-drift axis at all.
 
 **Why.** The blind spot is structural: changing the transpiler does not change the Rust. Measured, not reasoned — a bulk regen of all 41 DSL files changed 26 of them (+234/−101) while the check reported zero drift throughout. "0 with drift" is a weaker statement than it looks. That measurement is historical and cannot be rerun as stated — `client.cpp`, where five of the stale blocks sat, no longer exists — but the blind spot it exposed did not go with it.
 
@@ -3518,8 +3530,9 @@ reasons, so do not do one casually:
     whose primary templates live in `<rusty/traits.hpp>`. inline-rust
     cannot add includes, so the file must include it itself — same shape
     as the intrinsics include in channel.cpp. Fixable per-file.
- 2. **`errno` is renamed to `errno_`** in epoll_platform_linux.cc, which
-    does not compile. This one needs a DECISION, not a patch. The rename
+ 2. **`errno` is renamed to `errno_`** in epoll_platform_linux.cc (a
+    carrier that has since been removed; see `reactor/epoll_wrapper.rs` and
+    `reactor/srpc_epoll.c`), which does not compile. This one needs a DECISION, not a patch. The rename
     exists for a good reason (mod.rs ~54690): `errno` is a libc MACRO, so
     a fn *named* errno emitted verbatim gets textually replaced and fails
     with a diagnostic naming neither. But this DSL is *reading* libc's
@@ -4700,9 +4713,11 @@ much:
    about the transpiler, so a pin bump that changes output silently
    passes on every file.
 
-Worked example, and the reason this section exists.
-`reactor/epoll_platform_linux.cc` reads libc `errno`. Its checked-in GEN
-contains a bare `errno`, but the transpiler at the time renamed it to
+Worked example, and the reason this section exists. (The file is gone
+now: `reactor/epoll_wrapper.rs` and the C kernel `reactor/srpc_epoll.c`
+replaced it. The example is kept as it was recorded.)
+`reactor/epoll_platform_linux.cc` read libc `errno`. Its checked-in GEN
+contained a bare `errno`, but the transpiler at the time renamed it to
 `errno_` (§8.18). Both facts were true at once and `--check` reported
 CLEAN, because the source hash matched. I briefly read that CLEAN as
 evidence the errno bug was already fixed — it was evidence of nothing.

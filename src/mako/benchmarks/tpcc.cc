@@ -8,6 +8,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <array>
+#include <cstring>
 #include <sys/time.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -40,6 +42,7 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 
 #include "bench.h"
 #include "tpcc.h"
+#include "tpcc_fixed_batch.h"
 #include "lib/server.h"
 #include "sto/Interface.hh"
 #include "sto/Transaction.hh"
@@ -48,9 +51,13 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "sto/multiversion.hh"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
+#include "benchmarks/tpcc_warehouse_bridge.h"
 #include "benchmarks/tpcc_sharding.h"
+#include "lib/sharding_admission.h"
+#include <rusty/vec.hpp>
 
 import std;
+import rusty;
 
 using namespace std;
 using namespace util;
@@ -177,7 +184,7 @@ public:
 #ifdef CHECK_INVARIANTS
     if (set<T *>(locks.begin(), locks.end()).size() != locks.size()) {
       for (auto &t : locks)
-        cerr << "lock: " << hexify(t) << endl;
+        mako::benchmark_cerr() << "lock: " << hexify(t) << endl;
       INVARIANT(false && "duplicate locks found");
     }
 #endif
@@ -368,44 +375,182 @@ struct checker {
 
 };
 
+class new_order_item_read_callback final : public oi_fixed_read_callback {
+public:
+  new_order_item_read_callback(const uint *item_ids, float *item_prices)
+      : item_ids_(item_ids), item_prices_(item_prices) {}
 
-struct _dummy {}; // exists so we can inherit from it, so we can use a macro in
-                  // an init list...
+  void invoke(size_t index, const char *current_value,
+              size_t current_value_length) override {
+    if (current_value == nullptr)
+      throw abstract_db::abstract_abort_exception();
+    item::value decoded_storage;
+    const item::value *current = encoder<item::value>().failsafe_read(
+        reinterpret_cast<const uint8_t *>(current_value),
+        current_value_length, &decoded_storage);
+    if (current == nullptr)
+      throw abstract_db::abstract_abort_exception();
+    const item::key key(item_ids_[index]);
+    checker::SanityCheckItem(&key, current);
+    item_prices_[index] = current->i_price;
+  }
 
-class tpcc_worker_mixin : private _dummy {
+private:
+  const uint *item_ids_;
+  float *item_prices_;
+};
+
+#if !HASHTABLE
+class new_order_stock_modify_callback final
+    : public oi_fixed_modify_callback {
+public:
+  new_order_stock_modify_callback(
+      uint home_warehouse_id, const uint *supplier_warehouse_ids,
+      const uint *item_ids, const uint *order_quantities,
+      std::string &encoded_scratch)
+      : home_warehouse_id_(home_warehouse_id),
+        supplier_warehouse_ids_(supplier_warehouse_ids),
+        item_ids_(item_ids), order_quantities_(order_quantities),
+        encoded_scratch_(encoded_scratch) {}
+
+  oi_fixed_mutation_result invoke(
+      size_t index, const char *current_value,
+      size_t current_value_length) override {
+    if (current_value == nullptr)
+      throw abstract_db::abstract_abort_exception();
+
+    stock::value decoded_storage;
+    const stock::value *current = encoder<stock::value>().failsafe_read(
+        reinterpret_cast<const uint8_t *>(current_value),
+        current_value_length, &decoded_storage);
+    if (current == nullptr)
+      throw abstract_db::abstract_abort_exception();
+
+    const uint supplier_warehouse_id = supplier_warehouse_ids_[index];
+    const stock::key key(WarehouseGlobal2Local(supplier_warehouse_id),
+                         item_ids_[index]);
+    checker::SanityCheckStock(&key, current);
+
+    const uint quantity = order_quantities_[index];
+    const stock::value replacement =
+        tpcc_fixed_batch::apply_new_order_stock(
+            *current, quantity,
+            supplier_warehouse_id !=
+                WarehouseLocal2Global(home_warehouse_id_));
+
+    Encode(encoded_scratch_, replacement);
+    return oi_fixed_mutation_result::put(encoded_scratch_);
+  }
+
+private:
+  uint home_warehouse_id_;
+  const uint *supplier_warehouse_ids_;
+  const uint *item_ids_;
+  const uint *order_quantities_;
+  std::string &encoded_scratch_;
+};
+
+class new_order_district_modify_callback final
+    : public oi_fixed_modify_callback {
+public:
+  new_order_district_modify_callback(const district::key &key,
+                                     district::value &observed,
+                                     std::string &encoded_scratch)
+      : key_(key), observed_(observed), encoded_scratch_(encoded_scratch) {}
+
+  oi_fixed_mutation_result invoke(
+      size_t index, const char *current_value,
+      size_t current_value_length) override {
+    if (index != 0 || current_value == nullptr)
+      throw abstract_db::abstract_abort_exception();
+
+    district::value decoded_storage;
+    const district::value *current =
+        encoder<district::value>().failsafe_read(
+            reinterpret_cast<const uint8_t *>(current_value),
+            current_value_length, &decoded_storage);
+    if (current == nullptr)
+      throw abstract_db::abstract_abort_exception();
+
+    observed_ = *current;
+    checker::SanityCheckDistrict(&key_, &observed_);
+    district::value replacement(observed_);
+    replacement.d_next_o_id++;
+    Encode(encoded_scratch_, replacement);
+    return oi_fixed_mutation_result::put(encoded_scratch_);
+  }
+
+private:
+  const district::key &key_;
+  district::value &observed_;
+  std::string &encoded_scratch_;
+};
+
+#endif
+
+
+class tpcc_worker_mixin {
 
 #define DEFN_TBL_INIT_X(name) \
   , tbl_ ## name ## _vec(partitions.at(#name)) \
-  , remote_tbl_ ## name ## _remote_vec(remote_partitions.at(#name))
+  , remote_tbl_ ## name ## _remote_vec(remote_partitions.at(#name)) \
+  , identity_ ## name(tpcc_table_identity(#name))
 
 public:
+  // @unsafe - borrows static-mode handles and prepares native warehouse
+  // coordinates without selecting engine handles or admitting storage access.
   tpcc_worker_mixin(const map<string, vector<abstract_ordered_index *>> &partitions,
-                    const map<string, vector<abstract_ordered_index *>> &remote_partitions) :
-    _dummy() // so hacky...
+                    const map<string, vector<abstract_ordered_index *>> &remote_partitions,
+                    int shard_index) :
+    warehouse_origin_(shard_index < 0
+        ? BenchmarkConfig::getInstance().getShardIndex() : shard_index)
     TPCC_TABLE_LIST(DEFN_TBL_INIT_X)
   {
     ALWAYS_ERROR(NumWarehouses() >= 1);
+    // @unsafe - precomputes catalog coordinate bytes without acquiring authority.
+#define PREPARE_TBL_ROUTES_X(name) \
+    if (identity_ ## name.kind == 0) { \
+      routes_ ## name.reserve(NumWarehousesTotal()); \
+      for (size_t wid = 1; wid <= NumWarehousesTotal(); ++wid) \
+        routes_ ## name.push(ShardingPreparedRoute(identity_ ## name.table, wid)); \
+    }
+    TPCC_TABLE_LIST(PREPARE_TBL_ROUTES_X)
+#undef PREPARE_TBL_ROUTES_X
   }
+
+  // @unsafe - trivial route elements have no fallible cleanup; preserve the
+  // legacy worker/loader base classes' nonthrowing destruction contract.
+  ~tpcc_worker_mixin() noexcept = default;
 
 #undef DEFN_TBL_INIT_X
 
-protected:
+private:
+  const uint32_t warehouse_origin_;
 
 #define DEFN_TBL_ACCESSOR_X(name) \
-private:  \
-  vector<abstract_ordered_index *> tbl_ ## name ## _vec; \
-  vector<abstract_ordered_index *> remote_tbl_ ## name ## _remote_vec; \
+private: \
+  const vector<abstract_ordered_index *>& tbl_ ## name ## _vec; \
+  const vector<abstract_ordered_index *>& remote_tbl_ ## name ## _remote_vec; \
+  const TpccTableIdentity identity_ ## name; \
+  rusty::Vec<ShardingPreparedRoute> routes_ ## name; \
 protected: \
+  /* @unsafe - native handle borrow; static vectors are immutable setup data. */ \
   inline ALWAYS_INLINE abstract_ordered_index * \
   tbl_ ## name (unsigned int wid) \
   { \
     INVARIANT(wid >= 1 && wid <= NumWarehouses()); \
-    INVARIANT(tbl_ ## name ## _vec.size() == NumWarehouses()); \
+    if (identity_ ## name.kind == 0) \
+      return tpcc_resolve_warehouse( \
+          routes_ ## name[warehouse_origin_ * NumWarehouses() + wid - 1], warehouse_origin_); \
     return tbl_ ## name ## _vec[wid - 1]; \
   } \
+  /* @unsafe - global warehouse access shares the transaction-bound descriptor. */ \
   inline ALWAYS_INLINE abstract_ordered_index * \
   remote_tbl_ ## name (unsigned int wid) \
   { \
+    INVARIANT(wid >= 1 && wid <= NumWarehousesTotal()); \
+    if (identity_ ## name.kind == 0) \
+      return tpcc_resolve_warehouse(routes_ ## name[wid - 1], warehouse_origin_); \
     return remote_tbl_ ## name ## _remote_vec[wid - 1]; \
   }
 
@@ -425,7 +570,7 @@ protected: \
     ALWAYS_ERROR(partid < BenchmarkConfig::getInstance().getNthreads());
     const unsigned int pinid  = partid;
     if (BenchmarkConfig::getInstance().getVerbose())
-      cerr << "PinToWarehouseId(): coreid=" << coreid::core_id()
+      mako::benchmark_cerr() << "PinToWarehouseId(): coreid=" << coreid::core_id()
            << " pinned to whse=" << wid << " (partid=" << partid << ")"
            << endl;
     rcu::s_instance.pin_current_thread(pinid);
@@ -632,43 +777,47 @@ public:
     return true;
   }
 
+  // Native MassTrans invokes the callback once more after ten retained rows;
+  // preserve that read-set/callback boundary for materializing backends.
+  size_t max_records_hint() const override { return 11; }
+
   inline void print_warehouse_info() {
-    std::cout << "# of records in the warehouse table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the warehouse table: " << values.size() << std::endl;
     for (int i=0; i<values.size(); i++) {
-      std::cout << "  " << "id: " << ((warehouse::key)(values[i].first)).w_id << std::endl;
+      mako::benchmark_cout() << "  " << "id: " << ((warehouse::key)(values[i].first)).w_id << std::endl;
     }
-    std::cout << std::endl;
+    mako::benchmark_cout() << std::endl;
   }
 
   inline int64_t print_customer_info() {
-    std::cout << "# of records in the customer table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the customer table: " << values.size() << std::endl;
     int64_t total_balance = 0;
     int total_remote_udpate = 0;
     for (int i=0; i<values.size(); i++) {
-        std::cout << "  " << "key: " << ((customer::key)(values[i].first))
+        mako::benchmark_cout() << "  " << "key: " << ((customer::key)(values[i].first))
                   << ", balance: " <<((customer::value)(values[i].second)).c_payment_cnt << std::endl;
       total_balance += ((customer::value)(values[i].second)).c_payment_cnt;
       total_remote_udpate += ((customer::value)(values[i].second)).c_delivery_cnt;
     }
-    std::cout << "  " << "total balance is " << total_balance;
-    std::cout << "  " << "total remote update is " << total_remote_udpate;
-    std::cout << std::endl;
+    mako::benchmark_cout() << "  " << "total balance is " << total_balance;
+    mako::benchmark_cout() << "  " << "total remote update is " << total_remote_udpate;
+    mako::benchmark_cout() << std::endl;
     return total_balance;
   }
 
   inline int64_t print_oorder_info() {
-    std::cout << "# of records in the oorder table: " << values.size() << std::endl;
+    mako::benchmark_cout() << "# of records in the oorder table: " << values.size() << std::endl;
     int64_t total_cost = 0;
     for (int i=0; i<values.size(); i++) {
-      std::cout << "  " << "key: " << ((oorder::key)(values[i].first))
+      mako::benchmark_cout() << "  " << "key: " << ((oorder::key)(values[i].first))
                 << ", item-id: " <<((oorder::value)(values[i].second)).o_c_id 
                 << ", customer-id: " <<((oorder::value)(values[i].second)).o_carrier_id 
                 << ", value: " << (oorder::value)(values[i].second)
                 << std::endl;
       total_cost += ((oorder::value)(values[i].second)).o_c_id;
     }
-    std:: cout << "  " << "total cost is " << total_cost;
-    std::cout << std::endl;
+    mako::benchmark_cout() << "  " << "total cost is " << total_cost;
+    mako::benchmark_cout() << std::endl;
     return total_cost;
   }
 
@@ -695,7 +844,7 @@ public:
               int shard_index = -1)
     : bench_worker(worker_id, true, seed, db,
                    open_tables, barrier_a, barrier_b, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions),
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index),
       warehouse_id_start(warehouse_id_start),
       warehouse_id_end(warehouse_id_end)
   {
@@ -704,7 +853,7 @@ public:
     INVARIANT(warehouse_id_end > warehouse_id_start);
     INVARIANT(warehouse_id_end <= (NumWarehouses() + 1));
     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
-    cerr << "tpcc: worker id " << worker_id
+    mako::benchmark_cerr() << "tpcc: worker id " << worker_id
         << " => warehouses [" << warehouse_id_start
         << ", " << warehouse_id_end << ")"
         << endl;
@@ -882,7 +1031,7 @@ public:
                         const map<string, vector<abstract_ordered_index *>> &remote_partitions,
                         int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions)
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index)
   {}
 
 protected:
@@ -1005,7 +1154,7 @@ protected:
         //   but the problem here is add more code to obtain the fetch_and_add
         ALWAYS_ERROR(tx_get(tbl_warehouse(i), txn, Encode(k), warehouse_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return;}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return;}
         warehouse::value warehouse_temp;
         const warehouse::value *v = Decode(warehouse_v, warehouse_temp);
         ALWAYS_ERROR(warehouses[i - 1] == *v);
@@ -1018,8 +1167,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading warehouse" << endl;
-      cerr << "[INFO]   * average warehouse record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading warehouse" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average warehouse record length: "
            << (double(warehouse_total_sz)/double(n_warehouses)) << " bytes" << endl;
     }
 #endif
@@ -1035,7 +1184,7 @@ public:
                    const map<string, vector<abstract_ordered_index *>> &remote_partitions,
                    int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions)
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index)
   {}
 
 protected:
@@ -1083,8 +1232,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading item" << endl;
-      cerr << "[INFO]   * average item record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading item" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average item record length: "
            << (double(total_sz)/double(NumItems())) << " bytes" << endl;
     }
   }
@@ -1099,7 +1248,7 @@ public:
                     ssize_t warehouse_id,
                     int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions),
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index),
       warehouse_id(warehouse_id)
   {
     ALWAYS_ERROR(warehouse_id == -1 ||
@@ -1176,24 +1325,24 @@ protected:
           } else {
             db->abort_txn(txn);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] stock loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] stock loader loading abort" << endl;
           }
         } catch (abstract_db::abstract_abort_exception &ex) {
           db->abort_txn(txn);
           ALWAYS_ERROR(warehouse_id != -1);
           if (BenchmarkConfig::getInstance().getVerbose())
-            cerr << "[WARNING] stock loader loading abort" << endl;
+            mako::benchmark_cerr() << "[WARNING] stock loader loading abort" << endl;
         }
       }
     }
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading stock" << endl;
-        cerr << "[INFO]   * average stock record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading stock" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average stock record length: "
              << (double(stock_total_sz)/double(n_stocks)) << " bytes" << endl;
       } else {
-        cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1211,7 +1360,7 @@ public:
                        const map<string, vector<abstract_ordered_index *>> &remote_partitions,
                        int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions)
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index)
   {}
 
 protected:
@@ -1261,8 +1410,8 @@ protected:
       ALWAYS_ERROR(false);
     }
     if (BenchmarkConfig::getInstance().getVerbose()) {
-      cerr << "[INFO] finished loading district" << endl;
-      cerr << "[INFO]   * average district record length: "
+      mako::benchmark_cerr() << "[INFO] finished loading district" << endl;
+      mako::benchmark_cerr() << "[INFO]   * average district record length: "
            << (double(district_total_sz)/double(n_districts)) << " bytes" << endl;
     }
   }
@@ -1278,7 +1427,7 @@ public:
                        ssize_t warehouse_id,
                        int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions),
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index),
       warehouse_id(warehouse_id)
   {
     ALWAYS_ERROR(warehouse_id == -1 ||
@@ -1302,7 +1451,7 @@ protected:
     const size_t nbatches =
       (batchsize > NumCustomersPerDistrict()) ?
         1 : (NumCustomersPerDistrict() / batchsize);
-    cerr << "num batches: " << nbatches << endl;
+    mako::benchmark_cerr() << "num batches: " << nbatches << endl;
 
     uint64_t total_sz = 0;
 
@@ -1390,12 +1539,12 @@ protected:
             } else {
               db->abort_txn(txn);
               if (BenchmarkConfig::getInstance().getVerbose())
-                cerr << "[WARNING] customer loader loading abort" << endl;
+                mako::benchmark_cerr() << "[WARNING] customer loader loading abort" << endl;
             }
           } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] customer loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] customer loader loading abort" << endl;
           }
         }
       }
@@ -1403,12 +1552,12 @@ protected:
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading customer" << endl;
-        cerr << "[INFO]   * average customer record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading customer" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average customer record length: "
              << (double(total_sz)/double(NumWarehouses()*NumDistrictsPerWarehouse()*NumCustomersPerDistrict()))
              << " bytes " << endl;
       } else {
-        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1427,7 +1576,7 @@ public:
                     ssize_t warehouse_id,
                     int shard_index = -1)
     : bench_loader(seed, db, open_tables, shard_index),
-      tpcc_worker_mixin(partitions,remote_partitions),
+      tpcc_worker_mixin(partitions,remote_partitions,shard_index),
       warehouse_id(warehouse_id)
   {
     ALWAYS_ERROR(warehouse_id == -1 ||
@@ -1532,13 +1681,13 @@ protected:
               db->abort_txn(txn);
               ALWAYS_ERROR(warehouse_id != -1);
               if (BenchmarkConfig::getInstance().getVerbose())
-                cerr << "[WARNING] order loader loading abort" << endl;
+                mako::benchmark_cerr() << "[WARNING] order loader loading abort" << endl;
             }
           } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             ALWAYS_ERROR(warehouse_id != -1);
             if (BenchmarkConfig::getInstance().getVerbose())
-              cerr << "[WARNING] order loader loading abort" << endl;
+              mako::benchmark_cerr() << "[WARNING] order loader loading abort" << endl;
           }
         }
       }
@@ -1546,15 +1695,15 @@ protected:
 
     if (BenchmarkConfig::getInstance().getVerbose()) {
       if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading order" << endl;
-        cerr << "[INFO]   * average order_line record length: "
+        mako::benchmark_cerr() << "[INFO] finished loading order" << endl;
+        mako::benchmark_cerr() << "[INFO]   * average order_line record length: "
              << (double(order_line_total_sz)/double(n_order_lines)) << " bytes" << endl;
-        cerr << "[INFO]   * average oorder record length: "
+        mako::benchmark_cerr() << "[INFO]   * average oorder record length: "
              << (double(oorder_total_sz)/double(n_oorders)) << " bytes" << endl;
-        cerr << "[INFO]   * average new_order record length: "
+        mako::benchmark_cerr() << "[INFO]   * average new_order record length: "
              << (double(new_order_total_sz)/double(n_new_orders)) << " bytes" << endl;
       } else {
-        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
+        mako::benchmark_cerr() << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
       }
     }
   }
@@ -1601,7 +1750,7 @@ void tpcc_worker::scan_entire_warehouses(int w_id) {
     ALWAYS_ERROR(db->commit_txn(txn_1));
     int64_t b = calloc_2.print_oorder_info();
 
-    std::cout << "  balance + cost: " << a + b << std::endl;
+    mako::benchmark_cout() << "  balance + cost: " << a + b << std::endl;
     if ((a+b)!=1000000000) {
       Warning("it is not equal, %d!=%d", (a+b), 1000000000);
     }*/
@@ -1638,7 +1787,7 @@ tpcc_worker::txn_new_order_simple() {
           customer::key k_c(warehouse_id, 1, c_id);
           ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,is_remote?1:0);}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,is_remote?1:0);}
           customer::value v_c_temp;
           const customer::value *v_c = Decode(obj_v, v_c_temp);
           customer::value v_c_new(*v_c);
@@ -1692,7 +1841,7 @@ tpcc_worker::txn_new_order_simple() {
           customer::key k_c(warehouse_id, 1, c_id);
           ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(is_remote,0);}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(is_remote,0);}
           customer::value v_c_temp;
           const customer::value *v_c = Decode(obj_v, v_c_temp);
           customer::value v_c_new(*v_c);
@@ -1895,7 +2044,7 @@ tpcc_worker::txn_new_order_micro_drtm() {
       } else {
         ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(isRemote,0);}
         {
           item_micro::value v_c_temp;
           const item_micro::value *v_c = Decode(obj_v, v_c_temp);
@@ -1950,7 +2099,7 @@ tpcc_worker::txn_new_order_micro() {
       } else {
         ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(isRemote,0);}
         tx_put(tbl_item(1), txn, Encode(str(), k), Encode(str(), v));
       }
     }
@@ -2003,7 +2152,7 @@ tpcc_worker::txn_new_order_micro_mega()
           item_micro::value bv;
           ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(bk), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(isRemote,0);}
           tx_put(tbl_item(1), txn, Encode(str(), bk), Encode(str(), bv));
         }
       }
@@ -2105,20 +2254,20 @@ tpcc_worker::txn_new_order_mega()
         const customer::key k_c(warehouse_id, districtID, customerID+i>3000?customerID+i-3000:customerID+i);
         ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
     }
 
     // for warehouse_id and districtID, just do once
     const warehouse::key k_w(warehouse_id);
     ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
 
 
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
 
     int32_t no_o_ids[batch_size];
     for (int i=0;i<batch_size;i++){
@@ -2160,7 +2309,7 @@ tpcc_worker::txn_new_order_mega()
         const item::key k_i(ol_i_id);
         ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
         item::value v_i_temp;
         const item::value *v_i = Decode(obj_v, v_i_temp);
         checker::SanityCheckItem(&k_i, v_i);
@@ -2170,7 +2319,7 @@ tpcc_worker::txn_new_order_mega()
           const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), ol_i_id);
           ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_get(txn, EncodeK(obj_key0, k_s), obj_v, std::string::npos));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
     
           stock::value v_s_temp;
           const stock::value *v_s = Decode(obj_v, v_s_temp);
@@ -2241,7 +2390,7 @@ tpcc_worker::txn_new_order_mega()
     if (n==1002) { // same as fasttransport.cc
       counter_new_order_failed+=1;
     }
-    db->abort_txn_local(txn);
+    db->abort_txn(txn); // @unsafe - a timeout may still own remote engine leases
   }
   return txn_result(false, 0 + (isRemote?1:0));
 }
@@ -2293,14 +2442,18 @@ tpcc_worker::txn_new_order()
 
 #if defined(FAIL_NEW_VERSION)
       if (BenchmarkConfig::getInstance().getControlMode()==4){ // distributed transaction without failed shard
-        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i])==sync_util::sync_logger::failed_shard_index){
+        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i]) ==
+            sync_util::sync_logger::failed_shard_index.load(
+                std::memory_order_relaxed)) {
           counter_new_order_failed+=1;
           return txn_result(false, 0 + (isRemote?1:0));
         }
       }
 #else
       if (BenchmarkConfig::getInstance().getControlMode()==1){ // distributed transaction without failed shard
-        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i])==sync_util::sync_logger::failed_shard_index){
+        if (ShardIndexFromGlobalWarehouse(supplierWarehouseIDs[i]) ==
+            sync_util::sync_logger::failed_shard_index.load(
+                std::memory_order_relaxed)) {
           counter_new_order_failed+=1;
           return txn_result(false, 0 + (isRemote?1:0));
         }
@@ -2385,10 +2538,171 @@ tpcc_worker::txn_new_order()
   }
   try {
     ssize_t ret = 0;
+#if !HASHTABLE
+    // Rust STO can execute and commit the complete fixed-layout, exact-home
+    // transaction without crossing the C ABI for every record group. Keep
+    // all failure-injection, remote, and transactional district-ID modes on
+    // the literal path below.
+    if (g_new_order_fast_id_gen &&
+        tpcc_fixed_batch::new_order_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(), allLocal,
+            isRemote)) {
+      if (TxnTpccNewOrderCapability *capability =
+              db->txn_tpcc_new_order_capability()) {
+        const uint home_global_warehouse =
+            WarehouseLocal2Global(warehouse_id);
+        bool final_suppliers_are_home =
+            tpcc_fixed_batch::suppliers_are_exact_home(
+                supplierWarehouseIDs, numItems, home_global_warehouse);
+        for (uint index = 0; final_suppliers_are_home && index < numItems;
+             ++index) {
+          const uint supplier = supplierWarehouseIDs[index];
+          if (!WarehouseInShard(
+                  supplier,
+                  BenchmarkConfig::getInstance().getShardIndex()) ||
+              WarehouseGlobal2Local(supplier) != int(warehouse_id) ||
+              tbl_stock(WarehouseGlobal2Local(supplier)) !=
+                  tbl_stock(warehouse_id)) {
+            final_suppliers_are_home = false;
+          }
+        }
+
+        if (final_suppliers_are_home) {
+          static_assert(sizeof(itemIDs[0]) == sizeof(uint32_t));
+          static_assert(sizeof(orderQuantities[0]) == sizeof(uint32_t));
+          // The one-call ABI needs both fields before Rust performs its first
+          // record read. FastNewOrderIdGen and the benchmark timestamp source
+          // are intentionally nontransactional, so a failed fused attempt may
+          // consume them earlier than the scalar path. Order-ID gaps are
+          // already permitted after abort; no database state becomes visible.
+          const uint64_t next_order_id =
+              FastNewOrderIdGen(warehouse_id, districtID);
+          ALWAYS_ERROR(next_order_id <=
+                       uint64_t(std::numeric_limits<int32_t>::max()));
+          const tpcc_fixed_batch::new_order_full_request request{
+              txn,
+              tbl_warehouse(warehouse_id),
+              tbl_district(warehouse_id),
+              tbl_customer(warehouse_id),
+              tbl_item(1),
+              tbl_stock(warehouse_id),
+              tbl_new_order(warehouse_id),
+              tbl_oorder(warehouse_id),
+              tbl_oorder_c_id_idx(warehouse_id),
+              tbl_order_line(warehouse_id),
+              itemIDs,
+              orderQuantities,
+              static_cast<int32_t>(warehouse_id),
+              static_cast<int32_t>(districtID),
+              static_cast<int32_t>(customerID),
+              static_cast<int32_t>(next_order_id),
+              static_cast<uint32_t>(GetCurrentTimeMillis()),
+              static_cast<uint32_t>(numItems)};
+          const tpcc_fixed_batch::new_order_full_result result =
+              capability->tx_new_order_full(request);
+          ALWAYS_ERROR(
+              result.reported_value_bytes <=
+              size_t(std::numeric_limits<ssize_t>::max() / 10));
+          return txn_result(
+              true,
+              static_cast<ssize_t>(result.reported_value_bytes) * 10 +
+                  (isRemote ? 1 : 0));
+        }
+      }
+    }
+
+    // The Rust-only capability resolves item rows as one batch here, before
+    // the canonical customer/warehouse/district reads. Backends that do not
+    // opt in execute the original per-line item reads at their original point.
+    float item_prices[15];
+    const bool item_batch_done =
+        BenchmarkConfig::getInstance().getControlMode() == 0 &&
+        tx_visit_fixed_if_supported(
+            db->txn_fixed_read_capability(tbl_item(1)),
+            [&](TxnFixedReadCapability &capability) {
+          static_assert(sizeof(item::key) == 4,
+                        "TPC-C item keys must use the fixed-read ABI width");
+          alignas(item::key) uint8_t
+              packed_item_keys[15 * sizeof(item::key)];
+          for (uint index = 0; index < numItems; ++index) {
+            const item::key key(itemIDs[index]);
+            ALWAYS_ERROR(encoder<item::key>().nbytes(&key) ==
+                         sizeof(item::key));
+            encoder<item::key>().write(
+                packed_item_keys + index * sizeof(item::key), &key);
+          }
+          new_order_item_read_callback item_callback(itemIDs, item_prices);
+          capability.tx_visit_fixed(
+              txn, reinterpret_cast<const char *>(packed_item_keys),
+              sizeof(item::key), numItems,
+              std::numeric_limits<size_t>::max(), item_callback);
+        });
+    if (item_batch_done) {
+      if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+    }
+#endif
+
+    bool stock_batch_done = false;
+#if !HASHTABLE
+    // Do not trust allLocal alone: failure injection can rewrite a supplier
+    // after it was computed without clearing that flag. Unsupported backends
+    // pay only the optional capability cast; packing and the final-array proof
+    // remain inside the opted-in callable.
+    if (tpcc_fixed_batch::new_order_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(), allLocal,
+            isRemote)) {
+      (void)tx_modify_fixed_if_supported(
+          db->txn_fixed_modify_capability(tbl_stock(warehouse_id)),
+          [&](TxnFixedModifyCapability &capability) {
+        const uint home_global_warehouse =
+            WarehouseLocal2Global(warehouse_id);
+        bool final_suppliers_are_home =
+            tpcc_fixed_batch::suppliers_are_exact_home(
+                supplierWarehouseIDs, numItems, home_global_warehouse);
+        for (uint index = 0; final_suppliers_are_home && index < numItems;
+             ++index) {
+          const uint supplier = supplierWarehouseIDs[index];
+          if (!WarehouseInShard(
+                  supplier,
+                  BenchmarkConfig::getInstance().getShardIndex()) ||
+              WarehouseGlobal2Local(supplier) != int(warehouse_id) ||
+              tbl_stock(WarehouseGlobal2Local(supplier)) !=
+                  tbl_stock(warehouse_id)) {
+            final_suppliers_are_home = false;
+            break;
+          }
+        }
+        if (!final_suppliers_are_home)
+          return;
+
+        static_assert(sizeof(stock::key) == 8,
+                      "TPC-C stock keys must use the fixed-mutation ABI width");
+        alignas(stock::key) uint8_t
+            packed_stock_keys[15 * sizeof(stock::key)];
+        for (uint index = 0; index < numItems; ++index) {
+          const stock::key key(
+              WarehouseGlobal2Local(supplierWarehouseIDs[index]),
+              itemIDs[index]);
+          ALWAYS_ERROR(encoder<stock::key>().nbytes(&key) ==
+                       sizeof(stock::key));
+          encoder<stock::key>().write(
+              packed_stock_keys + index * sizeof(stock::key), &key);
+        }
+        new_order_stock_modify_callback stock_callback(
+            warehouse_id, supplierWarehouseIDs, itemIDs, orderQuantities,
+            obj_v);
+        capability.tx_modify_fixed(
+            txn, reinterpret_cast<const char *>(packed_stock_keys),
+            sizeof(stock::key), numItems, stock_callback);
+        stock_batch_done = true;
+      });
+    }
+#endif
     const customer::key k_c(warehouse_id, districtID, customerID);
     ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
     customer::value v_c_temp;
     const customer::value *v_c = Decode(obj_v, v_c_temp);
     checker::SanityCheckCustomer(&k_c, v_c);
@@ -2396,18 +2710,46 @@ tpcc_worker::txn_new_order()
     const warehouse::key k_w(warehouse_id);
     ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
     warehouse::value v_w_temp;
     const warehouse::value *v_w = Decode(obj_v, v_w_temp);
     checker::SanityCheckWarehouse(&k_w, v_w);
 
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
-    if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     district::value v_d_temp;
-    const district::value *v_d = Decode(obj_v, v_d_temp);
-    checker::SanityCheckDistrict(&k_d, v_d);
+    const district::value *v_d = nullptr;
+    bool district_modify_done = false;
+#if !HASHTABLE
+    if (!g_new_order_fast_id_gen &&
+        tpcc_fixed_batch::single_row_modify_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(), true)) {
+      district_modify_done = tx_modify_fixed_if_supported(
+          db->txn_fixed_modify_capability(tbl_district(warehouse_id)),
+          [&](TxnFixedModifyCapability &capability) {
+        static_assert(sizeof(district::key) == 8,
+                      "TPC-C district keys must use the fixed-mutation ABI width");
+        alignas(district::key) uint8_t packed_key[sizeof(district::key)];
+        ALWAYS_ERROR(encoder<district::key>().nbytes(&k_d) ==
+                     sizeof(district::key));
+        encoder<district::key>().write(packed_key, &k_d);
+        new_order_district_modify_callback callback(k_d, v_d_temp, obj_v);
+        capability.tx_modify_fixed(
+            txn, reinterpret_cast<const char *>(packed_key),
+            sizeof(district::key), 1, callback);
+      });
+    }
+#endif
+    if (district_modify_done) {
+      if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+      v_d = &v_d_temp;
+    } else {
+      ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
+      if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+      v_d = Decode(obj_v, v_d_temp);
+      checker::SanityCheckDistrict(&k_d, v_d);
+    }
 
     const uint64_t my_next_o_id = g_new_order_fast_id_gen ?
         FastNewOrderIdGen(warehouse_id, districtID) : v_d->d_next_o_id;
@@ -2415,10 +2757,28 @@ tpcc_worker::txn_new_order()
     const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
     const new_order::value v_no;
     const size_t new_order_sz = Size(v_no);
-    tx_insert(tbl_new_order(warehouse_id), txn, Encode(str(), k_no), Encode(str(), v_no));
+    TxnInsertBatchCapability *header_insert_capability = nullptr;
+#if !HASHTABLE
+    if (g_new_order_fast_id_gen &&
+        BenchmarkConfig::getInstance().getControlMode() == 0)
+      header_insert_capability = db->txn_insert_batch_capability();
+#endif
+    oi_insert_operation header_inserts[3];
+    size_t header_insert_count = 0;
+    const auto insert_header = [&](FullOrderedIndex *table, const auto &key,
+                                   const std::string &encoded_value) {
+      if (header_insert_capability != nullptr) {
+        header_inserts[header_insert_count++] = {
+            table, std::string_view(key.data(), key.length()), encoded_value};
+      } else {
+        tx_insert(table, txn, key, encoded_value);
+      }
+    };
+    insert_header(tbl_new_order(warehouse_id), Encode(str(), k_no),
+                  Encode(str(), v_no));
     ret += new_order_sz;
 
-    if (!g_new_order_fast_id_gen) {
+    if (!g_new_order_fast_id_gen && !district_modify_done) {
       district::value v_d_new(*v_d);
       v_d_new.d_next_o_id++;
       tx_put(tbl_district(warehouse_id), txn, Encode(str(), k_d), Encode(str(), v_d_new));
@@ -2433,13 +2793,32 @@ tpcc_worker::txn_new_order()
     v_oo.o_entry_d = GetCurrentTimeMillis();
 
     const size_t oorder_sz = Size(v_oo);
-    tx_insert(tbl_oorder(warehouse_id), txn, EncodeK(str(), k_oo), Encode(str(), v_oo));
+    insert_header(tbl_oorder(warehouse_id), EncodeK(str(), k_oo),
+                  Encode(str(), v_oo));
     ret += oorder_sz;
 
     const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
     const oorder_c_id_idx::value v_oo_idx(0);
 
-    tx_insert(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
+    insert_header(tbl_oorder_c_id_idx(warehouse_id),
+                  Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
+    if (header_insert_capability != nullptr) {
+      ALWAYS_ERROR(header_insert_count == 3);
+      (void)header_insert_capability->tx_insert_many(
+          txn, header_inserts, header_insert_count);
+    }
+
+    TxnFixedPutCapability *order_line_put_capability = nullptr;
+#if !HASHTABLE
+    if (BenchmarkConfig::getInstance().getControlMode() == 0)
+      order_line_put_capability =
+          db->txn_fixed_put_capability(tbl_order_line(warehouse_id));
+#endif
+    static_assert(sizeof(order_line::key) == 16,
+                  "TPC-C order-line keys must use the fixed-put ABI width");
+    alignas(order_line::key) uint8_t
+        packed_order_line_keys[15 * sizeof(order_line::key)];
+    std::string_view encoded_order_line_values[15];
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
       const uint ol_supply_w_id = supplierWarehouseIDs[ol_number - 1];
@@ -2447,52 +2826,92 @@ tpcc_worker::txn_new_order()
       const uint ol_quantity = orderQuantities[ol_number - 1];
 
       const item::key k_i(ol_i_id);
+#if HASHTABLE
       ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
-      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
       item::value v_i_temp;
       const item::value *v_i = Decode(obj_v, v_i_temp);
       checker::SanityCheckItem(&k_i, v_i);
-      const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), ol_i_id);
-      if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_get(txn, EncodeK(obj_key0, k_s), obj_v, std::string::npos));
+      const float item_price = v_i->i_price;
+#else
+      float item_price;
+      if (item_batch_done) {
+        item_price = item_prices[ol_number - 1];
+      } else {
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
-      } else {
-        bool ret=tx_get(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(obj_key0, k_s), obj_v);
-        // if (is_sampling_remote_calls && rand() % sampling_number == 0)
-        //   sampling_remote_calls.push_back(tmp);
-        ALWAYS_ERROR(ret);
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+        item::value v_i_temp;
+        const item::value *v_i = Decode(obj_v, v_i_temp);
+        checker::SanityCheckItem(&k_i, v_i);
+        item_price = v_i->i_price;
       }
-      stock::value v_s_temp;
-      const stock::value *v_s = Decode(obj_v, v_s_temp);
-      checker::SanityCheckStock(&k_s, v_s);
+#endif
+      if (!stock_batch_done) {
+        const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), ol_i_id);
+        if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
+          ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_get(txn, EncodeK(obj_key0, k_s), obj_v, std::string::npos));
+          if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+        } else {
+          bool ret=tx_get(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(obj_key0, k_s), obj_v);
+          // if (is_sampling_remote_calls && rand() % sampling_number == 0)
+          //   sampling_remote_calls.push_back(tmp);
+          ALWAYS_ERROR(ret);
+        }
+        stock::value v_s_temp;
+        const stock::value *v_s = Decode(obj_v, v_s_temp);
+        checker::SanityCheckStock(&k_s, v_s);
 
-      stock::value v_s_new(*v_s);
-      if (v_s_new.s_quantity - ol_quantity >= 10)
-        v_s_new.s_quantity -= ol_quantity;
-      else
-        v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
-      v_s_new.s_ytd += ol_quantity;
-      v_s_new.s_remote_cnt += (ol_supply_w_id == WarehouseLocal2Global(warehouse_id)) ? 0 : 1;
-      if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
-      } else {
-        tx_put(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
-        // if (is_sampling_remote_calls && rand() % sampling_number == 0)
-        //   sampling_remote_calls.push_back(tmp);
+        stock::value v_s_new(*v_s);
+        if (v_s_new.s_quantity - ol_quantity >= 10)
+          v_s_new.s_quantity -= ol_quantity;
+        else
+          v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
+        v_s_new.s_ytd += ol_quantity;
+        v_s_new.s_remote_cnt += (ol_supply_w_id == WarehouseLocal2Global(warehouse_id)) ? 0 : 1;
+        if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
+          tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
+        } else {
+          tx_put(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
+          // if (is_sampling_remote_calls && rand() % sampling_number == 0)
+          //   sampling_remote_calls.push_back(tmp);
+        }
       }
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
       v_ol.ol_i_id = int32_t(ol_i_id);
       v_ol.ol_delivery_d = 0; // not delivered yet
-      v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
+      v_ol.ol_amount = float(ol_quantity) * item_price;
       v_ol.ol_supply_w_id = WarehouseGlobal2Local(int32_t(ol_supply_w_id));
       v_ol.ol_quantity = int8_t(ol_quantity);
 
       const size_t order_line_sz = Size(v_ol);
-      tx_insert(tbl_order_line(warehouse_id), txn, Encode(str(), k_ol), Encode(str(), v_ol));
+      const std::string &encoded_order_line = Encode(str(), v_ol);
+      if (order_line_put_capability != nullptr) {
+        ALWAYS_ERROR(encoder<order_line::key>().nbytes(&k_ol) ==
+                     sizeof(order_line::key));
+        encoder<order_line::key>().write(
+            packed_order_line_keys +
+                (ol_number - 1) * sizeof(order_line::key),
+            &k_ol);
+        encoded_order_line_values[ol_number - 1] = encoded_order_line;
+      } else {
+        tx_insert(tbl_order_line(warehouse_id), txn,
+                  Encode(str(), k_ol), encoded_order_line);
+      }
       ret += order_line_sz;
+    }
+
+    if (order_line_put_capability != nullptr) {
+      const oi_fixed_put_result result =
+          order_line_put_capability->tx_put_fixed(
+              txn, reinterpret_cast<const char *>(packed_order_line_keys),
+              sizeof(order_line::key), numItems,
+              encoded_order_line_values, oi_fixed_put_mode::insert);
+      if (result.inserted != numItems || result.has_duplicate())
+        throw abstract_db::abstract_abort_exception();
     }
 
     if (likely(db->commit_txn(txn))){
@@ -2507,7 +2926,7 @@ tpcc_worker::txn_new_order()
     if (n==1002) { // same as fasttransport.cc
       counter_new_order_failed+=1;
     }
-    db->abort_txn_local(txn);
+    db->abort_txn(txn); // @unsafe - a timeout may still own remote engine leases
   }
   return txn_result(false, 0 + (isRemote?1:0));
 #endif
@@ -2520,22 +2939,35 @@ public:
       const char *keyp, size_t keylen,
       const string &value)
   {
-    INVARIANT(keylen == sizeof(new_order::key));
-    INVARIANT(value.size() == sizeof(new_order::value));
-    k_no = Decode(keyp, k_no_temp);
-#ifdef CHECK_INVARIANTS
-    new_order::value v_no_temp;
-    const new_order::value *v_no = Decode(value, v_no_temp);
-    checker::SanityCheckNewOrder(k_no, v_no);
-#endif
-    return false;
+    return invoke_value(keyp, keylen, value.data(), value.size());
   }
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen) override
+  {
+    return invoke_value(keyp, keylen, valuep, valuelen);
+  }
+  size_t max_records_hint() const override { return 1; }
   inline const new_order::key *
   get_key() const
   {
     return k_no;
   }
 private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep,
+                    size_t valuelen)
+  {
+    INVARIANT(keylen == sizeof(new_order::key));
+    INVARIANT(valuelen == sizeof(new_order::value));
+    k_no = Decode(keyp, k_no_temp);
+#ifdef CHECK_INVARIANTS
+    new_order::value v_no_temp;
+    const new_order::value *v_no = Decode(valuep, v_no_temp);
+    checker::SanityCheckNewOrder(k_no, v_no);
+#else
+    (void)valuep;
+#endif
+    return false;
+  }
   new_order::key k_no_temp;
   const new_order::key *k_no;
 };
@@ -2573,6 +3005,52 @@ tpcc_worker::txn_delivery()
       g_enable_partition_locks ? &LockForPartition(warehouse_id) : nullptr);
   try {
     ssize_t ret = 0;
+#if !HASHTABLE
+    const bool delivery_tables_are_local =
+        !tbl_new_order(warehouse_id)->get_is_remote() &&
+        !tbl_oorder(warehouse_id)->get_is_remote() &&
+        !tbl_order_line(warehouse_id)->get_is_remote() &&
+        !tbl_customer(warehouse_id)->get_is_remote();
+    if (tpcc_fixed_batch::delivery_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(),
+            delivery_tables_are_local)) {
+      if (TxnTpccDeliveryCapability *capability =
+              db->txn_tpcc_delivery_capability()) {
+        static_assert(
+            sizeof(last_no_o_ids) / sizeof(last_no_o_ids[0]) ==
+            tpcc_fixed_batch::delivery_district_count);
+        const tpcc_fixed_batch::delivery_full_request request{
+            txn,
+            tbl_new_order(warehouse_id),
+            tbl_oorder(warehouse_id),
+            tbl_order_line(warehouse_id),
+            tbl_customer(warehouse_id),
+            last_no_o_ids,
+            static_cast<int32_t>(warehouse_id),
+            static_cast<int32_t>(o_carrier_id),
+            ts};
+        const tpcc_fixed_batch::delivery_full_result result =
+            capability->tx_delivery_full(request);
+        ALWAYS_ERROR(result.reported_value_bytes == 0);
+        ALWAYS_ERROR(
+            result.delivered_districts <=
+            tpcc_fixed_batch::delivery_district_count);
+        ALWAYS_ERROR(
+            result.updated_order_lines <=
+            result.delivered_districts *
+                tpcc_fixed_batch::delivery_max_lines_per_district);
+        return txn_result(true, 0);
+      }
+    }
+#endif
+    TxnFixedPutCapability *delivery_order_line_put_capability = nullptr;
+#if !HASHTABLE
+    if (BenchmarkConfig::getInstance().getControlMode() == 0)
+      delivery_order_line_put_capability =
+          db->txn_fixed_put_capability(tbl_order_line(warehouse_id));
+#endif
+    static_assert(sizeof(order_line::key) == 16,
+                  "TPC-C order-line keys must use the fixed-put ABI width");
     for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
       // SWH: (TODO) it's better to keep last_no_o_ids for the take over
       const new_order::key k_no_0(warehouse_id, d, last_no_o_ids[d - 1]);
@@ -2591,7 +3069,7 @@ tpcc_worker::txn_delivery()
       const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
       if (unlikely(!tx_get(tbl_oorder(warehouse_id), txn, EncodeK(obj_key0, k_oo), obj_v))) {
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
         // even if we read the new order entry, there's no guarantee
         // we will read the oorder entry: in this case the txn will abort,
         // but we're simply bailing out early
@@ -2599,7 +3077,7 @@ tpcc_worker::txn_delivery()
         return txn_result(false, 0);
       }
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
 
       oorder::value v_oo_temp;
       const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
@@ -2612,6 +3090,9 @@ tpcc_worker::txn_delivery()
       // XXX(stephentu): mutable scans would help here
       tx_scan(tbl_order_line(warehouse_id), txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c, s_arena.get());
       float sum = 0.0;
+      alignas(order_line::key) uint8_t
+          packed_order_line_keys[15 * sizeof(order_line::key)];
+      std::string_view encoded_order_line_values[15];
       for (size_t i = 0; i < c.size(); i++) {
         order_line::value v_ol_temp;
         const order_line::value *v_ol = Decode(*c.values[i].second, v_ol_temp);
@@ -2626,7 +3107,26 @@ tpcc_worker::txn_delivery()
         order_line::value v_ol_new(*v_ol);
         v_ol_new.ol_delivery_d = ts;
         INVARIANT(s_arena.get()->manages(c.values[i].first));
-        tx_put(tbl_order_line(warehouse_id), txn, *c.values[i].first, Encode(str(), v_ol_new));
+        const std::string &encoded_order_line = Encode(str(), v_ol_new);
+        if (delivery_order_line_put_capability != nullptr) {
+          ALWAYS_ERROR(c.values[i].first->size() == sizeof(order_line::key));
+          std::memcpy(
+              packed_order_line_keys + i * sizeof(order_line::key),
+              c.values[i].first->data(), sizeof(order_line::key));
+          encoded_order_line_values[i] = encoded_order_line;
+        } else {
+          tx_put(tbl_order_line(warehouse_id), txn, *c.values[i].first,
+                 encoded_order_line);
+        }
+      }
+      if (delivery_order_line_put_capability != nullptr) {
+        const oi_fixed_put_result result =
+            delivery_order_line_put_capability->tx_put_fixed(
+                txn, reinterpret_cast<const char *>(packed_order_line_keys),
+                sizeof(order_line::key), c.size(),
+                encoded_order_line_values, oi_fixed_put_mode::upsert);
+        if (result.inserted != 0 || result.has_duplicate())
+          throw abstract_db::abstract_abort_exception();
       }
 
       // delete new order
@@ -2643,7 +3143,6 @@ tpcc_worker::txn_delivery()
 
       // const customer::key k_c(warehouse_id, d, c_id);
       // ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
-      // if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
 
       // customer::value v_c_temp;
       // const customer::value *v_c = Decode(obj_v, v_c_temp);
@@ -2654,7 +3153,7 @@ tpcc_worker::txn_delivery()
       const customer::key k_c_new(warehouse_id, d + 200, c_id);
       ALWAYS_ASSERT(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c_new), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
 
       customer_balance::value v_c_b_temp;
       const customer_balance::value *v_c_b = Decode(obj_v, v_c_b_temp);
@@ -2719,7 +3218,7 @@ tpcc_worker::txn_payment_micro_drtm() {
       } else {
         ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
       }
     }
     if (likely(db->commit_txn(txn)))
@@ -2768,7 +3267,7 @@ tpcc_worker::txn_payment_micro_mega() {
           const item_micro::key bk(bkey);
           ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(bk), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
         }
       }
     }
@@ -2814,7 +3313,7 @@ tpcc_worker::txn_payment_micro() {
       } else {
         ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
       }
     }
     if (likely(db->commit_txn(txn)))
@@ -2856,14 +3355,18 @@ if (TThread::get_is_micro()) {
 
 #if defined(FAIL_NEW_VERSION)
   if (BenchmarkConfig::getInstance().getControlMode()==4) {
-    if (ShardIndexFromGlobalWarehouse(customerWarehouseID)==sync_util::sync_logger::failed_shard_index){
+    if (ShardIndexFromGlobalWarehouse(customerWarehouseID) ==
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed)) {
       counter_payment_failed+=1;
       return txn_result(false, 0 + (isRemote?1:0));
     }
   }
 #else
   if (BenchmarkConfig::getInstance().getControlMode()==1){ // distributed transactions without failed shard
-    if (ShardIndexFromGlobalWarehouse(customerWarehouseID)==sync_util::sync_logger::failed_shard_index){
+    if (ShardIndexFromGlobalWarehouse(customerWarehouseID) ==
+        sync_util::sync_logger::failed_shard_index.load(
+            std::memory_order_relaxed)) {
       counter_payment_failed+=1;
       return txn_result(false, 0 + (isRemote?1:0));
     }
@@ -2926,37 +3429,45 @@ if (TThread::get_is_micro()) {
   }
   if (customerWarehouseID != WarehouseLocal2Global(warehouse_id))
     ++evt_tpcc_cross_partition_payment_txns;
+  // A fused Rust attempt may retain these bytes until commit or abort. Keep
+  // their object lifetime outside the try block so exception unwinding cannot
+  // destroy them before either catch handler closes the transaction. They are
+  // written by the optional capability before any returned prefix is read,
+  // leaving other backends' scalar path untouched.
+  std::array<char, tpcc_fixed_batch::payment_value_capacity>
+      payment_warehouse_value;
+  std::array<char, tpcc_fixed_batch::payment_value_capacity>
+      payment_district_value;
+  std::array<char, tpcc_fixed_batch::payment_value_capacity>
+      payment_customer_value;
   try {
     ssize_t ret = 0;
 
     const warehouse::key k_w(warehouse_id);
-    ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
-    if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
-    warehouse::value v_w_temp;
-    const warehouse::value *v_w = Decode(obj_v, v_w_temp);
-    checker::SanityCheckWarehouse(&k_w, v_w);
-
-    warehouse::value v_w_new(*v_w);
-    v_w_new.w_ytd += paymentAmount;
-    tx_put(tbl_warehouse(warehouse_id), txn, Encode(str(), k_w), Encode(str(), v_w_new));
-
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
-    if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+    warehouse::value v_w_temp;
     district::value v_d_temp;
-    const district::value *v_d = Decode(obj_v, v_d_temp);
-    checker::SanityCheckDistrict(&k_d, v_d);
-
-    district::value v_d_new(*v_d);
-    v_d_new.d_ytd += paymentAmount;
-    tx_put(tbl_district(warehouse_id), txn, Encode(str(), k_d), Encode(str(), v_d_new));
-
     customer::key k_c;
     customer::value v_c;
-    if (RandomNumber(r, 1, 100) <= 60) {
-      // cust by name
+    const warehouse::value *v_w = nullptr;
+    const district::value *v_d = nullptr;
+    bool customer_by_name = false;
+    customer_name_idx::key k_c_idx_0;
+    customer_name_idx::key k_c_idx_1;
+
+    // Keep the random choice at its original point on the scalar path. The
+    // fused path must choose first so Rust can preserve W -> D -> name scan ->
+    // C as one callback-free operation.
+    const auto choose_customer = [&]() {
+      k_c.c_w_id = WarehouseGlobal2Local(customerWarehouseID);
+      k_c.c_d_id = customerDistrictID;
+      k_c.c_id = 0;
+      customer_by_name = RandomNumber(r, 1, 100) <= 60;
+      if (!customer_by_name) {
+        k_c.c_id = GetCustomerId(r);
+        return;
+      }
+
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
       static_assert(sizeof(lastname_buf) == 16, "xx");
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
@@ -2965,77 +3476,210 @@ if (TThread::get_is_micro()) {
       static const string zeros(16, 0);
       static const string ones(16, 255);
 
-      customer_name_idx::key k_c_idx_0;
       k_c_idx_0.c_w_id = WarehouseGlobal2Local(customerWarehouseID);
       k_c_idx_0.c_d_id = customerDistrictID;
       k_c_idx_0.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_0.c_first.assign(zeros);
 
-      customer_name_idx::key k_c_idx_1;
       k_c_idx_1.c_w_id = WarehouseGlobal2Local(customerWarehouseID);
       k_c_idx_1.c_d_id = customerDistrictID;
       k_c_idx_1.c_last.assign((const char *) lastname_buf, 16);
       k_c_idx_1.c_first.assign(ones);
+    };
 
-      static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true); // probably a safe bet for now
-      // this huge c_data might cause so many ISSUES - on real machines
-      // NO need to worry about at this moment
-      if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID))->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
-        ALWAYS_ERROR(c.size() > 0);
-        INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
-        int index = c.size() / 2;
-        if (c.size() % 2 == 0)
-          index--;
-        customer_name_idx::value v_c_idx_temp;
-        const customer_name_idx::value *v_c_idx = Decode(*c.values[index].second, v_c_idx_temp);
-        k_c.c_id = v_c_idx->c_id;
-      } else {
-        remote_tbl_customer_name_idx(customerWarehouseID)->tx_scan_remote_one(txn, Encode(obj_key0, k_c_idx_0), Encode(obj_key1, k_c_idx_1), obj_v);
-        customer_name_idx::value v_c_idx_temp;
-        const customer_name_idx::value *v_c_idx = Decode(obj_v, v_c_idx_temp);
-        k_c.c_id = v_c_idx->c_id;
+    bool payment_prefix_done = false;
+#if !HASHTABLE
+    static_assert(encoder<warehouse::value>::encode_max_nbytes() <=
+                  tpcc_fixed_batch::payment_value_capacity);
+    static_assert(encoder<district::value>::encode_max_nbytes() <=
+                  tpcc_fixed_batch::payment_value_capacity);
+    static_assert(encoder<customer::value>::encode_max_nbytes() <=
+                  tpcc_fixed_batch::payment_value_capacity);
+    static_assert(encoder<history::value>::encode_max_nbytes() ==
+                  tpcc_fixed_batch::payment_history_value_length);
+    if (tpcc_fixed_batch::payment_prefix_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(), allLocal,
+            isRemote)) {
+      if (TxnTpccPaymentCapability *capability =
+              db->txn_tpcc_payment_capability()) {
+        choose_customer();
+        std::array<uint8_t, 4> warehouse_key;
+        std::array<uint8_t, 8> district_key;
+        std::array<uint8_t, 12> customer_key;
+        std::array<uint8_t, 40> customer_name_lower;
+        std::array<uint8_t, 40> customer_name_upper;
+        ALWAYS_ERROR(encoder<warehouse::key>().nbytes(&k_w) ==
+                     warehouse_key.size());
+        ALWAYS_ERROR(encoder<district::key>().nbytes(&k_d) ==
+                     district_key.size());
+        ALWAYS_ERROR(encoder<customer::key>().nbytes(&k_c) ==
+                     customer_key.size());
+        encoder<warehouse::key>().write(warehouse_key.data(), &k_w);
+        encoder<district::key>().write(district_key.data(), &k_d);
+        encoder<customer::key>().write(customer_key.data(), &k_c);
+        if (customer_by_name) {
+          ALWAYS_ERROR(encoder<customer_name_idx::key>().nbytes(&k_c_idx_0) ==
+                       customer_name_lower.size());
+          ALWAYS_ERROR(encoder<customer_name_idx::key>().nbytes(&k_c_idx_1) ==
+                       customer_name_upper.size());
+          encoder<customer_name_idx::key>().write(customer_name_lower.data(),
+                                                   &k_c_idx_0);
+          encoder<customer_name_idx::key>().write(customer_name_upper.data(),
+                                                   &k_c_idx_1);
+        }
+
+        if (capability->payment_full_enabled()) {
+          const tpcc_fixed_batch::payment_full_request request{
+              txn,
+              tbl_warehouse(warehouse_id),
+              tbl_district(warehouse_id),
+              tbl_customer(WarehouseGlobal2Local(customerWarehouseID)),
+              customer_by_name
+                  ? tbl_customer_name_idx(
+                        WarehouseGlobal2Local(customerWarehouseID))
+                  : nullptr,
+              tbl_history(warehouse_id),
+              reinterpret_cast<const char *>(warehouse_key.data()),
+              reinterpret_cast<const char *>(district_key.data()),
+              reinterpret_cast<const char *>(customer_key.data()),
+              customer_by_name
+                  ? reinterpret_cast<const char *>(customer_name_lower.data())
+                  : nullptr,
+              customer_by_name
+                  ? reinterpret_cast<const char *>(customer_name_upper.data())
+                  : nullptr,
+              k_c.c_id,
+              paymentAmount,
+              ts,
+              static_cast<int32_t>(warehouse_id),
+              static_cast<int32_t>(districtID),
+              k_c.c_w_id,
+              k_c.c_d_id,
+              customer_by_name};
+          const tpcc_fixed_batch::payment_full_result result =
+              capability->tx_payment_full(request);
+          ALWAYS_ERROR(result.customer_id > 0);
+          return txn_result(
+              true,
+              static_cast<ssize_t>(result.history_value_length) * 10 +
+                  (isRemote ? 1 : 0));
+        }
+
+        const tpcc_fixed_batch::payment_prefix_request request{
+            txn,
+            tbl_warehouse(warehouse_id),
+            tbl_district(warehouse_id),
+            tbl_customer(WarehouseGlobal2Local(customerWarehouseID)),
+            customer_by_name
+                ? tbl_customer_name_idx(
+                      WarehouseGlobal2Local(customerWarehouseID))
+                : nullptr,
+            reinterpret_cast<const char *>(warehouse_key.data()),
+            reinterpret_cast<const char *>(district_key.data()),
+            reinterpret_cast<const char *>(customer_key.data()),
+            customer_by_name
+                ? reinterpret_cast<const char *>(customer_name_lower.data())
+                : nullptr,
+            customer_by_name
+                ? reinterpret_cast<const char *>(customer_name_upper.data())
+                : nullptr,
+            k_c.c_id,
+            paymentAmount,
+            customer_by_name,
+            payment_warehouse_value.data(),
+            payment_district_value.data(),
+            payment_customer_value.data()};
+        const tpcc_fixed_batch::payment_prefix_result result =
+            capability->tx_payment_prefix(request);
+        k_c.c_id = result.customer_id;
+        v_w = encoder<warehouse::value>().failsafe_read(
+            reinterpret_cast<const uint8_t *>(payment_warehouse_value.data()),
+            result.warehouse_value_length, &v_w_temp);
+        v_d = encoder<district::value>().failsafe_read(
+            reinterpret_cast<const uint8_t *>(payment_district_value.data()),
+            result.district_value_length, &v_d_temp);
+        const customer::value *decoded_customer =
+            encoder<customer::value>().failsafe_read(
+                reinterpret_cast<const uint8_t *>(payment_customer_value.data()),
+                result.customer_value_length, &v_c);
+        ALWAYS_ERROR(v_w != nullptr && v_d != nullptr &&
+                     decoded_customer != nullptr);
+        ALWAYS_ERROR(Size(*v_w) == result.warehouse_value_length &&
+                     Size(*v_d) == result.district_value_length &&
+                     Size(v_c) == result.customer_value_length);
+        checker::SanityCheckWarehouse(&k_w, v_w);
+        checker::SanityCheckDistrict(&k_d, v_d);
+        checker::SanityCheckCustomer(&k_c, &v_c);
+        payment_prefix_done = true;
+      }
+    }
+#endif
+
+    if (!payment_prefix_done) {
+      ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn,
+                          Encode(obj_key0, k_w), obj_v));
+      if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+      v_w = Decode(obj_v, v_w_temp);
+      checker::SanityCheckWarehouse(&k_w, v_w);
+
+      warehouse::value v_w_new(*v_w);
+      v_w_new.w_ytd += paymentAmount;
+      tx_put(tbl_warehouse(warehouse_id), txn, Encode(str(), k_w),
+             Encode(str(), v_w_new));
+
+      ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn,
+                          Encode(obj_key0, k_d), obj_v));
+      if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
+      v_d = Decode(obj_v, v_d_temp);
+      checker::SanityCheckDistrict(&k_d, v_d);
+
+      district::value v_d_new(*v_d);
+      v_d_new.d_ytd += paymentAmount;
+      tx_put(tbl_district(warehouse_id), txn, Encode(str(), k_d),
+             Encode(str(), v_d_new));
+
+      choose_customer();
+      if (customer_by_name) {
+        static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true);
+        if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
+          tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID))->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
+          ALWAYS_ERROR(c.size() > 0);
+          INVARIANT(c.size() < NMaxCustomerIdxScanElems);
+          int index = c.size() / 2;
+          if (c.size() % 2 == 0)
+            index--;
+          customer_name_idx::value v_c_idx_temp;
+          const customer_name_idx::value *v_c_idx = Decode(*c.values[index].second, v_c_idx_temp);
+          k_c.c_id = v_c_idx->c_id;
+        } else {
+          remote_tbl_customer_name_idx(customerWarehouseID)->tx_scan_remote_one(txn, Encode(obj_key0, k_c_idx_0), Encode(obj_key1, k_c_idx_1), obj_v);
+          customer_name_idx::value v_c_idx_temp;
+          const customer_name_idx::value *v_c_idx = Decode(obj_v, v_c_idx_temp);
+          k_c.c_id = v_c_idx->c_id;
+        }
       }
 
-      k_c.c_w_id = WarehouseGlobal2Local(customerWarehouseID);
-      k_c.c_d_id = customerDistrictID;
-      
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
         ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
       } else {
         ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
       }
-
       Decode(obj_v, v_c);
-    } /*60% END*/ else {
-      // cust by ID
-      const uint customerID = GetCustomerId(r);
-      k_c.c_w_id = WarehouseGlobal2Local(customerWarehouseID);
-      k_c.c_d_id = customerDistrictID;
-      k_c.c_id = customerID;
-      
+      checker::SanityCheckCustomer(&k_c, &v_c);
+      customer::value v_c_new(v_c);
+      v_c_new.c_balance -= paymentAmount;
+      v_c_new.c_ytd_payment += paymentAmount;
+      v_c_new.c_payment_cnt++;
+
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
-        if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
       } else {
-        ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
+        tx_put(remote_tbl_customer(customerWarehouseID), txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
       }
-      Decode(obj_v, v_c);
-    } /*40% END*/
-    checker::SanityCheckCustomer(&k_c, &v_c);
-    customer::value v_c_new(v_c);
-
-    v_c_new.c_balance -= paymentAmount;
-    v_c_new.c_ytd_payment += paymentAmount;
-    v_c_new.c_payment_cnt++;
-
-    if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-      tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
-    } else {
-      tx_put(remote_tbl_customer(customerWarehouseID), txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
     }
     const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
     history::value v_h;
@@ -3058,7 +3702,7 @@ if (TThread::get_is_micro()) {
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
         ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
-        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,isRemote?1:0);}
       } else {
         ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
       }
@@ -3102,7 +3746,7 @@ if (TThread::get_is_micro()) {
     if (n==1002) { // same as fasttransport.cc
       counter_payment_failed+=1;
     }
-    db->abort_txn_local(txn);
+    db->abort_txn(txn); // @unsafe - a timeout may still own remote engine leases
   }
   return txn_result(false, 0 + (isRemote?1:0));
 }
@@ -3114,9 +3758,21 @@ public:
       const char *keyp, size_t keylen,
       const string &value)
   {
+    return invoke_value(keyp, keylen, value.data());
+  }
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t) override
+  {
+    return invoke_value(keyp, keylen, valuep);
+  }
+  size_t max_records_hint() const override { return 15; }
+  size_t n;
+private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep)
+  {
     INVARIANT(keylen == sizeof(order_line::key));
     order_line::value v_ol_temp;
-    const order_line::value *v_ol UNUSED = Decode(value, v_ol_temp);
+    const order_line::value *v_ol UNUSED = Decode(valuep, v_ol_temp);
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
     const order_line::key *k_ol = Decode(keyp, k_ol_temp);
@@ -3125,7 +3781,6 @@ public:
     ++n;
     return true;
   }
-  size_t n;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, order_status_probe0_tod, order_status_probe0_cg)
@@ -3196,7 +3851,7 @@ tpcc_worker::txn_order_status()
       k_c.c_id = v_c_idx->c_id;
       ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
       Decode(obj_v, v_c);
 
     } else {
@@ -3207,7 +3862,7 @@ tpcc_worker::txn_order_status()
       k_c.c_id = customerID;
       ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+      if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
       Decode(obj_v, v_c);
     }
     checker::SanityCheckCustomer(&k_c, &v_c);
@@ -3233,8 +3888,11 @@ tpcc_worker::txn_order_status()
       ALWAYS_ERROR(c_oorder.size());
     } else {
       latest_key_callback c_oorder(*newest_o_c_id, 1);
+      const oorder_c_id_idx::key k_oo_idx_lo(warehouse_id, districtID, k_c.c_id, 0);
       const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
-      tx_rscan(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder, s_arena.get());
+      tx_rscan(tbl_oorder_c_id_idx(warehouse_id), txn,
+               Encode(obj_key0, k_oo_idx_hi), &Encode(obj_key1, k_oo_idx_lo),
+               c_oorder, s_arena.get());
       ALWAYS_ERROR(c_oorder.size() == 1);
     }
 
@@ -3268,9 +3926,22 @@ public:
       const char *keyp, size_t keylen,
       const string &value)
   {
+    return invoke_value(keyp, keylen, value.data());
+  }
+  bool invoke_bytes(const char *keyp, size_t keylen, const char *valuep,
+                    size_t) override
+  {
+    return invoke_value(keyp, keylen, valuep);
+  }
+  size_t max_records_hint() const override { return 20 * 15; }
+  size_t n;
+  small_unordered_map<uint, bool, 512> s_i_ids;
+private:
+  bool invoke_value(const char *keyp, size_t keylen, const char *valuep)
+  {
     INVARIANT(keylen == sizeof(order_line::key));
     order_line::value v_ol_temp;
-    const order_line::value *v_ol = Decode(value, v_ol_temp);
+    const order_line::value *v_ol = Decode(valuep, v_ol_temp);
 
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
@@ -3282,8 +3953,33 @@ public:
     n++;
     return true;
   }
-  size_t n;
-  small_unordered_map<uint, bool, 512> s_i_ids;
+};
+
+class stock_level_read_callback final : public oi_fixed_read_callback {
+public:
+  stock_level_read_callback(
+      const uint *item_ids, uint threshold,
+      small_unordered_map<uint, bool, 512> &low_stock_items)
+      : item_ids_(item_ids), threshold_(threshold),
+        low_stock_items_(low_stock_items) {}
+
+  void invoke(size_t index, const char *current_value,
+              size_t current_value_length) override {
+    if (current_value == nullptr)
+      throw abstract_db::abstract_abort_exception();
+    int16_t quantity;
+    if (serializer<int16_t, true>::failsafe_read(
+            reinterpret_cast<const uint8_t *>(current_value),
+            current_value_length, &quantity) == nullptr)
+      throw abstract_db::abstract_abort_exception();
+    if (quantity < int(threshold_))
+      low_stock_items_[item_ids_[index]] = 1;
+  }
+
+private:
+  const uint *item_ids_;
+  uint threshold_;
+  small_unordered_map<uint, bool, 512> &low_stock_items_;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -3291,6 +3987,37 @@ STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe1_tod, stock_level_pro
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe2_tod, stock_level_probe2_cg)
 
 static event_avg_counter evt_avg_stock_level_loop_join_lookups("stock_level_loop_join_lookups");
+
+#if !HASHTABLE
+static NEVER_INLINE void visit_stock_level_batch(
+    TxnFixedReadCapability &capability, void *txn, uint warehouse_id,
+    uint threshold, small_unordered_map<uint, bool, 512> &item_ids,
+    small_unordered_map<uint, bool, 512> &low_stock_items) {
+  static_assert(sizeof(stock::key) == 8,
+                "TPC-C stock keys must use the fixed-read ABI width");
+  alignas(stock::key) uint8_t
+      packed_stock_keys[20 * 15 * sizeof(stock::key)];
+  uint stock_item_ids[20 * 15];
+  size_t stock_key_count = 0;
+  for (auto &p : item_ids) {
+    ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
+    ALWAYS_ERROR(stock_key_count < 20 * 15);
+    const stock::key key(warehouse_id, p.first);
+    INVARIANT(p.first >= 1 && p.first <= NumItems());
+    ALWAYS_ERROR(encoder<stock::key>().nbytes(&key) == sizeof(stock::key));
+    encoder<stock::key>().write(
+        packed_stock_keys + stock_key_count * sizeof(stock::key), &key);
+    stock_item_ids[stock_key_count++] = p.first;
+  }
+  stock_level_read_callback callback(
+      stock_item_ids, threshold, low_stock_items);
+  ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
+  capability.tx_visit_fixed(
+      txn, reinterpret_cast<const char *>(packed_stock_keys),
+      sizeof(stock::key), stock_key_count,
+      serializer<int16_t, true>::max_nbytes(), callback);
+}
+#endif
 
 tpcc_worker::txn_result
 tpcc_worker::txn_stock_level()
@@ -3341,7 +4068,7 @@ tpcc_worker::txn_stock_level()
     const district::key k_d(warehouse_id, districtID);
     ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
+    if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
     district::value v_d_temp;
     const district::value *v_d = Decode(obj_v, v_d_temp);
     checker::SanityCheckDistrict(&k_d, v_d);
@@ -3349,6 +4076,39 @@ tpcc_worker::txn_stock_level()
     const uint64_t cur_next_o_id = g_new_order_fast_id_gen ?
       NewOrderIdHolder(warehouse_id, districtID).load(memory_order_acquire) :
       v_d->d_next_o_id;
+
+#if !HASHTABLE
+    const bool stock_level_tables_are_local =
+        !tbl_order_line(warehouse_id)->get_is_remote() &&
+        !tbl_stock(warehouse_id)->get_is_remote();
+    if (tpcc_fixed_batch::stock_level_mode_is_eligible(
+            true, BenchmarkConfig::getInstance().getControlMode(),
+            stock_level_tables_are_local)) {
+      if (TxnTpccStockLevelCapability *capability =
+              db->txn_tpcc_stock_level_capability()) {
+        const tpcc_fixed_batch::stock_level_full_request request{
+            txn,
+            tbl_order_line(warehouse_id),
+            tbl_stock(warehouse_id),
+            cur_next_o_id,
+            static_cast<int32_t>(warehouse_id),
+            static_cast<int32_t>(districtID),
+            static_cast<uint32_t>(threshold)};
+        const tpcc_fixed_batch::stock_level_full_result result =
+            capability->tx_stock_level_full(request);
+        ALWAYS_ERROR(result.reported_value_bytes == 0);
+        ALWAYS_ERROR(
+            result.scanned_order_line_rows <=
+            tpcc_fixed_batch::stock_level_max_order_line_rows);
+        ALWAYS_ERROR(
+            result.distinct_item_ids <= result.scanned_order_line_rows);
+        ALWAYS_ERROR(result.low_stock_count <= result.distinct_item_ids);
+        evt_avg_stock_level_loop_join_lookups.offer(
+            result.distinct_item_ids);
+        return txn_result(true, 0);
+      }
+    }
+#endif
 
     // manual joins are fun!
     order_line_scan_callback c;
@@ -3361,29 +4121,44 @@ tpcc_worker::txn_stock_level()
     }
     {
       small_unordered_map<uint, bool, 512> s_i_ids_distinct;
-      for (auto &p : c.s_i_ids) {
-        ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
-
-        const size_t nbytesread = serializer<int16_t, true>::max_nbytes();
-
-        const stock::key k_s(warehouse_id, p.first);
-        INVARIANT(p.first >= 1 && p.first <= NumItems());
-        {
-          ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-          auto ret=tx_get(tbl_stock(warehouse_id), txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
-          if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
-          if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
-          if(!ret){ 
-            Warning("ERROR warehouse_id:%d, cid:%d, maxbytes:%d", warehouse_id, p.first,nbytesread);
+      bool stock_batch_done = false;
+#if !HASHTABLE
+      stock_batch_done =
+          BenchmarkConfig::getInstance().getControlMode() == 0 &&
+          tx_visit_fixed_if_supported(
+              db->txn_fixed_read_capability(tbl_stock(warehouse_id)),
+              [&](TxnFixedReadCapability &capability) {
+                visit_stock_level_batch(capability, txn, warehouse_id,
+                                        threshold, c.s_i_ids,
+                                        s_i_ids_distinct);
+              });
+      if (stock_batch_done) {
+        if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
+      }
+#endif
+      if (!stock_batch_done) {
+        for (auto &p : c.s_i_ids) {
+          ANON_REGION("StockLevelLoopJoinIter:", &stock_level_probe1_cg);
+          const size_t nbytesread = serializer<int16_t, true>::max_nbytes();
+          const stock::key k_s(warehouse_id, p.first);
+          INVARIANT(p.first >= 1 && p.first <= NumItems());
+          {
+            ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
+            auto ret=tx_get(tbl_stock(warehouse_id), txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
+            if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
+            if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn(txn);return txn_result(false,0);}
+            if(!ret){
+              Warning("ERROR warehouse_id:%d, cid:%d, maxbytes:%d", warehouse_id, p.first,nbytesread);
+            }
+            ALWAYS_ERROR(ret);
           }
-          ALWAYS_ERROR(ret);
+          const uint8_t *ptr = (const uint8_t *) obj_v.data();
+          int16_t i16tmp;
+          ptr = serializer<int16_t, true>::read(ptr, &i16tmp);
+          if (i16tmp < int(threshold))
+            s_i_ids_distinct[p.first] = 1;
         }
-       // INVARIANT(obj_v.size() <= nbytesread);
-        const uint8_t *ptr = (const uint8_t *) obj_v.data();
-        int16_t i16tmp;
-        ptr = serializer<int16_t, true>::read(ptr, &i16tmp);
-        if (i16tmp < int(threshold))
-          s_i_ids_distinct[p.first] = 1;
       }
       evt_avg_stock_level_loop_join_lookups.offer(c.s_i_ids.size());
       // NB(stephentu): s_i_ids_distinct.size() is the computed result of this txn
@@ -3422,42 +4197,24 @@ private:
     return strcmp("item", name) == 0;
   }
 
-  static bool
-  IsTableAppendOnly(const char *name)
-  {
-    return strcmp("history", name) == 0 ||
-           strcmp("oorder_c_id_idx", name) == 0;
-  }
-
-  static bool
-  UseHashtable(const char *name)
-  {
-#if !HASHTABLE
-    return false;
-#endif
-    return strcmp("customer", name) == 0 || 
-	   //strcmp("district", name) == 0 ||
-	   strcmp("history", name) == 0 ||
-	   strcmp("item", name) == 0 ||
-           strcmp("oorder", name) == 0 ||
-	   strcmp("stock", name) == 0 ||
-	   //strcmp("stock_data", name) == 0 ||
-	   //strcmp("warehouse", name) == 0 ||
-	0;
-  }
-
+  // @unsafe - engine-owned pointers; governed warehouses always have separate
+  // physical indexes because their fixed coordinates cannot alias one tree.
   static vector<abstract_ordered_index *>
-  OpenTablesForTablespace(abstract_db *db, const char *name, size_t expected_size)
+  OpenTablesForTablespace(abstract_db *db, const char *name, int owner)
   {
     const bool is_read_only = IsTableReadOnly(name);
-    const bool is_append_only = IsTableAppendOnly(name);
-    const bool use_hashtable = UseHashtable(name); 
+    const auto identity = tpcc_table_identity(name);
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehouses());
+    if (identity.kind == 0) {
+      for (size_t i = 0; i < NumWarehouses(); ++i)
+        ret[i] = tpcc_local_warehouse(identity.table, owner * NumWarehouses() + i + 1, owner);
+      return ret;
+    }
     if (g_enable_separate_tree_per_partition && !is_read_only) {
       if (NumWarehouses() <= BenchmarkConfig::getInstance().getNthreads()) {
         for (size_t i = 0; i < NumWarehouses(); i++)
-          ret[i] = db->open_index(s_name + "_" + to_string(i));
+          ret[i] = db->open_index(s_name + "_" + to_string(i), owner);
       } else {
         const unsigned nwhse_per_partition = NumWarehouses() / BenchmarkConfig::getInstance().getNthreads();
         for (size_t partid = 0; partid < BenchmarkConfig::getInstance().getNthreads(); partid++) {
@@ -3465,50 +4222,53 @@ private:
           const unsigned wend   = (partid + 1 == BenchmarkConfig::getInstance().getNthreads()) ?
             NumWarehouses() : (partid + 1) * nwhse_per_partition;
           abstract_ordered_index *idx =
-            db->open_index(s_name + "_" + to_string(partid));
+            db->open_index(s_name + "_" + to_string(partid), owner);
           for (size_t i = wstart; i < wend; i++)
             ret[i] = idx;
         }
       }
     } else {
-      abstract_ordered_index *idx = db->open_index(s_name);
+      abstract_ordered_index *idx = db->open_index(s_name, owner);
       for (size_t i = 0; i < NumWarehouses(); i++)
         ret[i] = idx;
     }
+    for (auto* index : ret) tpcc_bind_static_index(index, identity);
     return ret;
   }
 
+  // @unsafe - static/replicated compatibility only; native governed proxies are
+  // materialized by Rust on demand, including for a departed home warehouse.
   static vector<abstract_ordered_index *>
-  OpenTablesForTablespaceRemote(abstract_db *db, const char *name, size_t expected_size)
+  OpenTablesForTablespaceRemote(abstract_db *db, const char *name, int owner)
   {
-    const bool is_read_only = IsTableReadOnly(name);
-    const bool is_append_only = IsTableAppendOnly(name);
-    const bool use_hashtable = UseHashtable(name);
+    const auto identity = tpcc_table_identity(name);
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehousesTotal());
+    if (identity.kind == 0) return ret;
 
     // Check if we're in multi-shard single-process mode
     auto* config = BenchmarkConfig::getInstance().getConfig();
     bool multi_shard_mode = config && config->multi_shard_mode;
-    const auto& local_shards = config ? config->local_shard_indices : std::vector<int>();
 
     for (size_t i = 0; i < NumWarehousesTotal(); i++) {
       int global_wid=i+1;
 
       int s_idx = i / NumWarehouses() ;
-      if (s_idx == BenchmarkConfig::getInstance().getShardIndex()) {
+      if (s_idx == owner) {
         // Local to current shard - do nothing
-      } else if (multi_shard_mode &&
-                 std::find(local_shards.begin(), local_shards.end(), s_idx) != local_shards.end()) {
+      } else if (multi_shard_mode && !BenchmarkConfig::getInstance().getIsReplicated() &&
+                 std::find(config->local_shard_indices.begin(), config->local_shard_indices.end(),
+                           s_idx) != config->local_shard_indices.end()) {
         // Multi-shard mode and target shard is local: leave nullptr
         // Will be filled in later with actual local tables from other shard
         Notice("Remote table %s for wid %d: target shard %d is local, skipping RPC proxy",
                name, global_wid, s_idx);
-      } else { // create remote tables for truly remote shards (different process)
+      } else { // Replicated accesses retain an owning-shard affine participant.
         abstract_ordered_index *idx = db->open_index(
           s_name + "_remote_" + to_string(global_wid),
           s_idx);
         ret[i] = idx;
+        tpcc_bind_static_index(idx, identity);
       }
     }
     return ret;
@@ -3529,8 +4289,13 @@ public:
   }
 
 private:
+  // @unsafe - single-threaded benchmark setup, before loaders and workers.
   void init_tables(abstract_db *db, bool failure) {
-    if (failure) {
+    const int owner = shard_index_ < 0
+        ? BenchmarkConfig::getInstance().getShardIndex() : shard_index_;
+    tpcc_initialize_native(db, owner, NumWarehouses(), NumWarehousesTotal(),
+                           BenchmarkConfig::getInstance().getIsMicro());
+    if (failure && !tpcc_native_warehouses_enabled()) {
       printf("reinitializing partitions under failure\n");
         string nCount[12] = {"customer", "customer_name_idx", "district", "history", "new_order", "oorder", 
                              "oorder_c_id_idx", "order_line", "stock", "stock_data", "warehouse", "item"};
@@ -3555,7 +4320,7 @@ private:
       printf("reinitializing partitions under failure - DONE\n");  
     } else {
 #define OPEN_TABLESPACE_X(x) \
-    partitions[#x] = OpenTablesForTablespace(db, #x, sizeof(x));
+    partitions[#x] = OpenTablesForTablespace(db, #x, owner);
 
     TPCC_TABLE_LIST(OPEN_TABLESPACE_X);
 
@@ -3563,7 +4328,7 @@ private:
     }
 
 #define REMOTE_OPEN_TABLESPACE_X(x) \
-    remote_partitions[#x] = OpenTablesForTablespaceRemote(db, #x, sizeof(x));
+    remote_partitions[#x] = OpenTablesForTablespaceRemote(db, #x, owner);
 
     TPCC_TABLE_LIST(REMOTE_OPEN_TABLESPACE_X);
 
@@ -3575,16 +4340,6 @@ private:
         open_tables[t.first + "_" + to_string(i)] = v[i];
         //std::cout<<"Table: "<<t.first + "_" + to_string(i)<<", id:"<<v[i]->get_table_id()<<std::endl;
       }
-    }
-
-    // Initialize TPC-C sharding policy for policy-based routing
-    // This enables the ShardingPolicyCache to route keys to the correct shard
-    // based on warehouse ID rather than table ID alone
-    if (!mako::is_tpcc_sharding_initialized()) {
-      auto& cfg = BenchmarkConfig::getInstance();
-      int num_warehouses_total = cfg.getScaleFactor() * cfg.getNshards();
-      int num_shards = cfg.getNshards();
-      mako::initialize_tpcc_sharding_policy(num_warehouses_total, num_shards);
     }
 
     if (g_enable_partition_locks) {
@@ -3701,12 +4456,15 @@ public:
 
   // For multi-shard mode: wire up cross-shard tables from other runners
   // Sets remote_partitions entries for warehouses belonging to source_shard
+  // @unsafe - static setup only; native cross-participant accesses use proxies
+  // even within one process so each destination admits its own native lease.
   void wireup_cross_shard_tables(int source_shard, const map<string, vector<abstract_ordered_index *>>& source_partitions) {
     int num_warehouses = NumWarehouses();
     int start_wid_idx = source_shard * num_warehouses;  // 0-indexed warehouse index
 
     for (auto& entry : remote_partitions) {
       const string& table_name = entry.first;
+      if (tpcc_table_identity(table_name.c_str()).kind == 0) continue;
       vector<abstract_ordered_index*>& remote_vec = entry.second;
 
       // Find corresponding table in source partitions
@@ -3818,21 +4576,21 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
   }
 
   if (did_spec_remote_pct && g_disable_xpartition_txn) {
-    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
-    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+    mako::benchmark_cerr() << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    mako::benchmark_cerr() << "  --new-order-remote-item-pct will have no effect" << endl;
   }
 
   if (BenchmarkConfig::getInstance().getVerbose()) {
-    cerr << "tpcc settings:" << endl;
-    cerr << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
-    cerr << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
-    cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
-    cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
-    cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
-    cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
-    cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
-    cerr << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
-    cerr << "  workload_mix                 : " <<
+    mako::benchmark_cerr() << "tpcc settings:" << endl;
+    mako::benchmark_cerr() << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
+    mako::benchmark_cerr() << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
+    mako::benchmark_cerr() << "  partition_locks              : " << g_enable_partition_locks << endl;
+    mako::benchmark_cerr() << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
+    mako::benchmark_cerr() << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
+    mako::benchmark_cerr() << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
+    mako::benchmark_cerr() << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
+    mako::benchmark_cerr() << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
+    mako::benchmark_cerr() << "  workload_mix                 : " <<
       format_list(g_txn_workload_mix,
                   g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
   }
@@ -3941,18 +4699,21 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   }
 
   if (did_spec_remote_pct && g_disable_xpartition_txn) {
-    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
-    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+    mako::benchmark_cerr() << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    mako::benchmark_cerr() << "  --new-order-remote-item-pct will have no effect" << endl;
   }
 
   // Create bench_runner with shard_index for multi-shard mode
   tpcc_bench_runner *r = new tpcc_bench_runner(db, shard_index, f_mode==1);
 
-  // In multi-shard single-process mode, skip RPC setup since all shards are local
-  // Cross-shard access will use local tables directly
+  // @unsafe - Replication keeps one affine helper/transport set per owning shard,
+  // and governed same-process peers still execute through SRPC participant
+  // contexts. Only the unreplicated, explicitly disabled legacy lane may borrow
+  // other shards' tables directly.
   auto* config = BenchmarkConfig::getInstance().getConfig();
   bool multi_shard_mode = config && config->multi_shard_mode;
-  if (!multi_shard_mode) {
+  if (!multi_shard_mode || BenchmarkConfig::getInstance().getIsReplicated() ||
+      mako_sharding_enabled()) {
     mako::setup_rpc_server();
     std::map<int, abstract_ordered_index *> open_tables_by_id;
     for (const auto &entry : r->get_open_tables_ref()) {

@@ -7,6 +7,7 @@ from collections import Counter
 import contextlib
 import hashlib
 import io
+import re
 import importlib.util
 from pathlib import Path
 import shutil
@@ -86,9 +87,9 @@ class GateStaticContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
         self.assertEqual(
-            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2060
+            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2107
         )
-        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 2060)
+        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 2107)
         GATE.require_importer_coverage(self.modules)
 
     def test_platform_implementation_symbols_are_exhaustive(self) -> None:
@@ -112,14 +113,23 @@ class GateStaticContractTests(unittest.TestCase):
         expected = {
             "srpc.load_balancer": (14, 19),
             "srpc.serializable": (601, 738),
-            "srpc.reactor": (365, 386),
+            # +57 unique / +63 raw: the Lion driver, adapter and stackless
+            # forwarding (S3) and the shared readiness helpers (S5); -24
+            # unique / -24 raw: S7b retires the epoll loop and the
+            # pending-write path.
+            "srpc.reactor": (398, 425),
             "srpc.server": (86, 98),
             "srpc.client": (271, 284),
             "srpc.request_queue": (33, 34),
             "srpc.channel": (14, 21),
-            # Four epoll-control helpers now lower from canonical Rust.
-            # Two C++ ABI aliases and the initializer remain separately pinned.
-            "srpc.epoll_wrapper": (26, 29),
+            # Four epoll-control helpers once lowered from canonical Rust,
+            # with two C++ ABI aliases (Pollable's destructor).
+            # +22 alias-free rows: the Lion OS backend (plan S2); +5: its
+            # OsBackend/OsInterrupt forwarding impl (plan S1); -15 and the
+            # two aliases: S7b retires Epoll, those helpers and Pollable; +8:
+            # SrpcInterest and SrpcOsEvent back on plain derives. Only the
+            # initializer is pinned beyond the unique rows.
+            "srpc.epoll_wrapper": (46, 47),
             "srpc.pollable_proxy": (4, 7),
             "srpc.callbacks": (27, 28),
             "srpc.inmemory_channel": (78, 85),
@@ -130,6 +140,9 @@ class GateStaticContractTests(unittest.TestCase):
             "srpc.debugging": (9, 10),
             "srpc.heartbeat": (25, 26),
             "srpc.any_message": (10, 11),
+            # The Lion transport tasks, write-through and the cork (S5);
+            # -51 unique / -55 raw: S7b retires TCP's pollable surface.
+            "srpc.tcp_channel": (165, 181),
         }
         for module, (unique_count, raw_count) in expected.items():
             with self.subTest(module=module):
@@ -176,6 +189,166 @@ class GateStaticContractTests(unittest.TestCase):
             with self.assertRaisesRegex(GATE.GateError, "unavailable"):
                 GATE.resolve_configured_module_map(ROOT, [str(build)])
 
+    def test_dependency_provider_inventory_matches_cmake(self) -> None:
+        """CMake compiles exactly the inventoried Lion providers, in order."""
+
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        match = re.search(r"set\(SRPC_LION_PROVIDERS\s+(.*?)\n\)", cmake, re.DOTALL)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(
+            match.group(1).split(),
+            [f"{p.package}/{p.module}" for p in GATE.DEPENDENCY_PROVIDERS],
+        )
+        canonical = re.search(
+            r"set\(SRPC_GOAL0_CANONICAL_MODULES\s+(.*?)\n\)", cmake, re.DOTALL
+        )
+        assert canonical is not None
+        lion_modules = {p.module for p in GATE.DEPENDENCY_PROVIDERS}
+        # The two classes never overlap, and no Lion module enters the 37.
+        self.assertFalse(lion_modules & set(canonical.group(1).split()))
+        self.assertFalse(lion_modules & set(GATE.ABI_SPECS))
+        self.assertEqual(set(GATE.DEPENDENCY_PRIVATE_IMPORTS), lion_modules)
+        # The dependency ABI is its own class with its own total; none of its
+        # rows belongs to a canonical module.
+        self.assertEqual(set(GATE.DEPENDENCY_ABI), lion_modules)
+        self.assertEqual(
+            sum(len(rows) for rows in GATE.DEPENDENCY_ABI.values()),
+            GATE.EXPECTED_TOTAL_DEPENDENCY_SYMBOLS,
+        )
+        for module, rows in GATE.DEPENDENCY_ABI.items():
+            for _, symbol in rows:
+                self.assertNotIn("@srpc.", symbol, (module, symbol))
+                self.assertIn(f"@{module}", symbol, (module, symbol))
+        # The importer imports and uses exactly the re-exported providers.
+        reexported = {
+            module
+            for modules in GATE.EXPECTED_DEPENDENCY_REEXPORTS.values()
+            for module in modules
+        }
+        self.assertEqual(set(GATE.DEPENDENCY_IMPORTER_USE_MARKERS), reexported)
+        self.assertLessEqual(reexported, lion_modules)
+        for argument in ("--verus-exec", "--crate-graph", "--verus-erase-helper"):
+            self.assertIn(argument, cmake)
+        # The helper is built in its own cargo invocation (plan T1b).
+        self.assertIn("-p\n        verus-erase", cmake)
+        self.assertNotRegex(cmake, r"rusty-cpp-transpiler\s+-p\s+verus-erase")
+
+    def test_reexport_ratchet_admits_only_pinned_dependency_providers(self) -> None:
+        text = (
+            "export import lion_executor;\nexport import lion_reactor;\n"
+            "import vec_port.vec;\nimport srpc.reactor;\n"
+        )
+        GATE.require_exact_module_imports(
+            text,
+            "srpc.probe",
+            ["vec_port.vec", "srpc.reactor"],
+            ["lion_executor", "lion_reactor"],
+        )
+        for mutated in (
+            text.replace("export import lion_reactor;\n", ""),
+            text.replace("import srpc.reactor;", "export import srpc.reactor;"),
+            text.replace("export import lion_executor;", "import lion_executor;"),
+        ):
+            with self.subTest(mutated=mutated):
+                with self.assertRaisesRegex(GATE.GateError, "re-exports exactly"):
+                    GATE.require_exact_module_imports(
+                        mutated,
+                        "srpc.probe",
+                        ["vec_port.vec", "srpc.reactor"],
+                        ["lion_executor", "lion_reactor"],
+                    )
+        # Without an explicit list, an unpinned child may re-export nothing.
+        with self.assertRaisesRegex(GATE.GateError, "re-exports exactly"):
+            GATE.require_exact_module_imports(
+                "export import lion_reactor;\n", "srpc.misc", []
+            )
+
+    def test_placeholder_allowlist_is_only_the_qualified_io_error_kind(self) -> None:
+        head = "module;\n#include <cstdint>\nexport module lion_probe;\n"
+        allowed = "auto k = rusty::io::Error::Kind::Unsupported;\n"
+        rejected = (
+            "auto k = Kind::Unsupported;\n",
+            "auto k = rusty::io::ErrorKind::Unsupported;\n",
+            "auto k = my::rusty::io::Error::Kind::Unsupported;\n",
+            allowed + "// UNSUPPORTED: lowering\n",
+            "// unsupported: rusty::io::Error::Kind::Unsupported\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            probe = Path(directory) / "probe.cppm"
+            probe.write_text(head + allowed, encoding="utf-8")
+            GATE.read_generated(probe, "probe")
+            for body in rejected:
+                with self.subTest(rejected=body):
+                    probe.write_text(head + body, encoding="utf-8")
+                    with self.assertRaises(GATE.GateError):
+                        GATE.read_generated(probe, "probe")
+
+    def test_verus_erasure_coupling_is_exact(self) -> None:
+        commit = "db81a7496bfffeef3da8b30c306600ea51d2b0fa"
+        source = (
+            "git+https://github.com/verus-lang/verus?rev=db81a74#" + commit
+        )
+
+        def lock(entries: list[tuple[str, str, str]]) -> str:
+            return "version = 4\n" + "".join(
+                f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n'
+                f'source = "{src}"\n'
+                for name, version, src in entries
+            )
+
+        good = [
+            ("vstd", "0.0.0-2025-11-10-1957", source),
+            ("verus_builtin", "0.0.0-2025-08-12-1837", source),
+            ("verus_builtin_macros", "0.0.0-2025-11-10-1957", source),
+        ]
+        info = (
+            '{"verus_builtin_macros_version":"0.0.0-2025-11-10-1957",'
+            f'"verus_git_rev":"{commit}"}}\n'
+        )
+        cases = {
+            "good": (lock(good), info, None),
+            "other commit in lock": (
+                lock(good).replace("#" + commit, "#" + "1" * 40, 1),
+                info,
+                "coupling broken",
+            ),
+            "other macros version": (
+                lock(good),
+                info.replace("2025-11-10-1957", "2026-01-01-0000"),
+                "coupling broken",
+            ),
+            "vstd missing": (lock(good[1:]), info, "lacks the Verus package"),
+            "short rev": (lock(good), info.replace(commit, "db81a74"), "full commit"),
+            "extra key": (lock(good), info.replace("}", ',"x":"y"}'), "keys must be"),
+        }
+        for label, (lock_text, stdout, error) in cases.items():
+            with self.subTest(case=label):
+                with tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    (root / "Cargo.lock").write_text(lock_text, encoding="utf-8")
+                    result = subprocess.CompletedProcess(
+                        args=[], returncode=0, stdout=stdout, stderr=""
+                    )
+                    with mock.patch.object(
+                        DRIVER.subprocess, "run", return_value=result
+                    ):
+                        if error is None:
+                            DRIVER.verify_verus_erasure_coupling(
+                                root, Path("transpiler")
+                            )
+                        else:
+                            with self.assertRaisesRegex(
+                                DRIVER.ExtractionError, error
+                            ):
+                                DRIVER.verify_verus_erasure_coupling(
+                                    root, Path("transpiler")
+                                )
+        # The checked-in lockfile itself carries one coherent Verus commit.
+        packages = DRIVER.locked_verus_packages(ROOT)
+        self.assertTrue(set(DRIVER.REQUIRED_VERUS_PACKAGES) <= set(packages))
+        self.assertEqual(len({c for _, c in packages.values()}), 1)
+
 
 class GateContractTests(unittest.TestCase):
     @classmethod
@@ -185,6 +358,11 @@ class GateContractTests(unittest.TestCase):
         transpiler = ROOT / GATE.DEFAULT_TRANSPILER
         if not transpiler.is_file():
             raise unittest.SkipTest(f"transpiler fixture unavailable: {transpiler}")
+        # The Lion dependency crates need --verus-exec, which runs the
+        # separately built erasure helper (plan T1b).
+        helper = ROOT / GATE.DEFAULT_VERUS_ERASE_HELPER
+        if not helper.is_file():
+            raise unittest.SkipTest(f"verus-erase helper unavailable: {helper}")
         flat_import_namespace = DRIVER.load_flat_import_namespace(
             ROOT, ROOT / "rust-modules.toml"
         )
@@ -209,6 +387,9 @@ class GateContractTests(unittest.TestCase):
                 str(ROOT / "rust-type-map.toml"),
                 "--cpp-module-index",
                 str(ROOT / "cpp-module-index.toml"),
+                *GATE.LION_CRATE_MODE_ARGUMENTS,
+                "--verus-erase-helper",
+                str(helper),
             ],
             cwd=ROOT,
             check=True,
@@ -234,7 +415,7 @@ class GateContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_IMPORTS), manifest)
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
-        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2060)
+        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2107)
         GATE.require_importer_coverage(self.modules)
         GATE.require_cpp_surfaces(ROOT, self.generated, self.modules)
 
@@ -326,6 +507,65 @@ class GateContractTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
+    def test_dependency_provider_drift_is_rejected(self) -> None:
+        """crate-graph.json, a provider's text and its slot manifest are ratchets."""
+
+        lion = GATE.DEPENDENCY_PROVIDERS[-1]
+
+        def mutate_graph(output: Path) -> None:
+            graph = output / "crate-graph.json"
+            graph.write_text(
+                graph.read_text(encoding="utf-8").replace(
+                    '"lion-framework-spec"', '"lion-framework-specx"', 1
+                ),
+                encoding="utf-8",
+            )
+
+        def mutate_text(old: str, new: str):
+            def apply(output: Path) -> None:
+                path = output / lion.cppm
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(old, text)
+                path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+            return apply
+
+        def mutate_slots(output: Path) -> None:
+            (output / lion.package / "rusty_hand_slots.md").unlink()
+
+        def add_stray(output: Path) -> None:
+            (output / lion.package / "stray.cppm").write_text(
+                "export module stray;\n", encoding="utf-8"
+            )
+
+        cases = (
+            ("graph", mutate_graph, "crate-graph.json differs"),
+            (
+                "placeholder",
+                mutate_text(
+                    f"export module {lion.module};",
+                    f"export module {lion.module};\n// TODO: lowering",
+                ),
+                "placeholder marker",
+            ),
+            (
+                "srpc import",
+                mutate_text("import std_port;", "import std_port;\nimport srpc.misc;"),
+                "private imports must be exactly",
+            ),
+            ("slots", mutate_slots, "hand-slot manifest"),
+            ("stray", add_stray, "census mismatch"),
+        )
+        for label, mutate, error in cases:
+            with self.subTest(case=label):
+                temporary, output = self.copied_output()
+                try:
+                    mutate(output)
+                    with self.assertRaisesRegex(GATE.GateError, error):
+                        GATE.require_cpp_surfaces(ROOT, output, self.modules)
+                finally:
+                    temporary.cleanup()
+
     def test_preamble_leakage_checks_do_not_bypass_enumerated_siblings(self) -> None:
         cases = (
             ("srpc.connection_state", "#include <netdb.h>"),
@@ -356,7 +596,11 @@ class GateContractTests(unittest.TestCase):
         expected = {
             "srpc.load_balancer": (14, 19),
             "srpc.serializable": (601, 738),
-            "srpc.reactor": (365, 386),
+            # +57 unique / +63 raw: the Lion driver, adapter and stackless
+            # forwarding (S3) and the shared readiness helpers (S5); -24
+            # unique / -24 raw: S7b retires the epoll loop and the
+            # pending-write path.
+            "srpc.reactor": (398, 425),
             "srpc.server": (86, 98),
             "srpc.client": (271, 284),
             "srpc.request_queue": (33, 34),
@@ -370,9 +614,14 @@ class GateContractTests(unittest.TestCase):
             "srpc.fiber": (8, 9),
             "srpc.misc": (21, 26),
             "srpc.channel": (14, 21),
-            # Four epoll-control helpers now lower from canonical Rust.
-            # Two C++ ABI aliases and the initializer remain separately pinned.
-            "srpc.epoll_wrapper": (26, 29),
+            # Four epoll-control helpers once lowered from canonical Rust,
+            # with two C++ ABI aliases (Pollable's destructor).
+            # +22 alias-free rows: the Lion OS backend (plan S2); +5: its
+            # OsBackend/OsInterrupt forwarding impl (plan S1); -15 and the
+            # two aliases: S7b retires Epoll, those helpers and Pollable; +8:
+            # SrpcInterest and SrpcOsEvent back on plain derives. Only the
+            # initializer is pinned beyond the unique rows.
+            "srpc.epoll_wrapper": (46, 47),
             "srpc.pollable_proxy": (4, 7),
             "srpc.callbacks": (27, 28),
             "srpc.inmemory_channel": (78, 85),
@@ -383,6 +632,9 @@ class GateContractTests(unittest.TestCase):
             "srpc.debugging": (9, 10),
             "srpc.heartbeat": (25, 26),
             "srpc.any_message": (10, 11),
+            # The Lion transport tasks, write-through and the cork (S5);
+            # -51 unique / -55 raw: S7b retires TCP's pollable surface.
+            "srpc.tcp_channel": (165, 181),
         }
         for module, (unique_count, raw_count) in expected.items():
             with self.subTest(module=module):

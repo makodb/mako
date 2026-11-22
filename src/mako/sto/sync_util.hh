@@ -1,6 +1,8 @@
 #ifndef _SYNC_UTIL_H
 #define _SYNC_UTIL_H
 #include <atomic>
+#include <array>
+#include <stdexcept>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -11,6 +13,18 @@ using namespace std;
 
 // Single timestamp system: vectors contain replicated single values for compatibility
 namespace sync_util {
+    // @safe - Allocation-free snapshot; known bootstrap zero differs from
+    // an unpublished term. Each entry is captured atomically with its presence.
+    struct history_timestamp_snapshot {
+        std::array<uint32_t, 10> values{};
+        uint32_t known_mask = 0;
+        bool known(uint32_t term) const noexcept {
+            return term < values.size() && (known_mask & (uint32_t{1} << term));
+        }
+        uint32_t operator[](uint32_t term) const noexcept {
+            return term < values.size() ? values[term] : 0;
+        }
+    };
     class sync_logger {
     public:
         // latest timestamp for each local Paxos stream
@@ -31,20 +45,45 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static int local_replica_id; // local server incremental id
+        // The local-cache HLC stores a 63-bit 44/19 stamp plus the general
+        // validation gate in bit zero. Dense cache positions are deliberately
+        // separate because physical record order is not serialization order.
+        alignas(128) static std::atomic<uint64_t> mako_hlc_state;
+        alignas(128) static std::atomic<uint64_t> cache_sequence_state;
+
+        // Transitional authority for the distributed u32 `timestamp * 10 +
+        // term` protocol. Local cache commits never use this clock. The global
+        // distributed-timestamp migration removes it.
+        alignas(128) static std::atomic<uint32_t>
+            legacy_distributed_timestamp_state;
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;
         static std::mutex m;
         static std::condition_variable cv;
-        // term --> shard watermark (not term info)
-        static std::unordered_map<int, uint32_t> hist_timestamp; // on the running shard
+    private:
+        // Bit 32 publishes presence with the complete u32 watermark in one
+        // release store. No map allocation or racing container mutation.
+        static inline std::array<std::atomic<uint64_t>, 10> history_timestamps_{};
+    public:
+        // @safe - Independent term histories need no cross-term atomic cut.
+        static history_timestamp_snapshot history_snapshot() noexcept {
+            history_timestamp_snapshot result;
+            for (size_t term = 0; term != result.values.size(); ++term) {
+                const uint64_t entry =
+                    history_timestamps_[term].load(std::memory_order_acquire);
+                result.values[term] = static_cast<uint32_t>(entry);
+                if (entry >> 32)
+                    result.known_mask |= uint32_t{1} << term;
+            }
+            return result;
+        }
         static std::atomic<uint32_t> noops_cnt;
         static std::atomic<uint32_t> noops_cnt_hole;
         static int exchange_refresh_cnt;
         static std::atomic<bool> exchange_running;
-        static int failed_shard_index;
-        static uint32_t failed_shard_ts;
+        static std::atomic<int> failed_shard_index;
+        static std::atomic<uint32_t> failed_shard_ts;
         
         static void Init(int shardIdx_X, int nshards_X, int nthreads_X, bool is_leader_X,
                          string cluster_X,
@@ -145,17 +184,20 @@ namespace sync_util {
             return single_watermark_.load(memory_order_acquire) ;  // invalidate the cache
         }
 
-        // In previous submission, we assume the healthy shards are always INF
-        static void update_stable_timestamp(int epoch, uint32_t tt) { 
-           hist_timestamp[epoch]=tt; 
+        // @safe - Publish a checked decimal-term history entry atomically.
+        static void update_stable_timestamp(int epoch, uint32_t tt) {
+            if (epoch < 0 || epoch >= 10)
+                throw std::invalid_argument("history term is outside 0..9");
+            history_timestamps_[epoch].store(
+                (uint64_t{1} << 32) | tt, std::memory_order_release);
         }
 
         // Single timestamp system: ensure vector contains replicated value
         static void update_stable_timestamp_vec(int epoch, vector<uint32_t> tt_vec) { 
            // In single timestamp system, just use the first element
            if (!tt_vec.empty()) {
-               hist_timestamp[epoch] = tt_vec[0];
-               std::cout<<"update_stable_timestamp_vec, epoch:"<<epoch<<",tt:"<<hist_timestamp[epoch]<<std::endl;
+               update_stable_timestamp(epoch, tt_vec[0]);
+               std::cout<<"update_stable_timestamp_vec, epoch:"<<epoch<<",tt:"<<tt_vec[0]<<std::endl;
            }
         }
         

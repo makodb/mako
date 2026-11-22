@@ -1,0 +1,126 @@
+diff --git a/crates/mako-engine-sto/src/lib.rs b/crates/mako-engine-sto/src/lib.rs
+index 200839434..8a717c7f6 100644
+--- a/crates/mako-engine-sto/src/lib.rs
++++ b/crates/mako-engine-sto/src/lib.rs
+@@ -65,6 +65,9 @@ pub use mako_engine_api::{
+ };
+ 
+ pub use db::{LocalDb, Table};
++/// Private benchmark diagnostic guard, never part of the engine contract.
++#[doc(hidden)]
++pub use masstree::RcuScope as DiagnosticRcuScope;
+ pub use engine::{
+     advance_mako_timestamp_past, arm_test_cleanup_failure, clear_test_cleanup_failure,
+     clear_test_commit_observer, features, install_test_commit_observer, quarantined_worker_count,
+diff --git a/crates/mako-engine-sto/src/db.rs b/crates/mako-engine-sto/src/db.rs
+index c0f2a562a..f40ade1f6 100644
+--- a/crates/mako-engine-sto/src/db.rs
++++ b/crates/mako-engine-sto/src/db.rs
+@@ -151,6 +151,25 @@ impl LocalDb {
+         worker::attach(&self.sto, &self.directory)
+     }
+ 
++    /// Retains native RCU across one private benchmark's synchronous loop.
++    ///
++    /// This pins native reclamation until explicit close or Drop. It is an
++    /// attribution upper bound for bounded batches, not a production worker
++    /// lifetime policy. Native health, structural admission and OCC checks
++    /// remain active. Close before waiting, verification or database teardown.
++    /// The guard borrows this database and cannot leave the owning thread.
++    #[doc(hidden)]
++    pub fn diagnostic_rcu_scope(
++        &self,
++    ) -> std::result::Result<
++        crate::DiagnosticRcuScope<'_>,
++        Box<dyn std::error::Error + Send + Sync>,
++    > {
++        // The native Worker is independently retained by the thread-local
++        // attachment, so this does not borrow the exclusive core context.
++        Ok(self.attach()?.worker.rcu_scope()?)
++    }
++
+     /// Current immutable cache-order mode; zero while unclaimed.
+     pub(crate) fn mode(&self) -> u32 {
+         self.mode.load(Ordering::Acquire)
+diff --git a/crates/mako-engine/src/lib.rs b/crates/mako-engine/src/lib.rs
+index a6b436a9f..fb3fa7e4f 100644
+--- a/crates/mako-engine/src/lib.rs
++++ b/crates/mako-engine/src/lib.rs
+@@ -34,6 +34,7 @@ mod backend {
+ 
+ #[cfg(all(feature = "sto", not(feature = "c-abi")))]
+ mod backend {
++    pub use mako_engine_sto::DiagnosticRcuScope;
+     pub use mako_engine_sto::{
+         advance_mako_timestamp_past, arm_test_cleanup_failure, clear_test_cleanup_failure,
+         clear_test_commit_observer, features, install_test_commit_observer,
+diff --git a/crates/mako-cache/src/lib.rs b/crates/mako-cache/src/lib.rs
+index 2aa0b4839..9f0b886dd 100644
+--- a/crates/mako-cache/src/lib.rs
++++ b/crates/mako-cache/src/lib.rs
+@@ -927,6 +927,19 @@ impl Cache<RocksBlobs> {
+ }
+ 
+ impl<B: Blobs + 'static> Cache<B> {
++    /// Pins native RCU for a private synchronous benchmark loop only.
++    ///
++    /// Close before waiting, verification or cache teardown. This diagnostic
++    /// preserves ordinary health, structural admission and transaction checks
++    /// but delays native reclamation, so it is not a production batching API.
++    #[cfg(feature = "engine-sto")]
++    #[doc(hidden)]
++    pub fn diagnostic_rcu_scope(
++        &self,
++    ) -> Result<mako_engine::DiagnosticRcuScope<'_>, Box<dyn std::error::Error + Send + Sync>> {
++        self.local.diagnostic_rcu_scope()
++    }
++
+     /// Open over an already constructed atomic backend.
+     ///
+     /// Recovery and validation complete before the background writer starts
+diff --git a/crates/mako-cache-bench/src/bin/engine_compare.rs b/crates/mako-cache-bench/src/bin/engine_compare.rs
+index 4342c5abf..fedad9305 100644
+--- a/crates/mako-cache-bench/src/bin/engine_compare.rs
++++ b/crates/mako-cache-bench/src/bin/engine_compare.rs
+@@ -309,6 +309,15 @@ fn run() -> Result<()> {
+                     put(iteration)?;
+                 }
+                 barrier.wait();
++                // Private attribution diagnostic only. Retain one native RCU
++                // region across this synchronous measured loop, not warmup,
++                // barriers, final-value checks or database teardown.
++                #[cfg(feature = "engine-sto")]
++                let diagnostic_rcu_scope = if let Some(db) = &cache {
++                    db.diagnostic_rcu_scope()?
++                } else {
++                    engine.as_ref().unwrap().diagnostic_rcu_scope()?
++                };
+                 #[cfg(feature = "allocation-profile")]
+                 allocations::start();
+                 if let Some(perf) = &perf {
+@@ -324,6 +333,10 @@ fn run() -> Result<()> {
+                 let allocated = allocations::stop();
+                 #[cfg(not(feature = "allocation-profile"))]
+                 let allocated = (0, 0);
++                // Report close failures; Drop still handles an earlier error
++                // after that iteration's transaction has already unwound.
++                #[cfg(feature = "engine-sto")]
++                diagnostic_rcu_scope.close()?;
+                 measured_done.wait();
+                 // Verify every final key after the measured region, on the same
+                 // attached worker, without flushing the ACK benchmark's queue.
+@@ -387,6 +400,14 @@ fn run() -> Result<()> {
+     } else {
+         (total_per_worker * workers as u64, 0, 0)
+     };
++    eprintln!(
++        "private diagnostic: native RCU scope = {}",
++        if cfg!(feature = "engine-sto") {
++            "whole measured loop, native reclamation deferred until close"
++        } else {
++            "unchanged C ABI transaction scopes"
++        }
++    );
+     println!("{{\"mode\":\"{mode}\",\"engine\":\"{}\",\"workers\":{workers},\"iterations_per_worker\":{iterations},\"warmup_per_worker\":{warmup},\"keys_per_worker\":{KEYS},\"value_bytes\":{VALUE_BYTES},\"checksum\":\"none\",\"queue_capacity_per_worker\":{queue_capacity},\"commits\":{commits},\"max_worker_nanoseconds\":{nanoseconds},\"transactions_per_second\":{:.3},\"cycles_per_commit\":{:.3},\"instructions_per_commit\":{:.3},\"pmu_min_running_ratio\":{min_running_ratio:.8},\"perf_enabled\":{use_perf},\"allocation_profile\":{},\"rust_allocations_per_commit\":{:.3},\"rust_allocated_bytes_per_commit\":{:.3},\"acknowledged\":{acknowledged},\"applied_before_abort\":{applied},\"queued_before_abort\":{queued},\"verified_keys\":{},\"drained\":false}}",
+         mako_cache::engine_name(), commits as f64 * 1e9 / nanoseconds as f64,
+         cycles as f64 / commits as f64, instructions as f64 / commits as f64,
