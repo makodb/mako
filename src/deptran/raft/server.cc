@@ -1296,10 +1296,13 @@ void raft_command_encode(const rusty::RaftCommand* cmd, void* ctx,
   // Every write goes straight to `emit`, which is the request's archive: no
   // buffer here, so the payload is copied once, into the frame.
   srpc::BinaryWriteArchive writer(
-      // Box's explicit pointer constructor, not new_: new_ takes its value by
-      // copy, and a SinkBase is non-copyable. The Box<EmitSink> converts to
-      // SinkProxy (Box<SinkBase>) by the converting move.
-      srpc::SinkProxy(rusty::Box<EmitSink>(new EmitSink(ctx, emit))));
+      // make_box, not new_ and not Box's explicit pointer constructor: new_
+      // takes its value by copy and a SinkBase is non-copyable, while a sink
+      // from operator new would be released by Box with free() (an
+      // alloc-dealloc mismatch). make_box constructs the sink in place in
+      // Box's own allocation. The Box<EmitSink> converts to SinkProxy
+      // (Box<SinkBase>) by the converting move.
+      srpc::SinkProxy(rusty::make_box<EmitSink>(ctx, emit)));
   srpc::Serialize_::serialize(*cmd, writer);
 }
 
