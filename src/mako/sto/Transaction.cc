@@ -64,6 +64,9 @@ __thread HashWrapper *TThread::tprops = nullptr;
 Transaction::epoch_advance_callback_type Transaction::epoch_advance_callback;
 namespace {
 thread_local bool local_transaction_cleanup_in_progress = false;
+// See Transaction::declare_commit_cleanup_failure_quarantine(). Read only by
+// the exception handler in try_commit(), never on a commit that succeeds.
+thread_local bool local_commit_cleanup_failure_quarantines = false;
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
 void enter_test_observer_timestamp_gate(void*) noexcept {
@@ -138,6 +141,12 @@ struct test_cleanup_failure {};
 // @safe: reads the calling worker's cleanup-progress witness.
 bool Transaction::cleanup_in_progress() noexcept {
     return local_transaction_cleanup_in_progress;
+}
+
+// @unsafe: lifts the post-decision fail-stop for this thread; the caller
+// vouches for every commit caller on it (see the declaration).
+void Transaction::declare_commit_cleanup_failure_quarantine() noexcept {
+    local_commit_cleanup_failure_quarantines = true;
 }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -761,6 +770,8 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
     // This marker is a production safety witness, not only test machinery.
     // It is deliberately cleared only after native cleanup publishes terminal
     // state. Any exception leaves it set and forbids cleanup re-entry.
+    // try_commit()'s handler also reads it as proof that an exception came
+    // from here, so it must be set before anything in this function can throw.
     local_transaction_cleanup_in_progress = true;
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     if (local_test_fail_next_cleanup) {
@@ -853,7 +864,8 @@ after_unlock:
 // completed its engine start: an idle mode-1 placeholder never entered Masstree
 // RCU, and a start callback that threw must not be paired with an end callback.
 // noexcept: a failure of the end callback or of sharding completion is
-// fail-stop, like every other post-decision cleanup failure.
+// fail-stop for every caller, including a worker that quarantines itself when
+// the earlier part of stop() unwinds.
 void Transaction::finish(bool committed) noexcept {
     assert(state_ < s_aborted);
     // TODO: this will probably mess up with nested transactions
@@ -1678,12 +1690,21 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
-    // Cleanup failures after a local or remote decision must not escape to a
-    // retrying caller, nor leave rollback cleanup available on the live set.
+    // A cleanup failure after a local or remote decision must never reach a
+    // caller that retries or rolls back. The handler below resolves it.
     stop(true, writeset, nwriteset);
 
     } catch (...) {
-        if (irreversible_decision)
+        // After a decision the default is fail-stop: no caller may retry or
+        // roll back what is already installed. The one exception is a failure
+        // of stop() itself on a worker that declared it quarantines itself
+        // (declare_commit_cleanup_failure_quarantine()). The decision stands
+        // either way; only how far cleanup got is unknown. On such a worker
+        // the engine does not block rollback cleanup of the live set, so the
+        // quarantining caller must never invoke it.
+        if (irreversible_decision &&
+            !(local_transaction_cleanup_in_progress &&
+              local_commit_cleanup_failure_quarantines))
             std::terminate();
         throw;
     }

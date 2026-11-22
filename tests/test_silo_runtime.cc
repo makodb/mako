@@ -122,6 +122,30 @@ private:
     TVersion version_;
 };
 
+// Installs normally, then fails in committed cleanup: a failure of stop()
+// itself, after the commit decision and after the item was unlocked.
+class ThrowingCleanupObject final : public TObject {
+public:
+    void stage_write() {
+        Sto::item(this, 0).add_write<uint8_t>(1);
+    }
+
+    bool lock(TransItem& item, Transaction& transaction) override {
+        return transaction.try_lock(item, version_);
+    }
+    bool check(TransItem&, Transaction&) override { return true; }
+    void install(TransItem&, Transaction&) override {}
+    void unlock(TransItem&) override { version_.unlock(); }
+    void cleanup(TransItem&, bool committed) override {
+        if (committed)
+            throw std::runtime_error("synthetic committed-cleanup failure");
+    }
+    bool get_is_remote() const override { return false; }
+
+private:
+    TVersion version_;
+};
+
 // Exercises transaction-set slot reuse without involving Masstree's
 // process-lifetime allocations. The exact ASan CTest keeps leak detection on,
 // so replacing a live TransItem and orphaning its non-SSO extra string is a
@@ -1495,6 +1519,88 @@ TEST(TransactionCommitFailureTest, InstallExceptionIsFailStop) {
                     (void)Sto::try_commit();
                 } catch (...) {
                     _Exit(42);
+                }
+                _Exit(0);
+            });
+            worker.join();
+            _Exit(0);
+        },
+        ::testing::ExitedWithCode(86), "");
+}
+
+// Exit codes of the three tests below: 86 = std::terminate (fail-stop),
+// 42 = the exception reached the commit caller with the cleanup marker set,
+// 43 = it reached the caller without the marker, 0 = no failure at all.
+TEST(TransactionCommitFailureTest,
+     CommittedCleanupExceptionIsFailStopByDefault) {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_EXIT(
+        {
+            std::set_terminate([] { _Exit(86); });
+            std::thread worker([] {
+                TThread::set_id(MAX_THREADS - 8);
+                TThread::set_mode(0);
+                ThrowingCleanupObject object;
+                Sto::start_transaction();
+                object.stage_write();
+                try {
+                    (void)Sto::try_commit();
+                } catch (...) {
+                    _Exit(Transaction::cleanup_in_progress() ? 42 : 43);
+                }
+                _Exit(0);
+            });
+            worker.join();
+            _Exit(0);
+        },
+        ::testing::ExitedWithCode(86), "");
+}
+
+TEST(TransactionCommitFailureTest,
+     CommittedCleanupExceptionReachesAQuarantiningWorker) {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_EXIT(
+        {
+            std::set_terminate([] { _Exit(86); });
+            std::thread worker([] {
+                TThread::set_id(MAX_THREADS - 8);
+                TThread::set_mode(0);
+                Transaction::declare_commit_cleanup_failure_quarantine();
+                ThrowingCleanupObject object;
+                Sto::start_transaction();
+                object.stage_write();
+                try {
+                    (void)Sto::try_commit();
+                } catch (...) {
+                    // A quarantining worker stops here and never touches the
+                    // transaction again.
+                    _Exit(Transaction::cleanup_in_progress() ? 42 : 43);
+                }
+                _Exit(0);
+            });
+            worker.join();
+            _Exit(0);
+        },
+        ::testing::ExitedWithCode(42), "");
+}
+
+TEST(TransactionCommitFailureTest,
+     InstallExceptionIsFailStopForAQuarantiningWorker) {
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    EXPECT_EXIT(
+        {
+            std::set_terminate([] { _Exit(86); });
+            std::thread worker([] {
+                TThread::set_id(MAX_THREADS - 8);
+                TThread::set_mode(0);
+                Transaction::declare_commit_cleanup_failure_quarantine();
+                ThrowingInstallObject object;
+                Sto::start_transaction();
+                object.stage_write();
+                try {
+                    (void)Sto::try_commit();
+                } catch (...) {
+                    _Exit(Transaction::cleanup_in_progress() ? 42 : 43);
                 }
                 _Exit(0);
             });

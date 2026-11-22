@@ -2653,6 +2653,10 @@ int mako_local_thread_attach(void) noexcept {
 
     if (!mako::silo::ensure_epoch_runtime()) return MAKO_LOCAL_INTERNAL;
     mako_local_table_impl::thread_init();
+    // Every commit entry point of this ABI poisons the worker when native
+    // cleanup unwinds and never retries or rolls back, so a stop() failure
+    // after the commit decision must reach it instead of ending the process.
+    Transaction::declare_commit_cleanup_failure_quarantine();
     local_attached = true;
     return MAKO_LOCAL_OK;
   } catch (const std::bad_alloc &) {

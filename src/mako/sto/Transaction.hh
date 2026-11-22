@@ -411,6 +411,24 @@ public:
     // the marker remains set so an adapter cannot retry partial cleanup.
     static bool cleanup_in_progress() noexcept;
 
+    // After a commit decision try_commit() is fail-stop: it terminates rather
+    // than let an exception reach a caller that could retry or roll back an
+    // installed transaction.
+    //
+    // A worker thread may declare, once and for the rest of its life, that it
+    // quarantines itself instead. From then on every try_commit() on that
+    // thread, whoever calls it, rethrows an exception that stop() raised
+    // before it reached finish(). Nothing else changes: install, remote
+    // INSTALL and finish() failures still terminate.
+    //
+    // Declare it only if every commit caller on the thread catches everything
+    // and then never touches the thread's transaction again: no retry, no
+    // abort (silent_abort() would run rollback cleanup over installed
+    // writes), and no guard that aborts while the exception unwinds. The
+    // local ABI qualifies, because it poisons the worker. The declaration
+    // cannot be withdrawn.
+    static void declare_commit_cleanup_failure_quarantine() noexcept;
+
     // Optional durability seam for local transactional caches. The callback
     // runs after every read/predicate validation has succeeded, but before the
     // first write is installed. It may enter a bounded in-memory critical
