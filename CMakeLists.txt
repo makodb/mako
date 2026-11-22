@@ -2758,7 +2758,6 @@ add_apps(simpleTransaction examples/simpleTransaction.cc
 )
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(continuousTransactions examples/continuousTransactions.cc)
-add_apps(simplePaxos examples/simplePaxos.cc)
 add_apps(test_rocksdb_persistence examples/test_rocksdb_persistence.cc)
 add_apps(rocksdb_replay_app src/mako/benchmarks/rocksdb_replay_app.cc)
 # Does the Masstree write-back cache beat plain RocksDB? Reports write
@@ -2845,7 +2844,6 @@ if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran)
     endif()
 endif()
 
-add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
@@ -3192,7 +3190,7 @@ else()
 endif()
 # raft_bench — standalone Raft performance driver,
 # beside the scripts that drive it (scripts/raft_perf/).
-# Registered the same way as paxos_async_commit_test above: it is an ordinary
+# Registered like the add_apps programs above: it is an ordinary
 # app that links `mako` and drives the replication helper. It is deliberately
 # NOT inside the MAKO_USE_RAFT block, because that option only gates the extra
 # Raft example executables; the Raft helper itself is always compiled into
@@ -4041,20 +4039,6 @@ if(BUILD_TESTS)
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
 
 
-    # simplePaxos requires config generation and running a shell script that launches multiple processes
-    # add_test(NAME simplePaxos
-    #     COMMAND bash -c "bash ./src/mako/update_config.sh && bash ./examples/simplePaxos.sh"
-    #     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    # )
-    # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
-
-    # shard1ReplicationSimple tests 1-shard replication using simpleTransactionRep
-    # add_test(NAME shard1ReplicationSimple
-    #     COMMAND bash -c "bash ./examples/test_1shard_replication_simple.sh"
-    #     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    # )
-    # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
-
     # Add a convenience target to run all tests. The full src/srpc/tests corpus
     # belongs to srpc; Mako carries only the focused timeout-queue regression
     # above because Raft exercises that reactor path under saturation.
@@ -4064,7 +4048,7 @@ if(BUILD_TESTS)
                 test_srpc_timeout_race
                 test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
-                simpleTransaction simplePaxos shard1ReplicationSimple
+                simpleTransaction
         COMMENT "Running all tests (Masstree + live Silo support/STO)"
     )
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_srpc)

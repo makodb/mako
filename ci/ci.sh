@@ -134,7 +134,7 @@ cleanup_processes() {
     ( source ./scripts/raft_disk/store_dir.sh && raft_store_sweep )
     echo "Cleaning up any lingering test processes..."
 
-    for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft; do
+    for proc in simpleTransactionRep dbtest simpleTransaction simpleRaft; do
         while read -r pid; do
             if [ -z "$pid" ] || [ "$pid" = "1" ]; then
                 continue

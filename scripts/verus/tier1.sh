@@ -10,7 +10,7 @@
 # other lane on this branch.
 #
 # ci.sh's cleanup_processes kill -9s EVERY process of this user named dbtest,
-# simpleTransactionRep, simplePaxos, simpleTransaction or simpleRaft, and
+# simpleTransactionRep, simpleTransaction or simpleRaft, and
 # deletes /tmp/$USER_mako_rocksdb_shard*. Other worktrees on this host may be
 # running those. So before each suite this waits until no such process runs
 # from a directory outside this worktree, and refuses to start after an hour.
@@ -25,7 +25,7 @@ mkdir -p "$OUT"
 
 foreign_tests() {
   local pid cwd name
-  for name in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft deptran_server; do
+  for name in simpleTransactionRep dbtest simpleTransaction simpleRaft deptran_server; do
     for pid in $(pgrep -u "$(id -u)" -x "$name" 2>/dev/null); do
       cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
       case "$cwd" in "$REPO_ROOT"|"$REPO_ROOT"/*) ;; *) echo "$pid $name $cwd";; esac

@@ -44,7 +44,6 @@ Welcome to the Mako documentation.
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
 - **[Rust STO Paper / Whitepaper](architecture/rust-sto.md)** - Paper-style narrative following the original EuroSys 2016 STO paper, plus current implementation contracts and evaluation
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
-- **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 - **[Sharding and Range Migration Design](architecture/sharding-migration.md)** - End-to-end protocol, transaction integration, storage requirements, recovery, and implementation status
   - [Live Native Sharding](mako-book.md#data-migration-protocol-live-native-sharding) - Production integration and operational boundaries
   - [Specification and Verification](../tla/mako/README.md#native-rust-correspondence) - Ghost-log correspondence, guarantees, and trusted embedding contracts
