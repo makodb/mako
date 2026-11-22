@@ -1281,9 +1281,8 @@ void rust_sto_tpcc_wrapper::init() {
       require_ok("replay table create", sto_tpcc_table_create_with_cache_policy(
           db_, &table_config, STO_TPCC_RESOLVED_CACHE_NONE, &table));
       ffi_table_owner pending{table};
-      auto index = rusty::Box<rust_sto_tpcc_ordered_index>(
-          new rust_sto_tpcc_ordered_index(
-              this, table, id, std::string{}, false));
+      auto index = rusty::make_box<rust_sto_tpcc_ordered_index>(
+          this, table, id, std::string{}, false);
       pending.release();
       auto *raw = index.get();
       tables_.push_back(std::move(index));
@@ -2052,8 +2051,8 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
       rust_sto_tpcc_detail::open_index_fault_stage::after_table_create);
 #endif
 
-  auto index = rusty::Box<rust_sto_tpcc_ordered_index>(
-      new rust_sto_tpcc_ordered_index(this, table, table_id, name, remote));
+  auto index = rusty::make_box<rust_sto_tpcc_ordered_index>(
+      this, table, table_id, name, remote);
   table_owner.release();
 #ifdef MAKO_RUST_STO_TEST_HOOKS
   inject_open_index_fault_if_requested(
