@@ -5,6 +5,8 @@ Verus, with inductive safety and strict-serializability proofs. The MakoV2 core
 replaces the original-paper vector-clock/per-worker-stream model; its old
 verification counts and model-checking results do not apply. Verification is
 deductive, not bounded exploration. There is no model-checker dependency.
+That earlier model, its proof and its bounded model checker are kept as a
+separate crate in [`../mako-original`](../mako-original/README.md).
 
 For a readable end-to-end protocol description, start with
 [Sharding and range migration](../../docs/architecture/sharding-migration.md).
