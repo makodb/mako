@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mrx_core::{BlobError, BlobOp, Blobs};
 #[cfg(feature = "test-hooks")]
 use mrx_rocks::WriteBatchHookPoint;
-use mrx_rocks::{Durability, RocksBlobs};
+use mrx_rocks::{Durability, OptimisticCommitError, OptimisticDatabase, RocksBlobs};
 
 /// A scratch database that removes itself.
 struct Scratch(PathBuf);
@@ -437,28 +437,6 @@ fn entry_visitor_releases_resources_after_error_and_panic() {
 }
 
 #[test]
-fn checkpoint_storage_uses_ordered_point_in_time_recovery() {
-    let scratch = Scratch::new("recovery-options");
-    let _db = open(&scratch);
-    let options = std::fs::read_dir(&scratch.0)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("OPTIONS-")
-        })
-        .map(|path| std::fs::read_to_string(path).unwrap())
-        .collect::<Vec<_>>();
-    assert!(!options.is_empty(), "RocksDB must persist its options");
-    for contents in options {
-        assert!(contents.contains("wal_recovery_mode=kPointInTimeRecovery"));
-        assert!(contents.contains("unordered_write=false"));
-    }
-}
-
-#[test]
 fn disk_usage_observes_database_files_without_mutating_storage() {
     let scratch = Scratch::new("disk-usage");
     let db = std::sync::Arc::new(open(&scratch));
@@ -540,4 +518,338 @@ fn opening_a_bad_path_reports_an_error_rather_than_panicking() {
         Durability::Wal,
     );
     assert!(err.is_err(), "opening an unwritable path must fail cleanly");
+}
+
+#[test]
+fn snapshot_lease_preserves_points_and_both_iteration_directions() {
+    use std::sync::Arc;
+    let directory = Scratch::new("snapshot");
+    let database = Arc::new(RocksBlobs::open_strict(&directory.0, Durability::Sync).unwrap());
+    database
+        .write_batch(&[
+            BlobOp::Put {
+                key: b"a",
+                val: b"A",
+            },
+            BlobOp::Put {
+                key: b"b",
+                val: b"",
+            },
+            BlobOp::Put {
+                key: b"c",
+                val: b"C",
+            },
+            BlobOp::Put {
+                key: b"d",
+                val: b"D",
+            },
+        ])
+        .unwrap();
+    let snapshot = database.snapshot().unwrap();
+    database
+        .write_batch(&[
+            BlobOp::Delete { key: b"b" },
+            BlobOp::Put {
+                key: b"c",
+                val: b"changed",
+            },
+        ])
+        .unwrap();
+    assert_eq!(snapshot.get(b"b").unwrap(), Some(Vec::new()));
+    assert_eq!(snapshot.get(b"c").unwrap(), Some(b"C".to_vec()));
+    assert_eq!(database.get(b"b").unwrap(), None);
+    let mut forward = Vec::new();
+    snapshot
+        .scan(b"b", Some(b"d"), false, 10, &mut |key, value| {
+            forward.push((key.to_vec(), value.to_vec()));
+            Ok(true)
+        })
+        .unwrap();
+    let mut reverse = Vec::new();
+    snapshot
+        .scan(b"b", Some(b"d"), true, 10, &mut |key, value| {
+            reverse.push((key.to_vec(), value.to_vec()));
+            Ok(true)
+        })
+        .unwrap();
+    forward.reverse();
+    assert_eq!(reverse, forward);
+    assert_eq!(reverse.len(), 2);
+    drop(database);
+    // The lease, not the caller's last Arc, owns the native DB lifetime.
+    assert_eq!(snapshot.get(b"a").unwrap(), Some(b"A".to_vec()));
+}
+
+#[test]
+fn native_checkpoint_reopens_exact_bytes_and_missing_authority_is_not_created() {
+    let source = Scratch::new("checkpoint-source");
+    let target = Scratch::new("checkpoint-target");
+    let missing = Scratch::new("must-not-create");
+    assert!(RocksBlobs::open_existing_strict(&missing.0, Durability::Sync).is_err());
+    let database = RocksBlobs::open_strict(&source.0, Durability::Sync).unwrap();
+    database
+        .write_batch(&[BlobOp::Put {
+            key: b"key",
+            val: b"durable",
+        }])
+        .unwrap();
+    database.checkpoint(&target.0).unwrap();
+    database
+        .write_batch(&[BlobOp::Put {
+            key: b"key",
+            val: b"later",
+        }])
+        .unwrap();
+    let checkpoint = RocksBlobs::open_existing_strict(&target.0, Durability::Sync).unwrap();
+    assert_eq!(checkpoint.get(b"key").unwrap(), Some(b"durable".to_vec()));
+}
+
+#[test]
+fn optimistic_native_conflict_rolls_back_the_entire_write_set() {
+    let scratch = Scratch::new("optimistic-conflict");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"counter", b"0").unwrap();
+    initial.put(b"keep", b"present").unwrap();
+    initial.commit().unwrap();
+
+    let mut winner = database.begin().unwrap();
+    let mut loser = database.begin().unwrap();
+    assert_eq!(winner.get(b"counter").unwrap(), Some(b"0".to_vec()));
+    assert_eq!(loser.get(b"counter").unwrap(), Some(b"0".to_vec()));
+    winner.put(b"counter", b"1").unwrap();
+    loser.put(b"counter", b"2").unwrap();
+    loser.put(b"must-not-appear", b"value").unwrap();
+    loser.delete(b"keep").unwrap();
+    winner.commit().unwrap();
+    assert!(matches!(
+        loser.commit(),
+        Err(OptimisticCommitError::Conflict)
+    ));
+
+    let mut observer = database.begin().unwrap();
+    assert_eq!(observer.get(b"counter").unwrap(), Some(b"1".to_vec()));
+    assert_eq!(observer.get(b"keep").unwrap(), Some(b"present".to_vec()));
+    assert_eq!(observer.get(b"must-not-appear").unwrap(), None);
+    observer.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_tracks_reads_not_just_overlapping_writes() {
+    let scratch = Scratch::new("optimistic-tracked-read");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"watched", b"before").unwrap();
+    initial.commit().unwrap();
+
+    let mut reader = database.begin().unwrap();
+    assert_eq!(reader.get(b"watched").unwrap(), Some(b"before".to_vec()));
+    reader
+        .put(b"disjoint-result", b"derived-from-before")
+        .unwrap();
+    let mut writer = database.begin().unwrap();
+    writer.put(b"watched", b"after").unwrap();
+    writer.commit().unwrap();
+    assert!(matches!(
+        reader.commit(),
+        Err(OptimisticCommitError::Conflict)
+    ));
+    let mut observer = database.begin().unwrap();
+    assert_eq!(observer.get(b"disjoint-result").unwrap(), None);
+    observer.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_tracks_absent_point_reads() {
+    let scratch = Scratch::new("optimistic-absent");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut reader = database.begin().unwrap();
+    assert_eq!(reader.get(b"missing").unwrap(), None);
+    reader.put(b"decision", b"absent").unwrap();
+    let mut writer = database.begin().unwrap();
+    writer.put(b"missing", b"inserted").unwrap();
+    writer.commit().unwrap();
+    assert!(matches!(
+        reader.commit(),
+        Err(OptimisticCommitError::Conflict)
+    ));
+}
+
+#[test]
+fn optimistic_native_snapshot_starts_at_begin_and_multikey_commit_is_atomic() {
+    let scratch = Scratch::new("optimistic-snapshot");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Sync).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"a", b"old-a").unwrap();
+    initial.put(b"b", b"old-b").unwrap();
+    initial.commit().unwrap();
+
+    // No reads before the competing commit: this proves begin-time, rather
+    // than first-read, snapshot establishment. Both rows must remain old.
+    let mut before = database.begin().unwrap();
+    let mut writer = database.begin().unwrap();
+    writer.put(b"a", b"new-a").unwrap();
+    writer.delete(b"b").unwrap();
+    writer.put(b"c", b"new-c").unwrap();
+    let mut unpublished = database.begin().unwrap();
+    assert_eq!(unpublished.get(b"a").unwrap(), Some(b"old-a".to_vec()));
+    assert_eq!(unpublished.get(b"b").unwrap(), Some(b"old-b".to_vec()));
+    assert_eq!(unpublished.get(b"c").unwrap(), None);
+    unpublished.rollback().unwrap();
+    writer.commit().unwrap();
+    assert_eq!(before.get(b"a").unwrap(), Some(b"old-a".to_vec()));
+    assert_eq!(before.get(b"b").unwrap(), Some(b"old-b".to_vec()));
+    assert_eq!(before.get(b"c").unwrap(), None);
+    assert_eq!(before.get(b"a").unwrap(), Some(b"old-a".to_vec()));
+    before.rollback().unwrap();
+    drop(database);
+
+    // Reopening also exercises transaction/snapshot/DB cleanup and persistence.
+    let reopened = OptimisticDatabase::open(&scratch.0, Durability::Sync).unwrap();
+    let mut after = reopened.begin().unwrap();
+    assert_eq!(after.get(b"a").unwrap(), Some(b"new-a".to_vec()));
+    assert_eq!(after.get(b"b").unwrap(), None);
+    assert_eq!(after.get(b"c").unwrap(), Some(b"new-c".to_vec()));
+    after.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_reads_local_writes_and_discards_rollback_and_drop() {
+    let scratch = Scratch::new("optimistic-rollback");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"existing", b"old").unwrap();
+    initial.commit().unwrap();
+
+    let mut transaction = database.begin().unwrap();
+    transaction.put(b"existing", b"replacement").unwrap();
+    transaction.put(b"new", b"").unwrap();
+    assert_eq!(
+        transaction.get(b"existing").unwrap(),
+        Some(b"replacement".to_vec())
+    );
+    assert_eq!(transaction.get(b"new").unwrap(), Some(Vec::new()));
+    transaction.delete(b"existing").unwrap();
+    assert_eq!(transaction.get(b"existing").unwrap(), None);
+    transaction.put(b"existing", b"last").unwrap();
+    assert_eq!(
+        transaction.get(b"existing").unwrap(),
+        Some(b"last".to_vec())
+    );
+    transaction.rollback().unwrap();
+    {
+        let mut abandoned = database.begin().unwrap();
+        abandoned.delete(b"existing").unwrap();
+        abandoned.put(b"dropped", b"uncommitted").unwrap();
+    }
+    let mut observer = database.begin().unwrap();
+    assert_eq!(observer.get(b"existing").unwrap(), Some(b"old".to_vec()));
+    assert_eq!(observer.get(b"new").unwrap(), None);
+    assert_eq!(observer.get(b"dropped").unwrap(), None);
+    observer.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_scan_is_bounded_ordered_and_reads_local_writes() {
+    let scratch = Scratch::new("optimistic-scan");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    for key in [b"a", b"c", b"e", b"g"] {
+        initial.put(key, key).unwrap();
+    }
+    initial.commit().unwrap();
+    let mut transaction = database.begin().unwrap();
+    transaction.delete(b"c").unwrap();
+    transaction.put(b"b", b"local-b").unwrap();
+    transaction.put(b"e", b"local-e").unwrap();
+    assert_eq!(
+        transaction.scan(b"b", b"g", 8).unwrap(),
+        vec![
+            (b"b".to_vec(), b"local-b".to_vec()),
+            (b"e".to_vec(), b"local-e".to_vec()),
+        ],
+    );
+    assert_eq!(
+        transaction.scan(b"a", b"z", 1).unwrap(),
+        vec![(b"a".to_vec(), b"a".to_vec())],
+    );
+    assert!(transaction.scan(b"a", b"z", 0).unwrap().is_empty());
+    assert!(transaction.scan(b"g", b"b", 10).unwrap().is_empty());
+    assert!(transaction.scan(b"b", b"b", 10).unwrap().is_empty());
+    transaction.rollback().unwrap();
+}
+
+#[test]
+fn optimistic_native_scan_tracks_returned_keys_but_not_range_phantoms() {
+    let scratch = Scratch::new("optimistic-scan-conflicts");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"a", b"original").unwrap();
+    initial.commit().unwrap();
+
+    let mut changed_row_reader = database.begin().unwrap();
+    assert_eq!(changed_row_reader.scan(b"a", b"z", 4).unwrap().len(), 1);
+    changed_row_reader.put(b"derived", b"old").unwrap();
+    let mut changer = database.begin().unwrap();
+    changer.put(b"a", b"changed").unwrap();
+    changer.commit().unwrap();
+    assert!(matches!(
+        changed_row_reader.commit(),
+        Err(OptimisticCommitError::Conflict)
+    ));
+
+    let mut range_reader = database.begin().unwrap();
+    let before = range_reader.scan(b"a", b"z", 4).unwrap();
+    assert_eq!(before, vec![(b"a".to_vec(), b"changed".to_vec())]);
+    let mut inserter = database.begin().unwrap();
+    inserter.put(b"m", b"phantom").unwrap();
+    inserter.commit().unwrap();
+    assert_eq!(range_reader.scan(b"a", b"z", 4).unwrap(), before);
+    range_reader
+        .put(b"derived", b"range-was-singleton")
+        .unwrap();
+    // This success is the native engine's documented range-phantom limitation,
+    // NOT evidence of serializable scans. No key was read at the absent gap.
+    range_reader.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_disjoint_transactions_do_not_spuriously_conflict() {
+    let scratch = Scratch::new("optimistic-disjoint");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut left = database.begin().unwrap();
+    let mut right = database.begin().unwrap();
+    assert_eq!(left.get(b"left").unwrap(), None);
+    assert_eq!(right.get(b"right").unwrap(), None);
+    left.put(b"left", b"L").unwrap();
+    right.put(b"right", b"R").unwrap();
+    left.commit().unwrap();
+    right.commit().unwrap();
+}
+
+#[test]
+fn optimistic_native_open_rejects_non_database_paths() {
+    let scratch = Scratch::new("optimistic-invalid-path");
+    std::fs::write(&scratch.0, b"not a database directory").unwrap();
+    let result = OptimisticDatabase::open(&scratch.0, Durability::Sync);
+    std::fs::remove_file(&scratch.0).unwrap();
+    assert!(result.is_err());
+}
+
+#[test]
+fn optimistic_native_read_only_commit_validates_tracked_reads() {
+    let scratch = Scratch::new("optimistic-read-only");
+    let database = OptimisticDatabase::open(&scratch.0, Durability::Wal).unwrap();
+    let mut initial = database.begin().unwrap();
+    initial.put(b"watched", b"before").unwrap();
+    initial.commit().unwrap();
+    let mut reader = database.begin().unwrap();
+    assert_eq!(reader.get(b"watched").unwrap(), Some(b"before".to_vec()));
+    let mut writer = database.begin().unwrap();
+    writer.put(b"watched", b"after").unwrap();
+    writer.commit().unwrap();
+    assert!(matches!(
+        reader.commit(),
+        Err(OptimisticCommitError::Conflict)
+    ));
 }

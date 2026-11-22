@@ -1,9 +1,10 @@
 //! The RocksDB base, through `rocksdb/c.h`, which Mako
-//! already links. One instance per server, one column family. Every batch
-//! is written with RocksDB's own WAL off -- legal exactly because the Raft
-//! WAL is the log above it -- so a batch is durable only after a waiting
-//! flush, and a crash leaves the base as of a whole batch at or after the
-//! last one. Write buffers sized for the ingest rate (64 MB, four).
+//! already links. The default durable store writes batches with RocksDB's WAL
+//! off because the separately synced Raft WAL protects them until a waiting
+//! base flush. The explicit weak async policy retains RocksDB's WAL (without
+//! sync), allowing non-waiting base flushes and process-crash recovery after
+//! Raft segment reclamation. Neither async WAL promises power-crash durability.
+//! Write buffers are sized for the ingest rate (64 MB, four).
 
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
 use std::io;
@@ -35,6 +36,7 @@ extern "C" {
     fn rocksdb_writeoptions_create() -> *mut c_void;
     fn rocksdb_writeoptions_destroy(o: *mut c_void);
     fn rocksdb_writeoptions_disable_WAL(o: *mut c_void, disable: c_int);
+    fn rocksdb_writeoptions_set_sync(o: *mut c_void, sync: c_uchar);
     fn rocksdb_write(db: *mut rocksdb_t, o: *const c_void, b: *mut c_void, err: *mut *mut c_char);
 
     fn rocksdb_flushoptions_create() -> *mut c_void;
@@ -71,6 +73,7 @@ pub struct RocksBase {
     db: *mut rocksdb_t,
     wopts: *mut c_void,
     ropts: *mut c_void,
+    sync_writes: bool,
 }
 
 // SAFETY: a RocksDB handle may move between threads; this type has one owner.
@@ -81,6 +84,12 @@ impl RocksBase {
     /// store being created); otherwise a missing or damaged base is an error,
     /// never repaired or recreated.
     pub fn open(path: &Path, create: bool) -> io::Result<RocksBase> {
+        Self::open_with_sync_writes(path, create, true)
+    }
+
+    /// Selects waiting durable base flushes, or weak asynchronous persistence.
+    /// Async still writes both the upstream Raft WAL and this base's WAL.
+    pub fn open_with_sync_writes(path: &Path, create: bool, sync_writes: bool) -> io::Result<RocksBase> {
         let name = CString::new(path.to_string_lossy().as_bytes()).map_err(io::Error::other)?;
         // SAFETY: plain C API calls on handles created here.
         unsafe {
@@ -102,8 +111,9 @@ impl RocksBase {
                 return Err(io::Error::other("rocksdb: open returned no handle"));
             }
             let wopts = rocksdb_writeoptions_create();
-            rocksdb_writeoptions_disable_WAL(wopts, 1);
-            Ok(RocksBase { db, wopts, ropts: rocksdb_readoptions_create() })
+            rocksdb_writeoptions_disable_WAL(wopts, i32::from(sync_writes));
+            rocksdb_writeoptions_set_sync(wopts, 0);
+            Ok(RocksBase { db, wopts, ropts: rocksdb_readoptions_create(), sync_writes })
         }
     }
 }
@@ -143,7 +153,7 @@ impl Base for RocksBase {
         // SAFETY: plain C API calls.
         unsafe {
             let o = rocksdb_flushoptions_create();
-            rocksdb_flushoptions_set_wait(o, 1);
+            rocksdb_flushoptions_set_wait(o, u8::from(self.sync_writes));
             let mut err: *mut c_char = std::ptr::null_mut();
             rocksdb_flush(self.db, o, &mut err);
             rocksdb_flushoptions_destroy(o);

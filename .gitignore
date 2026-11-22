@@ -16,6 +16,8 @@ crates/crates/
 crates/target-*/
 /target
 /.cargo-docker
+/target-rocksdb-raft/
+/.cargo-rocksdb-raft/
 .lock-waf*
 *.pyc
 .cproject

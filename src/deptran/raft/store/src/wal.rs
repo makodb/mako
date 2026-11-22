@@ -2,9 +2,10 @@
 //! read back at recovery.
 //!
 //! A segment is named by its first sequence number. The writer rotates when
-//! the open segment has reached `segment_bytes`: the new segment's header is
-//! synced, and then its directory entry, before any batch goes into it; then
-//! the rotation is published ([`Rotated`]) for the checkpoint.
+//! the open segment has reached `segment_bytes`: under the default filesystem
+//! policy the header and directory entry are synced before any batch, then the
+//! rotation is published ([`Rotated`]). Explicit async filesystems retain these
+//! writes but omit barriers; their acknowledgements are not power-crash durable.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,8 @@ pub struct Wal {
 /// no sign: it is in the directory from its `create_new` on, before either
 /// sync, and a crash then leaves a header-less segment that recovery deletes
 /// -- with its predecessor already gone, no segment at all.
+/// With an explicit async filesystem this is only written, not durable;
+/// reclamation then also requires a base with its own enabled WAL.
 #[derive(Clone)]
 pub struct Rotated(Arc<AtomicU64>);
 
@@ -140,7 +143,7 @@ impl Wal {
     }
 
     /// Appends one batch of encoded records numbered from `first_seq`, and
-    /// syncs it. On return the batch is durable.
+    /// applies the filesystem sync policy. Durable only with the default policy.
     pub fn append(&mut self, first_seq: u64, records: &[Vec<u8>]) -> io::Result<()> {
         assert_eq!(first_seq, self.next_seq, "WAL batches must be contiguous");
         assert!(!records.is_empty(), "empty WAL batch");

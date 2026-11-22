@@ -13,12 +13,16 @@ description = "Masstree-over-RocksDB write-back cache: backend-agnostic core"
 license = "MIT"
 publish = false
 
+[features]
+default = ["cache"]
+cache = ["dep:crossbeam-epoch"]
+
 [dependencies]
 # The epoch that makes the entry slot's lock-free pointer safe: readers
 # pin a guard before loading, writers defer the release of what they
 # displace. The alternative was keeping a per-key mutex on the read path.
 # See `src/slot.rs`.
-crossbeam-epoch = "0.9"
+crossbeam-epoch = { version = "0.9", optional = true }
 
 # LTO IS MANDATORY-OFF, and this is not a preference.
 #

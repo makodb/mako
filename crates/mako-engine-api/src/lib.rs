@@ -4,8 +4,8 @@
 //! The cache (`mako-cache`) drives exactly one local engine per process. Two
 //! engines implement this contract: the C ABI facade over C++ STO/MassTrans
 //! (`mako-local`) and the native Rust STO engine (`mako-engine-sto`). Both
-//! expose the same value types defined here, and each implements the traits
-//! in [`engine`] so a shared conformance suite can hold them to one behavior.
+//! expose the same value types defined here. The default `distributed` feature
+//! also exposes their legacy cache/engine facade; local-only users retain neutral types.
 //!
 //! Everything in this crate is plain data or a trait; there is no unsafe block
 //! and no engine logic. Numeric contract values (feature bits, limits,
@@ -17,20 +17,26 @@
 // bodies); this crate itself contains no unsafe block.
 #![allow(unsafe_code)]
 
+#[cfg(feature = "distributed")]
 mod commit;
+#[cfg(feature = "distributed")]
 pub mod engine;
 mod error;
 mod features;
 mod limits;
+#[cfg(feature = "distributed")]
 mod modes;
+#[cfg(feature = "distributed")]
 mod test_hooks;
 mod timestamp;
 
+#[cfg(feature = "distributed")]
 pub use commit::{
     record_format, CommitDisposition, CommitHolderReport, CommitRecordChecksum,
     CommitRecordPreflight, CommitRecordReport, CommitRecordTarget, CommitReport,
     FusedOnePutHolderAttempt,
 };
+#[cfg(feature = "distributed")]
 pub use engine::{
     EngineDb, EngineTransaction, HolderPool, HolderView, LocalEngine, NativeOrderedArenaControl,
     NativeOrderedHolderControl, NativeOrderedRecordOutcome, PreselectedHolderOutcome,
@@ -41,6 +47,8 @@ pub use features::Features;
 pub use limits::{
     MAX_KEY_BYTES, MAX_TABLE_NAME_BYTES, MAX_VALUE_BYTES, MAX_WORKERS, TRANSACTION_ITEM_BUDGET,
 };
+#[cfg(feature = "distributed")]
 pub use modes::CacheOrderMode;
+#[cfg(feature = "distributed")]
 pub use test_hooks::{TestCleanupBoundary, TestCommitObserver, TestCommitPhase, WorkerHealth};
 pub use timestamp::MakoTimestamp;

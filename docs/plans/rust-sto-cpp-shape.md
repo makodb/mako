@@ -745,6 +745,18 @@ the current Rust implementation's performance or safety properties.
   counterparts, and the 61 allocations that Miri and ASan reported for
   `failure_protocol` are the transaction frames and lock plans those faults
   quarantine. No other suppression was added.
+- On 2026-11-22 the user approved five further identities (40 to 45), which
+  arrive with the retained LocalCommit API of the direct RocksDB/Raft profile:
+  `local_unsubmitted_drop_aborts_but_submitted_drop_runs_no_release_or_cleanup`,
+  `local_committed_cleanup_failure_is_not_an_abort_and_completion_is_exactly_once`,
+  `local_committed_publication_failure_preserves_external_decision` and
+  `local_whole_batch_unwind_is_fenced_and_cannot_be_retried` in
+  `failure_protocol`, and
+  `local_submitted_unknown_and_committed_drop_never_restore_aborted_versions`
+  in `public_adapter_contract`. A LocalCommit dropped unresolved after
+  submission forgets its lock plan and quarantines its items on purpose. Each
+  of the fourteen new `local_*` tests was run alone under Miri with leak
+  checking; exactly these five reported leaks. No other suppression was added.
 - The first runtime ASan baseline found two additional borrowed-owner fixtures
   missing from the separate adapter/cache inventory. Isolated runs attributed
   all 438 allocations (134,272 bytes) to

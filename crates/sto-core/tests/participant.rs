@@ -1,3 +1,5 @@
+#![cfg(feature = "distributed")]
+
 use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
 use sto_core::{
     AbortReason, CommitOutcome, Conflict, ParticipantError, ParticipantPhase, Runtime,

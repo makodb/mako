@@ -153,6 +153,11 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 
 - **[Silo-to-Mako transaction-cache roadmap](plans/rust-mako-transaction-cache.md)** — keep C++ Silo behind a C ABI first, add local transactional durability, port distributed Mako, then replace the local engine with native Rust.
 
+### Rust STO + RocksDB + Raft
+
+- [Feature Plan](plans/rocksdb-raft-mode.md) — Reuse Rust STO with a direct RocksDB
+  adapter and Raft; no Masstree/Mako cache or distributed transactions.
+
 ### Config Node System
 
 - **[Overview](plans/config-node/overview.md)** - Configuration persistence master plan

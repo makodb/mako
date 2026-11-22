@@ -2,6 +2,10 @@
 //! write-back cache, ported from the C++ implementation in
 //! `src/mako/storage/masstree_rocks_index.hh`.
 //!
+//! The default `cache` feature retains this complete implementation. Disabling
+//! defaults exposes only the raw byte-store/directory contracts and does not
+//! compile the cache runtime, entry storage, epoch GC or writeback machinery.
+//!
 //! # What this crate is and is not
 //!
 //! This crate contains **all** the cache logic and **no** FFI. The two
@@ -64,20 +68,34 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(feature = "cache")]
 pub mod durability;
+#[cfg(any(feature = "cache", test))]
 pub mod fakes;
+#[cfg(feature = "cache")]
 pub mod record;
+#[cfg(feature = "cache")]
 pub mod runtime;
+#[cfg(feature = "cache")]
 mod slot;
+#[cfg(feature = "cache")]
 pub mod store;
+#[cfg(feature = "cache")]
 pub mod table;
+#[cfg(feature = "cache")]
 pub mod value;
 
+#[cfg(feature = "cache")]
 pub use durability::{Floors, Ticket, TicketLog, VersionCounter, Watermark, WriterSlot};
+#[cfg(feature = "cache")]
 pub use record::{Kind, Record};
+#[cfg(feature = "cache")]
 pub use runtime::Runtime;
+#[cfg(feature = "cache")]
 pub use store::{Chunk, Store, WriteOutcome};
+#[cfg(feature = "cache")]
 pub use table::EntryTable;
+#[cfg(feature = "cache")]
 pub use value::Entry;
 
 /// Version numbers start at 1, never 0.

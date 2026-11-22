@@ -10,12 +10,14 @@ rust-version.workspace = true
 path = "src/lib.rs"
 
 [features]
+default = ["distributed"]
+distributed = ["mako-clock/distributed"]
 # Test-only rendezvous after individual writes, absent from production builds.
 test-install-observer = []
 
 [dependencies]
 arc-swap = "1.7"
-mako-clock = { path = "../mako-clock" }
+mako-clock = { path = "../mako-clock", default-features = false }
 
 [dev-dependencies]
 trybuild = "=1.0.120"

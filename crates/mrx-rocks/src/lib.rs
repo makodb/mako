@@ -18,8 +18,12 @@
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::Arc;
 
 use mrx_core::{BlobError, BlobOp, Blobs, BoundedEntryVisitor, EntryVisitor};
+
+mod optimistic;
+pub use optimistic::{OptimisticCommitError, OptimisticDatabase, OptimisticTransaction};
 
 mod sys {
     #![allow(non_camel_case_types)]
@@ -41,6 +45,11 @@ mod sys {
         rocksdb_flushoptions_t,
         rocksdb_writebatch_t,
         rocksdb_iterator_t,
+        rocksdb_snapshot_t,
+        rocksdb_checkpoint_t,
+        rocksdb_optimistictransactiondb_t,
+        rocksdb_optimistictransaction_options_t,
+        rocksdb_transaction_t,
     );
 
     extern "C" {
@@ -52,6 +61,23 @@ mod sys {
 
         pub fn rocksdb_readoptions_create() -> *mut rocksdb_readoptions_t;
         pub fn rocksdb_readoptions_destroy(o: *mut rocksdb_readoptions_t);
+        pub fn rocksdb_readoptions_set_snapshot(
+            o: *mut rocksdb_readoptions_t,
+            snapshot: *const rocksdb_snapshot_t,
+        );
+        pub fn rocksdb_create_snapshot(db: *mut rocksdb_t) -> *const rocksdb_snapshot_t;
+        pub fn rocksdb_release_snapshot(db: *mut rocksdb_t, snapshot: *const rocksdb_snapshot_t);
+        pub fn rocksdb_checkpoint_object_create(
+            db: *mut rocksdb_t,
+            err: *mut *mut c_char,
+        ) -> *mut rocksdb_checkpoint_t;
+        pub fn rocksdb_checkpoint_object_destroy(checkpoint: *mut rocksdb_checkpoint_t);
+        pub fn rocksdb_checkpoint_create(
+            checkpoint: *mut rocksdb_checkpoint_t,
+            path: *const c_char,
+            log_size_for_flush: u64,
+            err: *mut *mut c_char,
+        );
 
         pub fn rocksdb_writeoptions_create() -> *mut rocksdb_writeoptions_t;
         pub fn rocksdb_writeoptions_destroy(o: *mut rocksdb_writeoptions_t);
@@ -113,10 +139,74 @@ mod sys {
         pub fn rocksdb_iter_seek(it: *mut rocksdb_iterator_t, key: *const c_char, klen: usize);
         pub fn rocksdb_iter_valid(it: *const rocksdb_iterator_t) -> c_uchar;
         pub fn rocksdb_iter_next(it: *mut rocksdb_iterator_t);
+        pub fn rocksdb_iter_prev(it: *mut rocksdb_iterator_t);
+        pub fn rocksdb_iter_seek_to_last(it: *mut rocksdb_iterator_t);
+        pub fn rocksdb_iter_seek_for_prev(
+            it: *mut rocksdb_iterator_t,
+            key: *const c_char,
+            klen: usize,
+        );
         pub fn rocksdb_iter_key(it: *const rocksdb_iterator_t, klen: *mut usize) -> *const c_char;
         pub fn rocksdb_iter_value(it: *const rocksdb_iterator_t, vlen: *mut usize)
             -> *const c_char;
         pub fn rocksdb_iter_get_error(it: *const rocksdb_iterator_t, err: *mut *mut c_char);
+
+        pub fn rocksdb_optimistictransactiondb_open(
+            o: *const rocksdb_options_t,
+            name: *const c_char,
+            err: *mut *mut c_char,
+        ) -> *mut rocksdb_optimistictransactiondb_t;
+        pub fn rocksdb_optimistictransactiondb_close(db: *mut rocksdb_optimistictransactiondb_t);
+        pub fn rocksdb_optimistictransaction_options_create(
+        ) -> *mut rocksdb_optimistictransaction_options_t;
+        pub fn rocksdb_optimistictransaction_options_destroy(
+            o: *mut rocksdb_optimistictransaction_options_t,
+        );
+        pub fn rocksdb_optimistictransaction_options_set_set_snapshot(
+            o: *mut rocksdb_optimistictransaction_options_t,
+            v: c_uchar,
+        );
+        pub fn rocksdb_optimistictransaction_begin(
+            db: *mut rocksdb_optimistictransactiondb_t,
+            write: *const rocksdb_writeoptions_t,
+            options: *const rocksdb_optimistictransaction_options_t,
+            old: *mut rocksdb_transaction_t,
+        ) -> *mut rocksdb_transaction_t;
+        pub fn rocksdb_transaction_destroy(tx: *mut rocksdb_transaction_t);
+        // The wrapper is allocated by the C API and freed with rocksdb_free;
+        // its underlying snapshot belongs to the transaction.
+        pub fn rocksdb_transaction_get_snapshot(
+            tx: *mut rocksdb_transaction_t,
+        ) -> *const rocksdb_snapshot_t;
+        pub fn rocksdb_transaction_get_for_update(
+            tx: *mut rocksdb_transaction_t,
+            read: *const rocksdb_readoptions_t,
+            key: *const c_char,
+            klen: usize,
+            vlen: *mut usize,
+            exclusive: c_uchar,
+            err: *mut *mut c_char,
+        ) -> *mut c_char;
+        pub fn rocksdb_transaction_put(
+            tx: *mut rocksdb_transaction_t,
+            key: *const c_char,
+            klen: usize,
+            value: *const c_char,
+            vlen: usize,
+            err: *mut *mut c_char,
+        );
+        pub fn rocksdb_transaction_delete(
+            tx: *mut rocksdb_transaction_t,
+            key: *const c_char,
+            klen: usize,
+            err: *mut *mut c_char,
+        );
+        pub fn rocksdb_transaction_create_iterator(
+            tx: *mut rocksdb_transaction_t,
+            read: *const rocksdb_readoptions_t,
+        ) -> *mut rocksdb_iterator_t;
+        pub fn rocksdb_transaction_commit(tx: *mut rocksdb_transaction_t, err: *mut *mut c_char);
+        pub fn rocksdb_transaction_rollback(tx: *mut rocksdb_transaction_t, err: *mut *mut c_char);
 
         pub fn rocksdb_free(p: *mut std::ffi::c_void);
     }
@@ -187,6 +277,33 @@ pub enum Durability {
     None,
 }
 
+// Shared by the raw backend and native optimistic baseline. Leave all cache,
+// write-buffer, and compaction sizes at the linked RocksDB library's defaults.
+fn database_options(strict: bool, create: bool) -> *mut sys::rocksdb_options_t {
+    // SAFETY: constructor and setters operate on a newly owned options handle.
+    unsafe {
+        let opts = sys::rocksdb_options_create();
+        sys::rocksdb_options_set_create_if_missing(opts, u8::from(create));
+        // WALRecoveryMode: absolute consistency = 1, point-in-time = 2.
+        sys::rocksdb_options_set_wal_recovery_mode(opts, if strict { 1 } else { 2 });
+        sys::rocksdb_options_set_unordered_write(opts, 0);
+        opts
+    }
+}
+
+fn write_options(durability: Durability) -> *mut sys::rocksdb_writeoptions_t {
+    // SAFETY: constructor and setters operate on a newly owned options handle.
+    unsafe {
+        let write = sys::rocksdb_writeoptions_create();
+        match durability {
+            Durability::Sync => sys::rocksdb_writeoptions_set_sync(write, 1),
+            Durability::Wal => sys::rocksdb_writeoptions_set_sync(write, 0),
+            Durability::None => sys::rocksdb_writeoptions_disable_WAL(write, 1),
+        }
+        write
+    }
+}
+
 /// A synchronous observation point around one RocksDB batch write.
 ///
 /// Available only with the `test-hooks` feature. These points bracket the
@@ -229,6 +346,26 @@ impl RocksBlobs {
     /// WAL recovery. Corruption stops WAL recovery at a consistent point rather
     /// than skipping arbitrary records that may contain checkpoint prerequisites.
     pub fn open(path: &Path, durability: Durability) -> Result<Self, BlobError> {
+        Self::open_with_recovery(path, durability, false, true)
+    }
+
+    /// Open with absolute-consistency WAL recovery. A damaged WAL is an error,
+    /// never permission to silently truncate a durable application prefix.
+    pub fn open_strict(path: &Path, durability: Durability) -> Result<Self, BlobError> {
+        Self::open_with_recovery(path, durability, true, true)
+    }
+
+    /// Reopen a durable authority without creating a replacement if it is lost.
+    pub fn open_existing_strict(path: &Path, durability: Durability) -> Result<Self, BlobError> {
+        Self::open_with_recovery(path, durability, true, false)
+    }
+
+    fn open_with_recovery(
+        path: &Path,
+        durability: Durability,
+        strict: bool,
+        create: bool,
+    ) -> Result<Self, BlobError> {
         // Keep file observations tied to the opened directory if the process
         // later changes its working directory. RocksDB stores WAL and SST files
         // in this directory with the adapter's fixed options.
@@ -241,14 +378,7 @@ impl RocksBlobs {
         // preconditions; each is destroyed exactly once, in Drop or on
         // the early-return path below.
         unsafe {
-            let opts = sys::rocksdb_options_create();
-            sys::rocksdb_options_set_create_if_missing(opts, 1);
-            // rocksdb/c.h defines rocksdb_point_in_time_recovery as 2. Explicitly
-            // select the coherent-history contract required by log reclamation,
-            // rather than inheriting a library default or salvaging arbitrary
-            // later records after a damaged prerequisite batch.
-            sys::rocksdb_options_set_wal_recovery_mode(opts, 2);
-            sys::rocksdb_options_set_unordered_write(opts, 0);
+            let opts = database_options(strict, create);
 
             // DELIBERATELY NOT `increase_parallelism` OR
             // `optimize_level_style_compaction`.
@@ -272,12 +402,7 @@ impl RocksBlobs {
             // Callers who genuinely want a heavier RocksDB should say so
             // explicitly rather than inherit it from a default.
 
-            let write = sys::rocksdb_writeoptions_create();
-            match durability {
-                Durability::Sync => sys::rocksdb_writeoptions_set_sync(write, 1),
-                Durability::Wal => sys::rocksdb_writeoptions_set_sync(write, 0),
-                Durability::None => sys::rocksdb_writeoptions_disable_WAL(write, 1),
-            }
+            let write = write_options(durability);
 
             let mut e = Err0::new();
             let db = sys::rocksdb_open(opts, cpath.as_ptr(), e.as_mut());
@@ -350,6 +475,42 @@ impl RocksBlobs {
         // SAFETY: the call above has returned and this is the unique handle.
         unsafe { sys::rocksdb_flushoptions_destroy(flush) };
         e.check("rocksdb_flush")
+    }
+
+    /// Lease one native snapshot across any number of point reads and scans.
+    pub fn snapshot(self: &Arc<Self>) -> Result<Snapshot, BlobError> {
+        // SAFETY: the returned lease owns an Arc retaining the database.
+        let raw = unsafe { sys::rocksdb_create_snapshot(self.db) };
+        if raw.is_null() {
+            return Err(BlobError("rocksdb_create_snapshot returned null".into()));
+        }
+        // SAFETY: these options are private and immutable after construction.
+        let read = unsafe { sys::rocksdb_readoptions_create() };
+        unsafe { sys::rocksdb_readoptions_set_snapshot(read, raw) };
+        Ok(Snapshot {
+            database: Arc::clone(self),
+            raw,
+            read,
+        })
+    }
+
+    /// Create a consistent native checkpoint at a nonexistent destination.
+    pub fn checkpoint(&self, destination: &Path) -> Result<(), BlobError> {
+        let path = CString::new(destination.as_os_str().as_encoded_bytes())
+            .map_err(|_| BlobError("checkpoint path contains NUL".into()))?;
+        let mut error = Err0::new();
+        // SAFETY: the database outlives the temporary checkpoint object.
+        let checkpoint = unsafe { sys::rocksdb_checkpoint_object_create(self.db, error.as_mut()) };
+        error.check("rocksdb_checkpoint_object_create")?;
+        if checkpoint.is_null() {
+            return Err(BlobError("rocksdb checkpoint returned null".into()));
+        }
+        // SAFETY: checkpoint and path remain live; zero requests a WAL flush.
+        unsafe {
+            sys::rocksdb_checkpoint_create(checkpoint, path.as_ptr(), 0, error.as_mut());
+            sys::rocksdb_checkpoint_object_destroy(checkpoint);
+        }
+        error.check("rocksdb_checkpoint_create")
     }
 }
 
@@ -535,6 +696,148 @@ impl Blobs for RocksBlobs {
             let mut e = Err0::new();
             sys::rocksdb_iter_get_error(iterator.raw, e.as_mut());
             e.check("rocksdb iteration")
+        }
+    }
+}
+
+/// An owned native snapshot; it also retains the database and its generation.
+pub struct Snapshot {
+    database: Arc<RocksBlobs>,
+    raw: *const sys::rocksdb_snapshot_t,
+    read: *mut sys::rocksdb_readoptions_t,
+}
+
+// SAFETY: RocksDB snapshots are immutable, and the private read options never
+// change after construction. The Arc keeps the native DB open.
+unsafe impl Send for Snapshot {}
+// SAFETY: all operations create independent native iterators.
+unsafe impl Sync for Snapshot {}
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        // SAFETY: both native objects belong to this lease and the DB is live.
+        unsafe {
+            sys::rocksdb_readoptions_destroy(self.read);
+            sys::rocksdb_release_snapshot(self.database.db, self.raw);
+        }
+    }
+}
+
+impl Snapshot {
+    /// Read committed bytes at this snapshot, including authoritative absence.
+    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+        let mut len = 0;
+        let mut error = Err0::new();
+        // SAFETY: the snapshot/read options/database and input slice are live.
+        let data = unsafe {
+            sys::rocksdb_get(
+                self.database.db,
+                self.read,
+                key.as_ptr().cast(),
+                key.len(),
+                &mut len,
+                error.as_mut(),
+            )
+        };
+        if let Err(failure) = error.check("snapshot get") {
+            if !data.is_null() {
+                // SAFETY: ownership of any returned allocation belongs to us.
+                unsafe { sys::rocksdb_free(data.cast()) };
+            }
+            return Err(failure);
+        }
+        if data.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: a successful get returns exactly len initialized bytes.
+        let result = if len == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) }.to_vec()
+        };
+        unsafe { sys::rocksdb_free(data.cast()) };
+        Ok(Some(result))
+    }
+
+    /// Visit `[start, end)` in either direction. Bounds have identical meaning
+    /// for forward and reverse iteration. A callback can stop before the limit.
+    pub fn scan(
+        &self,
+        start: &[u8],
+        end: Option<&[u8]>,
+        reverse: bool,
+        limit: usize,
+        visitor: &mut BoundedEntryVisitor<'_>,
+    ) -> Result<(), BlobError> {
+        if limit == 0 || end.is_some_and(|end| end <= start) {
+            return Ok(());
+        }
+        // SAFETY: all handles remain live through this immutable lease.
+        let raw = unsafe { sys::rocksdb_create_iterator(self.database.db, self.read) };
+        if raw.is_null() {
+            return Err(BlobError("snapshot iterator returned null".into()));
+        }
+        let iterator = Entries {
+            raw,
+            _database: &self.database,
+        };
+        // SAFETY: the iterator owns its buffers until the next movement; no
+        // callback can retain the borrowed slices. RAII covers early returns.
+        unsafe {
+            if reverse {
+                if let Some(end) = end {
+                    sys::rocksdb_iter_seek_for_prev(raw, end.as_ptr().cast(), end.len());
+                } else {
+                    sys::rocksdb_iter_seek_to_last(raw);
+                }
+            } else {
+                sys::rocksdb_iter_seek(raw, start.as_ptr().cast(), start.len());
+            }
+            let mut visited = 0;
+            while sys::rocksdb_iter_valid(raw) != 0 && visited < limit {
+                let mut key_len = 0;
+                let mut value_len = 0;
+                let key = sys::rocksdb_iter_key(raw, &mut key_len);
+                let value = sys::rocksdb_iter_value(raw, &mut value_len);
+                if key_len > isize::MAX as usize
+                    || value_len > isize::MAX as usize
+                    || (key.is_null() && key_len != 0)
+                    || (value.is_null() && value_len != 0)
+                {
+                    return Err(BlobError("invalid snapshot iterator buffer".into()));
+                }
+                let key = if key_len == 0 {
+                    &[][..]
+                } else {
+                    std::slice::from_raw_parts(key.cast::<u8>(), key_len)
+                };
+                let value = if value_len == 0 {
+                    &[][..]
+                } else {
+                    std::slice::from_raw_parts(value.cast::<u8>(), value_len)
+                };
+                if key < start {
+                    break;
+                }
+                if end.is_some_and(|end| key >= end) {
+                    if !reverse {
+                        break;
+                    }
+                } else {
+                    visited += 1;
+                    if !visitor(key, value)? {
+                        break;
+                    }
+                }
+                if reverse {
+                    sys::rocksdb_iter_prev(raw);
+                } else {
+                    sys::rocksdb_iter_next(raw);
+                }
+            }
+            let mut error = Err0::new();
+            sys::rocksdb_iter_get_error(iterator.raw, error.as_mut());
+            error.check("snapshot scan")
         }
     }
 }

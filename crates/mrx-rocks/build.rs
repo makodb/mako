@@ -17,6 +17,10 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(have_rocksdb)");
 
     let Some(dir) = find() else {
+        assert!(
+            std::env::var_os("CARGO_FEATURE_REQUIRED_NATIVE").is_none(),
+            "sto-rocksdb requires system librocksdb; set ROCKSDB_LIB_DIR"
+        );
         println!(
             "cargo:warning=librocksdb not found; mrx-rocks will compile but \
              its tests are skipped. Set ROCKSDB_LIB_DIR to enable them."
@@ -38,7 +42,9 @@ fn main() {
 
 fn find() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("ROCKSDB_LIB_DIR") {
-        return Some(PathBuf::from(d));
+        let path = PathBuf::from(d);
+        return (path.join("librocksdb.so").exists() || path.join("librocksdb.a").exists())
+            .then_some(path);
     }
     [
         "/usr/lib/x86_64-linux-gnu",

@@ -655,6 +655,15 @@ impl<A: TObject> TransItemData<A> {
 }
 
 impl<A: TObject> TransItem<A> {
+    pub(crate) fn view(&self) -> crate::transaction::SealedItem<'_, A> {
+        crate::transaction::SealedItem {
+            key: self.key.as_ref().expect("active item key"),
+            local: self.local.as_ref().expect("active item local"),
+            observation: self.observation.as_ref::<A>(),
+            intent: self.intent.as_ref(),
+        }
+    }
+
     #[inline]
     pub(crate) fn new(resource: RegisteredResource<A>, key: A::Key, local: A::Local) -> Self {
         Self {
@@ -880,6 +889,23 @@ pub(crate) struct TypedTransItemBatch<A: TObject> {
 }
 
 impl<A: TObject> TypedTransItemBatch<A> {
+    pub(crate) fn visit_items<'item>(
+        &'item self,
+        resource: &RegisteredResource<A>,
+        visitor: &mut impl FnMut(crate::transaction::SealedItem<'item, A>),
+    ) {
+        for (item, intent) in self.items[..self.active_len].iter().zip(&self.intents) {
+            if item.retains_binding(resource) {
+                visitor(crate::transaction::SealedItem {
+                    key: item.key.as_ref().expect("active item key"),
+                    local: item.local.as_ref().expect("active item local"),
+                    observation: item.observation.as_ref::<A>(),
+                    intent: intent.as_ref(),
+                });
+            }
+        }
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
             intents: Vec::new(),
@@ -1634,6 +1660,7 @@ pub(crate) trait ErasedItem: sealed::Sealed {
         key_type_id: TypeId,
         key: &dyn Any,
     ) -> bool;
+    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn has_intent(&self) -> bool;
     fn requires_ordered_commit_id(&self) -> bool;
@@ -1691,6 +1718,10 @@ impl<A: TObject> ErasedItem for TransItem<A> {
         }) && adapter_type_id == TypeId::of::<A>()
             && key_type_id == TypeId::of::<A::Key>()
             && key.downcast_ref::<A::Key>() == self.key.as_ref()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

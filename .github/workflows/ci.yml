@@ -17,6 +17,42 @@ permissions:
 #  cancel-in-progress: false
 
 jobs:
+  rocksdb-raft:
+    name: Native Rust STO + RocksDB + Raft
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 90
+    env:
+      CI_BUILD_JOBS: "4"
+      ROCKSDB_RAFT_BUILD_DIR: build_rocksdb_raft
+      CARGO_TARGET_DIR: target-rocksdb-raft
+    steps:
+      # srpc needs its Lion submodule. Fetch it with the checkout action, as
+      # every other job here does, not with a later `git submodule update`
+      # step: bare git refuses this container's runner-owned checkout (see
+      # "Container prerequisites" in build-and-test).
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: recursive
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - name: Build and qualify local-only storage and replication
+        run: bash ci/rocksdb_raft.sh
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rocksdb-raft-tests
+          path: |
+            build_rocksdb_raft/Testing/Temporary/
+            build_rocksdb_raft/runtime-evidence.*/**/node*.log
+            build_rocksdb_raft/runtime-evidence.*/**/*.json
+
   srpc-goal0-dual-compile:
     name: Goal-0 SRPC canonical Rust dual compile
     runs-on: ubuntu-24.04
@@ -425,7 +461,13 @@ jobs:
       # fails the job: none of them is continue-on-error.
       - name: Check Rust workspace formatting
         if: ${{ !cancelled() }}
-        run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+        # Workspace members only. `--all` would also format every local path
+        # dependency, and raft-host and rocksdb-raft-service depend on
+        # src/srpc, src/deptran/raft and src/cluster, which are not laid out
+        # by rustfmt. Run from the workspace root, plain `cargo fmt` formats
+        # exactly the members.
+        working-directory: crates
+        run: cargo fmt -- --check
 
       - name: Run tests - Mako local ABI boundary gates
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
@@ -674,7 +716,9 @@ jobs:
         # mutually exclusive, so --all-features cannot build it or the crates
         # that select one of its backends; run_mako_local_rust_tests and
         # run_mako_engine_sto_tests (makoLocalAbiGates) test those with an
-        # explicit engine.
+        # explicit engine. The direct RocksDB/Raft crates are tested by their
+        # own job (rocksdb-raft, ci/rocksdb_raft.sh), which runs raft-host's
+        # scenarios one at a time.
         run: >-
           cargo test
           --manifest-path crates/Cargo.toml
@@ -682,6 +726,8 @@ jobs:
           --exclude sto-tpcc-ffi
           --exclude mako-engine --exclude mako-engine-sto
           --exclude mako-cache --exclude mako-cache-bench
+          --exclude sto-rocksdb --exclude raft-host
+          --exclude rocksdb-raft-service
           --all-targets
           --all-features
           --release
@@ -700,6 +746,8 @@ jobs:
           --workspace
           --exclude mako-engine --exclude mako-engine-sto
           --exclude mako-cache --exclude mako-cache-bench
+          --exclude sto-rocksdb --exclude raft-host
+          --exclude rocksdb-raft-service
           --all-features
           --locked
           --no-deps

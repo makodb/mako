@@ -49,4 +49,16 @@ sto-core|failure_protocol|install_observer::owned_direct_batch_stops_after_one_o
 # quarantines the transaction frame in each case.
 sto-core|failure_protocol|retained_participant_preserves_poisoned_and_unknown_outcomes
 sto-core|failure_protocol|installed_participant_cleanup_failure_is_definitely_committed
+# Added on 2026-11-22, user-approved: the retained local-commit counterparts
+# (direct RocksDB/Raft profile). A LocalCommit dropped unresolved after
+# submission deliberately forgets its lock plan and quarantines its items (it
+# must not run abort callbacks once an append may be visible), and an install
+# or finish panic on this path quarantines the frame as it does on the
+# ordinary one. Run one at a time under Miri with leak checking, exactly these
+# five of the fourteen new local_* tests reported leaks.
+sto-core|failure_protocol|local_unsubmitted_drop_aborts_but_submitted_drop_runs_no_release_or_cleanup
+sto-core|failure_protocol|local_committed_cleanup_failure_is_not_an_abort_and_completion_is_exactly_once
+sto-core|failure_protocol|local_committed_publication_failure_preserves_external_decision
+sto-core|failure_protocol|local_whole_batch_unwind_is_fenced_and_cannot_be_retried
+sto-core|public_adapter_contract|local_submitted_unknown_and_committed_drop_never_restore_aborted_versions
 sto-masstree|lib|local_version_tests::indeterminate_local_release_ignores_mixed_ordered_id

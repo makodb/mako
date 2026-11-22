@@ -37,9 +37,16 @@ pub(crate) use direct_protocol::{DirectCommitBody, DirectCommitContext, DirectCo
 #[path = "ordinary_protocol.rs"]
 mod ordinary_protocol;
 use ordinary_protocol::{contain_driver_unwind, DriverStep};
+#[cfg(feature = "distributed")]
 #[path = "participant.rs"]
 mod participant;
+#[cfg(feature = "distributed")]
 pub use participant::{Participant, ParticipantError, ParticipantPhase};
+#[path = "local_commit.rs"]
+mod local_commit;
+pub use local_commit::{
+    LocalApplyError, LocalCommit, LocalCommitError, LocalCommitPhase, SealedItem,
+};
 
 /// Marker for a general active transaction.
 #[derive(Debug)]
@@ -700,6 +707,35 @@ pub(crate) struct TransactionFrame {
 }
 
 impl TransactionFrame {
+    fn visit_items<'item, A: TObject>(
+        &'item self,
+        resource: &RegisteredResource<A>,
+        mut visitor: impl FnMut(SealedItem<'item, A>),
+    ) {
+        if self.batch_active {
+            if let Some(batch) = self
+                .unique_batch
+                .as_ref()
+                .and_then(|batch| batch.as_any().downcast_ref::<TypedTransItemBatch<A>>())
+            {
+                batch.visit_items(resource, &mut visitor);
+            }
+        } else {
+            for slot in &self.items[..self.item_count] {
+                if let Some(item) = slot
+                    .as_ref()
+                    .expect("active item")
+                    .as_any()
+                    .downcast_ref::<TransItem<A>>()
+                {
+                    if item.retains_binding(resource) {
+                        visitor(item.view());
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
         Self {
             isolation: runtime.config().default_isolation(),
@@ -1293,6 +1329,20 @@ impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
 }
 
 impl<'worker> Transaction<'worker, Active> {
+    /// Retains this exact frame for an external local durable decision.
+    pub fn into_local_commit(mut self) -> LocalCommit<'worker> {
+        let frame = self
+            .take_owned_frame()
+            .expect("a borrowed transaction cannot transfer ownership");
+        LocalCommit::new(
+            self.worker
+                .take()
+                .expect("active transaction retains worker"),
+            frame,
+        )
+    }
+
+    #[cfg(feature = "distributed")]
     /// Retains this exact frame for incremental distributed participant work.
     pub fn into_participant(mut self) -> Participant<'worker> {
         let frame = self
@@ -1348,6 +1398,24 @@ impl<'worker> Transaction<'worker, Active> {
                 .expect("an active transaction item slot remains occupied")
                 .retains_binding_identity(binding_identity)
         })
+    }
+
+    /// Borrows the authoritative items for exactly this resource binding.
+    ///
+    /// This immutable execution view supports transient read-your-writes scan
+    /// merges. It neither adds observations nor seals the transaction; adapters
+    /// must still track the scan's predicate through ordinary access.
+    pub fn visit_items<A: TObject>(
+        &self,
+        resource: &RegisteredResource<A>,
+        visitor: impl FnMut(SealedItem<'_, A>),
+    ) -> Result<(), AccessError> {
+        let frame = self.frame.as_ref().ok_or(InvalidUse::TransactionFinished)?;
+        if frame.doomed {
+            return Err(InvalidUse::TransactionDoomed.into());
+        }
+        frame.visit_items(resource, visitor);
+        Ok(())
     }
 
     /// Looks up or creates one typed logical item, then scopes adapter access
@@ -3512,7 +3580,13 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         let steps = self
             .lock_ordinary(false)
             .and_then(|()| self.certify_ordinary())
-            .and_then(|()| self.install_ordinary(None, false));
+            .and_then(|()| {
+                self.install_ordinary(
+                    #[cfg(feature = "distributed")]
+                    None,
+                    false,
+                )
+            });
         match steps {
             Ok(()) => self.finish_ordinary(),
             Err(terminal) => terminal,

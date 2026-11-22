@@ -130,6 +130,7 @@ impl DirectValidationContext {
 pub struct DirectInstallContext {
     owner: OwnerId,
     occ_commit_id: Option<OccCommitId>,
+    #[cfg(feature = "distributed")]
     distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
     not_send_sync: PhantomData<Rc<()>>,
 }
@@ -146,6 +147,7 @@ impl DirectInstallContext {
         self.occ_commit_id
     }
 
+    #[cfg(feature = "distributed")]
     /// The external distributed decision, independent of the local OCC ID.
     pub fn distributed_time_term(&self) -> Option<mako_clock::distributed::DistributedTimeTerm> {
         self.distributed_time_term
@@ -1162,6 +1164,7 @@ impl<A: TObject, L: TransactionLock> ErasedDirectCommitPlan<A> for UniqueLockCom
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            #[cfg(feature = "distributed")]
             distributed_time_term: None,
             not_send_sync: PhantomData,
         };
@@ -1681,6 +1684,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            #[cfg(feature = "distributed")]
             distributed_time_term: None,
             not_send_sync: PhantomData,
         };
@@ -2284,6 +2288,7 @@ impl<
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            #[cfg(feature = "distributed")]
             distributed_time_term: None,
             not_send_sync: PhantomData,
         };
