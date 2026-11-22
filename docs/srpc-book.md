@@ -817,7 +817,7 @@ for the driver's last poll, so work readied by a close job queued just before
 
 The native `test_mako_nontxn_distributed` executable includes real socketpair
 regressions for queue drain, deadline rejection without transmission, and close
-during admission, plus ordered learner delivery across gaps and duplicates.
+during admission.
 Its production-poller loopback cases exercise timed/ready-event pressure and
 stackless self-wakes while requiring ordered data/terminal frames and exactly
 one completion per request. These cases connect through `srpc::Client::connect`

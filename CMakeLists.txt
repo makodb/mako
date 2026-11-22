@@ -4656,8 +4656,8 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_kv_backends COMMAND test_kv_backends)
 
-    # Participant RPC, retained-admission, poll-loop liveness, and replay-prefix
-    # regressions. Admission cases use real loopback/socketpair TCP channels.
+    # Participant RPC, retained-admission and poll-loop liveness regressions.
+    # Admission cases use real loopback/socketpair TCP channels.
     add_executable(test_mako_nontxn_distributed
         tests/test_mako_nontxn_distributed.cc
         tests/test_replication_admission.cc)

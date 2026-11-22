@@ -3,8 +3,8 @@
 // Per-destination ordered outbox for must-deliver replication requests.
 //
 // Header-only and free of Config: MultiPaxosCommo (commo.cc) keeps one outbox
-// per peer site, and tests/test_replication_admission.cc drives the same code
-// over a real loopback connection by injecting its own admit function.
+// per peer site and injects the admit function. The gtest cases that drove
+// this code over a real loopback connection went with the other Paxos tests.
 
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
