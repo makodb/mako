@@ -56,6 +56,9 @@ jobs:
       MAKO_SANITIZER_JOBS: "4"
       CARGO_HOME: /tmp/rust-sto-sanitizer-cargo
       RUSTUP_HOME: /tmp/rust-sto-sanitizer-rustup
+      # Read by the thread leg only, and by its cache steps. It must stay
+      # outside the workspace: the gate refuses a worktree it would dirty.
+      MAKO_SANITIZER_ROCKSDB_DIR: /tmp/rust-sto-sanitizer-rocksdb
     steps:
       - name: Checkout exact workflow commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -128,6 +131,69 @@ jobs:
             --profile minimal --component clippy --component rustfmt \
             --component rust-src
           echo "${CARGO_HOME}/bin" >>"${GITHUB_PATH}"
+
+      # The thread gate links and loads a RocksDB rebuilt with
+      # -fsanitize=thread (scripts/ci/build_tsan_rocksdb.sh). The key is that
+      # script's own identity: pinned commit and version, CMake flags,
+      # compiler banner, machine and the script's hash, so any edit to the
+      # script changes the key. The script, here and again inside the gate
+      # with the compiler CMake selects, reuses the directory only when its
+      # stamp and the library's hash match, the library carries the
+      # sanitizer hooks and its own dependencies resolve; otherwise it
+      # rebuilds. The cache is saved before the gate runs, so a red gate
+      # keeps it. An entry that restores but cannot be reused is rebuilt by
+      # every run and never replaced (a key is written once): the build step
+      # warns, and `gh cache delete <key>` clears the entry.
+      - name: Instrumented RocksDB cache key
+        id: tsan-rocksdb
+        if: matrix.sanitizer == 'thread'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Assigned first: errexit does not see a substitution inside an
+          # echo argument, and an empty key would fail one step later.
+          key="$(bash scripts/ci/build_tsan_rocksdb.sh --print-cache-key)"
+          if [[ ! "${key}" =~ ^mako-tsan-rocksdb-[0-9.]+-[0-9a-f]{64}$ ]]; then
+            echo "unexpected instrumented RocksDB cache key: ${key}" >&2
+            exit 1
+          fi
+          echo "key=${key}" >>"${GITHUB_OUTPUT}"
+
+      - name: Restore instrumented RocksDB
+        id: tsan-rocksdb-cache
+        if: matrix.sanitizer == 'thread'
+        timeout-minutes: 10
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.MAKO_SANITIZER_ROCKSDB_DIR }}
+          key: ${{ steps.tsan-rocksdb.outputs.key }}
+
+      - name: Build or validate instrumented RocksDB
+        if: matrix.sanitizer == 'thread'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          TSAN_ROCKSDB_CACHE_HIT: ${{ steps.tsan-rocksdb-cache.outputs.cache-hit }}
+          TSAN_ROCKSDB_CACHE_KEY: ${{ steps.tsan-rocksdb.outputs.key }}
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP:-/tmp}/tsan-rocksdb-facts.txt"
+          bash scripts/ci/build_tsan_rocksdb.sh \
+            --prefix "${MAKO_SANITIZER_ROCKSDB_DIR}" \
+            --jobs "${MAKO_SANITIZER_JOBS}" \
+            --report "${report}"
+          if [[ "${TSAN_ROCKSDB_CACHE_HIT}" == "true" ]] &&
+             grep -Fxq 'tsan_rocksdb_provenance=built' "${report}"; then
+            echo "::warning::The instrumented RocksDB cache entry ${TSAN_ROCKSDB_CACHE_KEY} was restored but could not be reused, so the library was rebuilt and will be rebuilt by every run. Clear it with: gh cache delete ${TSAN_ROCKSDB_CACHE_KEY}"
+          fi
+
+      - name: Save instrumented RocksDB
+        if: matrix.sanitizer == 'thread' && steps.tsan-rocksdb-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.MAKO_SANITIZER_ROCKSDB_DIR }}
+          key: ${{ steps.tsan-rocksdb.outputs.key }}
 
       - name: Run ${{ matrix.sanitizer }} gate
         shell: bash

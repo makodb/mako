@@ -15,7 +15,8 @@ Usage: bash scripts/ci/run_rust_sto_sanitizer.sh <address|undefined|thread>
        bash scripts/ci/run_rust_sto_sanitizer.sh --print-nightly-toolchain
 
 Build and test the Rust STO/Masstree native boundary with one native
-sanitizer. The default build directory is build-rust-sto-<sanitizer>.
+sanitizer. The default build directory is build-rust-sto-<sanitizer>. The
+thread gate runs on Linux only.
 
 Environment:
   MAKO_SANITIZER_ALLOW_DIRTY=1  Allow a tracked or untracked source change.
@@ -23,6 +24,21 @@ Environment:
                                 selected path must not already exist.
   MAKO_SANITIZER_JOBS=N         Parallel build jobs. Default: 4.
   MAKO_SANITIZER_FOCUS=cache    Run only the native Rust adapter/cache gate.
+  MAKO_SANITIZER_ROCKSDB_DIR=PATH
+                                thread only: an absolute directory where the
+                                instrumented RocksDB is built, or reused when
+                                its stamp matches. The default,
+                                <build dir>/tsan-rocksdb, is built by every
+                                run. The path may use only [A-Za-z0-9._/+@=-];
+                                the default inherits the build path, so name
+                                a directory outside the build directory here
+                                when that path has other characters. Inside
+                                the repository it must be below the build
+                                directory or ignored by git. It holds nothing
+                                else, and one run uses it at a time.
+  MAKO_SANITIZER_ROCKSDB_SOURCE=PATH
+                                thread only: a checkout of the pinned RocksDB
+                                commit to build from instead of fetching it.
   CMAKE_GENERATOR=Ninja         This gate audits Ninja's generated commands.
 
 Coverage contract:
@@ -59,6 +75,16 @@ Coverage contract:
   * ASan, UBSan, and TSan use the checked-in, sanitizer-specific Masstree
     suppressions described above. Findings matched by those files qualify the
     affected result and are audited by this gate.
+  * TSan links and loads a RocksDB that scripts/ci/build_tsan_rocksdb.sh
+    rebuilds with -fsanitize=thread from the pinned upstream commit of the
+    version the image installs, because TSan cannot see the synchronization
+    of an uninstrumented library. Every executable or shared object in the
+    build directory that records RocksDB must record that library's SONAME,
+    carry its directory as a run path and resolve to it, and none may define
+    the RocksDB C API itself (a statically linked copy). The unsanitized Loom
+    model executables are built without this library and must record no
+    RocksDB at all. The library is built for Linux, so the thread gate
+    requires Linux. ASan and UBSan use the image's package.
   * Every job finishes with a consistent STO_RMW=ON rebuild, the native ABI
     history/differential suite, and the full MassTrans non-transactional CTest,
     including MV insert/growth/cleanup. ASan also runs the two exact MV
@@ -162,6 +188,17 @@ for environment_name in "${rejected_environment_names[@]}"; do
         exit 2
     fi
 done
+if [[ "${sanitizer}" == "thread" ]]; then
+    # The thread gate selects its own RocksDB (tsan_rocksdb_dir below). An
+    # ambient selection could put another copy, or a static one that no
+    # dependency record shows, into its executables.
+    for environment_name in ROCKSDB_LIB_DIR ROCKSDB_STATIC; do
+        if [[ -n "${!environment_name:-}" ]]; then
+            echo "${environment_name} must be unset: the thread gate selects its own instrumented RocksDB" >&2
+            exit 2
+        fi
+    done
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd -P)"
@@ -236,6 +273,69 @@ if [[ -e "${build_dir}" || -L "${build_dir}" ]]; then
     echo "sanitizer evidence requires a fresh, nonexistent build path: ${build_dir}" >&2
     echo "set MAKO_SANITIZER_BUILD_DIR to a new sanitizer-specific path" >&2
     exit 2
+fi
+
+# The thread gate links and loads its own instrumented RocksDB; how it is
+# selected and built is further below. Where it lives is settled here, before
+# the build directory is created, so that a mistake costs neither a run nor
+# the fresh build path.
+tsan_rocksdb_dir=""
+if [[ "${sanitizer}" == "thread" ]]; then
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        echo "the thread gate requires Linux: it links and loads an instrumented RocksDB that is built for Linux only" >&2
+        exit 2
+    fi
+    for command_name in ldd realpath; do
+        if ! command -v "${command_name}" >/dev/null 2>&1; then
+            echo "required command is missing: ${command_name}" >&2
+            exit 2
+        fi
+    done
+    tsan_rocksdb_dir="${MAKO_SANITIZER_ROCKSDB_DIR:-${build_dir}/tsan-rocksdb}"
+    if [[ "${tsan_rocksdb_dir}" != /* ]]; then
+        echo "MAKO_SANITIZER_ROCKSDB_DIR must be an absolute path, got: ${tsan_rocksdb_dir}" >&2
+        exit 2
+    fi
+    # scripts/ci/build_tsan_rocksdb.sh would refuse the directory this script
+    # creates if the two spelled it differently.
+    while [[ "${tsan_rocksdb_dir}" == */ && "${tsan_rocksdb_dir}" != "/" ]]; do
+        tsan_rocksdb_dir="${tsan_rocksdb_dir%/}"
+    done
+    # The path is spliced into -L, -Wl,-rpath,<dir>, RUSTFLAGS and CMake
+    # strings.
+    if [[ ! "${tsan_rocksdb_dir}" =~ ^/[A-Za-z0-9._/+@=-]+$ ||
+          "${tsan_rocksdb_dir}" == *//* ]]; then
+        echo "the instrumented RocksDB path must be absolute, use only [A-Za-z0-9._/+@=-] and have no empty component: ${tsan_rocksdb_dir}" >&2
+        echo "it defaults to <build dir>/tsan-rocksdb; MAKO_SANITIZER_ROCKSDB_DIR can name a directory outside the build directory instead" >&2
+        exit 2
+    fi
+    # The directory holds the library and its stamp, nothing else. Inside the
+    # repository they must not appear as an untracked change, which this gate
+    # rejects when it ends: below the build directory, or ignored by git. A
+    # path inside the directory is asked about, because a directory-only
+    # ignore pattern does not match a directory that does not exist yet.
+    tsan_rocksdb_physical="$(realpath -m -- "${tsan_rocksdb_dir}")"
+    build_dir_physical="$(realpath -m -- "${build_dir}")"
+    if [[ "${build_dir_physical}/" == "${tsan_rocksdb_physical}/"* ]]; then
+        echo "MAKO_SANITIZER_ROCKSDB_DIR must not be, or contain, the build directory ${build_dir}: ${tsan_rocksdb_dir}" >&2
+        exit 2
+    fi
+    if [[ "${tsan_rocksdb_physical}/" == "${repo_root}/"* &&
+          "${tsan_rocksdb_physical}/" != "${build_dir_physical}/"* ]]; then
+        for tsan_rocksdb_output in tsan-rocksdb-stamp.txt lib/librocksdb.so; do
+            if ! "${repository_git[@]}" check-ignore -q -- \
+                    "${tsan_rocksdb_physical}/${tsan_rocksdb_output}"; then
+                echo "MAKO_SANITIZER_ROCKSDB_DIR lies inside the repository but is neither below the build directory nor ignored by git: ${tsan_rocksdb_dir}" >&2
+                echo "the gate would end by rejecting the worktree as changed; name a directory outside ${repo_root}" >&2
+                exit 2
+            fi
+        done
+    fi
+    if [[ -n "${MAKO_SANITIZER_ROCKSDB_SOURCE:-}" &&
+          ! -d "${MAKO_SANITIZER_ROCKSDB_SOURCE}" ]]; then
+        echo "MAKO_SANITIZER_ROCKSDB_SOURCE is not a directory: ${MAKO_SANITIZER_ROCKSDB_SOURCE}" >&2
+        exit 2
+    fi
 fi
 mkdir -p "${build_dir}/sanitizer-logs" "${build_dir}/tmp"
 export TMPDIR="${build_dir}/tmp"
@@ -315,6 +415,60 @@ fi
 verify_unwind_config() {
     if [[ -n "${unwind_config}" ]]; then
         printf '%s  %s\n' "${unwind_config_sha256}" "${unwind_config}" |
+            sha256sum --check --strict
+    fi
+}
+
+# TSan cannot see the synchronization of an uninstrumented RocksDB: it reports
+# data races inside the library and in the callers that rely on it. The thread
+# gate therefore links and loads a RocksDB that
+# scripts/ci/build_tsan_rocksdb.sh rebuilds with -fsanitize=thread from the
+# pinned upstream commit of the version the image installs; ASan and UBSan
+# keep the image's package. The library is selected the way the unwinder is,
+# by a retained Clang configuration that every link of the job loads. Clang
+# puts configuration options before its command line, so this directory
+# precedes every other one for each -lrocksdb (CMake's bare `rocksdb`, the
+# crates' rustc-link-lib and their trailing -lrocksdb). Each executable then
+# records the rebuilt library's SONAME, which is not the package's (upstream
+# names it librocksdb.so.8, Ubuntu librocksdb.so.8.9), so the package's file
+# cannot satisfy the dependency, and the run path leads the loader to the
+# copy the executable was linked against. LD_LIBRARY_PATH still comes first:
+# both linkers emit DT_RUNPATH, which the loader searches after it, so a
+# directory named there that held another file of that SONAME would win. The
+# linkage audit therefore checks the resolution in the two loader
+# environments the job uses.
+# ROCKSDB_LIB_DIR names the same directory to the crates' build scripts. The
+# library itself is built once CMake has chosen the compiler.
+tsan_rocksdb_lib_dir=""
+tsan_rocksdb_config=""
+tsan_rocksdb_config_sha256=""
+tsan_rocksdb_library=""
+tsan_rocksdb_library_sha256=""
+if [[ "${sanitizer}" == "thread" ]]; then
+    # tsan_rocksdb_dir was checked before the build directory was created.
+    tsan_rocksdb_lib_dir="${tsan_rocksdb_dir}/lib"
+    # CMake's configure-time link checks already carry the configuration.
+    mkdir -p "${tsan_rocksdb_lib_dir}"
+    tsan_rocksdb_config="${build_dir}/clang-tsan-rocksdb.cfg"
+    printf '%s\n' \
+        "-L${tsan_rocksdb_lib_dir}" \
+        "-Wl,-rpath,${tsan_rocksdb_lib_dir}" >"${tsan_rocksdb_config}"
+    tsan_rocksdb_config_sha256="$(sha256sum "${tsan_rocksdb_config}")"
+    tsan_rocksdb_config_sha256="${tsan_rocksdb_config_sha256%% *}"
+    rust_link_flag+=" -C link-arg=--config=${tsan_rocksdb_config}"
+    native_unwind_cmake_arguments=(
+        "-DCMAKE_EXE_LINKER_FLAGS:STRING=--config=${unwind_config} --config=${tsan_rocksdb_config}"
+        "-DCMAKE_SHARED_LINKER_FLAGS:STRING=--config=${unwind_config} --config=${tsan_rocksdb_config}"
+        "-DCMAKE_MODULE_LINKER_FLAGS:STRING=--config=${unwind_config} --config=${tsan_rocksdb_config}"
+    )
+    export ROCKSDB_LIB_DIR="${tsan_rocksdb_lib_dir}"
+fi
+
+verify_tsan_rocksdb() {
+    if [[ -n "${tsan_rocksdb_config}" ]]; then
+        printf '%s  %s\n' \
+            "${tsan_rocksdb_config_sha256}" "${tsan_rocksdb_config}" \
+            "${tsan_rocksdb_library_sha256}" "${tsan_rocksdb_library}" |
             sha256sum --check --strict
     fi
 }
@@ -944,6 +1098,264 @@ PY
     echo "rust_one_std_${label}=$(tail -n 1 "${build_dir}/sanitizer-logs/rust-std-${label}.log")" >>"${manifest}"
 }
 
+# The thread gate's RocksDB is the instrumented one in every executable, not
+# only on the command lines: check the artifacts. An ELF executable or shared
+# object that records a RocksDB dependency must record exactly the
+# instrumented library's SONAME, carry that library's directory as a run
+# path, and have the loader resolve the dependency to that file, both in this
+# script's environment (the one CTest runs in) and with the loader path
+# Cargo's test executables get. No image may define rocksdb_open itself: a
+# RocksDB linked from an archive records no dependency, so the whole symbol
+# table is read for it (a stripped image would still hide one). --must FILE:
+# must record RocksDB. --tree DIR: every ELF image below DIR, and at least
+# one must record RocksDB. --may-tree DIR, --may-dir DIR: the images below,
+# or directly in, DIR, none of which need record it. --unsanitized-tree DIR:
+# the Loom model executables, which scripts/ci/run_rust_sto_cache_tests.py
+# builds without the sanitizer and without this RocksDB on purpose. An
+# unsanitized process cannot use the instrumented library, so no image there
+# may record RocksDB at all, or carry the TSan runtime. An image that several
+# options reach gets the strictest reading, whatever their order. The
+# instrumented library itself is the subject, not an image in scope. Other
+# sanitizers: no-op.
+audit_tsan_rocksdb_linkage() {
+    local label="$1"
+    shift
+    if [[ -z "${tsan_rocksdb_config}" ]]; then
+        return 0
+    fi
+    local log="${build_dir}/sanitizer-logs/tsan-rocksdb-linkage-${label}.log"
+    # An explicit status: a caller may run this audit as a condition (the
+    # control that must be rejected), where errexit does not apply.
+    if ! python3 - "${tsan_rocksdb_readelf}" "${cmake_nm}" \
+            "${tsan_rocksdb_library}" "${jobs}" \
+            "${build_dir}/sanitizer-logs/tsan-rocksdb-linkage-${label}.txt" \
+            "${workspace_loader_environment}" "${workspace_loader_value}" \
+            "$@" 2>&1 <<'PY' | tee "${log}"
+import concurrent.futures
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+readelf, nm, jobs = sys.argv[1], sys.argv[2], int(sys.argv[4])
+library = pathlib.Path(sys.argv[3]).resolve(strict=True)
+report = pathlib.Path(sys.argv[5])
+loader_name, loader_value = sys.argv[6], sys.argv[7]
+library_directory = library.parent
+
+
+def is_image(path):
+    # Executables and shared objects record dependencies; objects and
+    # archives do not.
+    if path.is_symlink() or not path.is_file():
+        return False
+    if path.suffix in (".rlib", ".a", ".rmeta", ".d", ".o"):
+        return False
+    with path.open("rb") as stream:
+        header = stream.read(18)
+    if header[:4] != b"\x7fELF" or header[16:18] not in (b"\x02\x00", b"\x03\x00"):
+        return False
+    # The instrumented library lies below the build directory by default.
+    return path.resolve() != library
+
+
+def unreadable(error):
+    raise SystemExit(f"could not read {error.filename}: {error.strerror}")
+
+
+def images_below(directory):
+    # Symbolic links to directories are not followed.
+    found = []
+    for root, _, names in os.walk(directory, onerror=unreadable):
+        found.extend(candidate
+                     for candidate in (pathlib.Path(root, name) for name in names)
+                     if is_image(candidate))
+    return sorted(found)
+
+
+def dynamic(path):
+    result = subprocess.run([readelf, "-dW", str(path)], capture_output=True,
+                            text=True, errors="replace")
+    if result.returncode != 0:
+        raise SystemExit(f"{readelf} failed on {path}: {result.stderr.strip()}")
+    tags = {"NEEDED": [], "SONAME": [], "RUNPATH": [], "RPATH": []}
+    for tag, value in re.findall(
+            r"\((NEEDED|SONAME|RUNPATH|RPATH)\)[^\[\n]*\[([^\]\n]*)\]", result.stdout):
+        tags[tag].append(value)
+    return tags
+
+
+def is_library(target):
+    return target.startswith("/") and pathlib.Path(target).resolve() == library
+
+
+def has_run_path(tags):
+    return any(
+        entry.startswith("/") and pathlib.Path(entry).resolve() == library_directory
+        for value in tags["RUNPATH"] + tags["RPATH"]
+        for entry in value.split(":")
+    )
+
+
+def bindings(path):
+    # What the loader binds each RocksDB dependency to, per environment.
+    found = []
+    for name, environment in environments:
+        result = subprocess.run(["ldd", str(path)], capture_output=True, text=True,
+                                errors="replace", env=environment)
+        matches = (re.match(r"\s*(\S+) => (.*?)(?: \(0x[0-9a-fA-F]+\))?\s*$", line)
+                   for line in result.stdout.splitlines())
+        found.append((name, [match.group(2) for match in matches
+                             if match and "librocksdb" in match.group(1)]))
+    return found
+
+
+def is_sanitized(path):
+    # Clang exports the runtime's interface from every executable it links
+    # with -fsanitize=thread.
+    result = subprocess.run([nm, "-D", "--defined-only", str(path)],
+                            capture_output=True, text=True, errors="replace")
+    if result.returncode != 0:
+        raise SystemExit(f"{nm} failed on {path}: {result.stderr.strip()}")
+    return re.search(r" [TtWw] __tsan_init$", result.stdout, re.MULTILINE) is not None
+
+
+def defines_rocksdb(path):
+    # The whole symbol table, not only the exported part: a RocksDB linked
+    # from an archive need not be exported. A large executable's table is
+    # long, so it is read as a stream, to its end.
+    defined = False
+    with tempfile.TemporaryFile(mode="w+") as errors:
+        with subprocess.Popen([nm, "--defined-only", str(path)], stdout=subprocess.PIPE,
+                              stderr=errors, text=True, errors="replace") as process:
+            for line in process.stdout:
+                if line.rstrip("\n").endswith((" T rocksdb_open", " t rocksdb_open")):
+                    defined = True
+        if process.returncode != 0:
+            errors.seek(0)
+            raise SystemExit(f"{nm} failed on {path}: {errors.read().strip()}")
+    return defined
+
+
+def inspect(entry):
+    path, (kind, _) = entry
+    tags = dynamic(path)
+    names = [name for name in tags["NEEDED"] if "librocksdb" in name]
+    return (names, has_run_path(tags), bindings(path) if names else [],
+            is_sanitized(path) if kind == "unsanitized" else None,
+            defines_rocksdb(path))
+
+
+sonames = dynamic(library)["SONAME"]
+if len(sonames) != 1:
+    raise SystemExit(f"the instrumented RocksDB must carry one SONAME, found {sonames}")
+soname = sonames[0]
+environments = [("ambient", dict(os.environ))]
+if loader_name:
+    environments.append(("cargo", {**os.environ, loader_name: loader_value}))
+
+must = []
+unsanitized = []
+scanned = {}
+trees = {}
+mode = None
+for argument in sys.argv[8:]:
+    if argument in ("--must", "--tree", "--may-tree", "--may-dir", "--unsanitized-tree"):
+        mode = argument
+        continue
+    path = pathlib.Path(argument)
+    if mode == "--must":
+        if not is_image(path):
+            raise SystemExit(f"RocksDB consumer is missing or not an ELF image: {path}")
+        must.append(path)
+    elif mode in ("--tree", "--may-tree"):
+        if not path.is_dir():
+            raise SystemExit(f"directory is missing: {path}")
+        if mode == "--tree":
+            trees[path] = 0
+        for candidate in images_below(path):
+            if mode == "--tree" and scanned.get(candidate) is None:
+                scanned[candidate] = path
+            else:
+                scanned.setdefault(candidate, None)
+    elif mode == "--may-dir":
+        if not path.is_dir():
+            raise SystemExit(f"directory is missing: {path}")
+        for candidate in sorted(path.iterdir()):
+            if is_image(candidate):
+                scanned.setdefault(candidate, None)
+    elif mode == "--unsanitized-tree":
+        # Absent when the run built no separate model executables.
+        if path.is_dir():
+            unsanitized.extend(images_below(path))
+    else:
+        raise SystemExit(f"internal error: artifact {argument} has no mode")
+
+# The strictest reading, whatever the order of the options: an image of the
+# unsanitized tree is never a consumer, a named consumer must record RocksDB,
+# and an image of a --tree counts for it even when a wider scan also found it.
+entries = {path: ("unsanitized", None) for path in unsanitized}
+for path in must:
+    if path in entries:
+        raise SystemExit(f"internal error: {path} is both required and unsanitized")
+    entries[path] = ("must", scanned.get(path))
+for path, tree in scanned.items():
+    entries.setdefault(path, ("may", tree))
+
+failures = []
+lines = []
+consumers = 0
+model_images = 0
+with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+    results = pool.map(lambda entry: (entry, inspect(entry)), entries.items())
+    for (path, (kind, tree)), (names, run_path, bound, sanitized, static) in results:
+        resolved = " ".join(f"{name}={','.join(targets) or '-'}" for name, targets in bound)
+        if static:
+            lines.append(f"{path} defines=rocksdb_open")
+            failures.append(f"{path}: defines rocksdb_open, a statically linked RocksDB")
+        if kind == "unsanitized":
+            model_images += 1
+            if sanitized:
+                failures.append(f"{path}: carries the TSan runtime but sits in the unsanitized tree")
+            if names:
+                lines.append(f"{path} unsanitized needed={','.join(names)} {resolved}")
+                failures.append(f"{path}: records {','.join(names)} but sits in the unsanitized "
+                                f"tree, whose images must record no RocksDB")
+            continue
+        if not names:
+            if kind == "must":
+                failures.append(f"{path}: records no RocksDB dependency")
+            continue
+        consumers += 1
+        if tree is not None:
+            trees[tree] += 1
+        lines.append(f"{path} needed={','.join(names)} "
+                     f"run_path={'yes' if run_path else 'no'} {resolved}")
+        if names != [soname]:
+            failures.append(f"{path}: records {','.join(names)}, not {soname}")
+        if not run_path:
+            failures.append(f"{path}: has no run path to {library_directory}")
+        for name, targets in bound:
+            if not targets or not all(is_library(target) for target in targets):
+                failures.append(f"{path}: resolves RocksDB to {','.join(targets) or 'nothing'} "
+                                f"in the {name} environment")
+failures.extend(f"{tree}: holds no executable that records RocksDB"
+                for tree, count in trees.items() if not count)
+report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+if failures:
+    raise SystemExit("executables do not use the instrumented RocksDB:\n  " + "\n  ".join(failures))
+print(f"{len(entries)} ELF images, none defines rocksdb_open; {consumers} record RocksDB"
+      + (f", each as {soname} resolved to {library}" if consumers else "")
+      + f"; {model_images} unsanitized model images, none records RocksDB")
+PY
+    then
+        return 1
+    fi
+    echo "tsan_rocksdb_linkage_${label}=$(tail -n 1 "${log}")" >>"${manifest}"
+}
+
 run_logged configure \
     cmake -S "${repo_root}" -B "${build_dir}" -G "${generator}" \
         -DCMAKE_BUILD_TYPE=Release \
@@ -1060,6 +1472,47 @@ cmake_nm="$(sed -n 's/^CMAKE_NM:[^=]*=//p' "${build_dir}/CMakeCache.txt" | head 
 if [[ -z "${cmake_nm}" || ! -x "${cmake_nm}" ]]; then
     echo "could not resolve CMake's symbol inspector" >&2
     exit 1
+fi
+tsan_rocksdb_readelf=""
+tsan_rocksdb_facts=""
+system_rocksdb_library=""
+if [[ -n "${tsan_rocksdb_config}" ]]; then
+    tsan_rocksdb_readelf="$(sed -n 's/^CMAKE_READELF:[^=]*=//p' "${build_dir}/CMakeCache.txt" | head -n 1)"
+    if [[ -z "${tsan_rocksdb_readelf}" || ! -x "${tsan_rocksdb_readelf}" ]]; then
+        tsan_rocksdb_readelf="$(command -v readelf || true)"
+    fi
+    if [[ -z "${tsan_rocksdb_readelf}" || ! -x "${tsan_rocksdb_readelf}" ]]; then
+        echo "could not resolve an ELF inspector (readelf)" >&2
+        exit 1
+    fi
+    tsan_rocksdb_source_arguments=()
+    if [[ -n "${MAKO_SANITIZER_ROCKSDB_SOURCE:-}" ]]; then
+        tsan_rocksdb_source_arguments=(--source "${MAKO_SANITIZER_ROCKSDB_SOURCE}")
+    fi
+    # Built with the compiler CMake selected, so the library and the
+    # executables share one sanitizer runtime. The script refuses an image
+    # whose RocksDB is not the version it rebuilds, and reuses the directory
+    # only when its stamp matches this compiler and recipe.
+    tsan_rocksdb_facts="${build_dir}/sanitizer-logs/tsan-rocksdb-facts.txt"
+    run_logged tsan-rocksdb \
+        bash "${script_dir}/build_tsan_rocksdb.sh" \
+            --prefix "${tsan_rocksdb_dir}" \
+            --cc "${rust_linker}" --cxx "${cxx_compiler}" \
+            --nm "${cmake_nm}" --readelf "${tsan_rocksdb_readelf}" \
+            --jobs "${jobs}" --report "${tsan_rocksdb_facts}" \
+            "${tsan_rocksdb_source_arguments[@]}"
+    tsan_rocksdb_library="$(realpath -e "${tsan_rocksdb_lib_dir}/librocksdb.so")"
+    tsan_rocksdb_library_sha256="$(sha256sum "${tsan_rocksdb_library}")"
+    tsan_rocksdb_library_sha256="${tsan_rocksdb_library_sha256%% *}"
+    # As for the sysroot's std below: only its symbols show the instrumentation.
+    tsan_rocksdb_undefined_symbols="${build_dir}/sanitizer-logs/tsan-rocksdb-undefined-symbols.txt"
+    "${cmake_nm}" -D -u "${tsan_rocksdb_library}" >"${tsan_rocksdb_undefined_symbols}"
+    if ! grep -Eq ' U __tsan_(read|write|func_entry)' "${tsan_rocksdb_undefined_symbols}"; then
+        echo "the RocksDB selected for the thread gate lacks thread instrumentation" >&2
+        exit 1
+    fi
+    system_rocksdb_library="$(sed -n 's/^system_rocksdb_library=//p' "${tsan_rocksdb_facts}")"
+    echo "verified thread instrumentation in ${tsan_rocksdb_library}"
 fi
 if [[ -n "${rust_std_sysroot}" ]]; then
     rust_std_libdir="${rust_std_sysroot}/lib/rustlib/${rust_target}/lib"
@@ -1380,6 +1833,15 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "unwind_backend=${unwind_backend}"
     echo "unwind_config=${unwind_config}"
     echo "unwind_config_sha256=${unwind_config_sha256}"
+    if [[ -n "${tsan_rocksdb_config}" ]]; then
+        echo "tsan_rocksdb_config=${tsan_rocksdb_config}"
+        echo "tsan_rocksdb_config_sha256=${tsan_rocksdb_config_sha256}"
+        echo "tsan_rocksdb_lib_dir=${tsan_rocksdb_lib_dir}"
+        echo "tsan_rocksdb_library=${tsan_rocksdb_library}"
+        echo "tsan_rocksdb_library_sha256=${tsan_rocksdb_library_sha256}"
+        cat "${tsan_rocksdb_facts}"
+        echo "tsan_rocksdb_unsanitized_tree=${build_dir}/rust-model-target;Loom models run without TSan and must record no RocksDB"
+    fi
     echo "c_compiler=${rust_linker}"
     echo "c_compiler_id=${c_compiler_id}"
     echo "c_compiler_version=${c_compiler_version}"
@@ -1444,6 +1906,60 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     fi
 } | tee "${manifest}"
 
+if [[ -n "${tsan_rocksdb_config}" ]]; then
+    # Before the long build: a small program proves that a link carrying the
+    # job's Clang configurations selects the instrumented library and that a
+    # TSan process loads and calls it, and a control linked against the
+    # image's library proves that the linkage audit rejects one.
+    tsan_rocksdb_probe_dir="${build_dir}/tsan-rocksdb-probe"
+    mkdir -p "${tsan_rocksdb_probe_dir}/selected" "${tsan_rocksdb_probe_dir}/control"
+    cat >"${tsan_rocksdb_probe_dir}/probe.c" <<'EOF'
+#include <rocksdb/c.h>
+#include <stdlib.h>
+
+/* @unsafe - calls the RocksDB C API */
+int main(void) {
+    rocksdb_options_t* options = rocksdb_options_create();
+    if (options == NULL) {
+        abort();
+    }
+    rocksdb_options_destroy(options);
+    return 0;
+}
+EOF
+    run_logged tsan-rocksdb-probe-build \
+        "${rust_linker}" "--config=${unwind_config}" \
+            "--config=${tsan_rocksdb_config}" -fsanitize=thread -O1 -g \
+            "${tsan_rocksdb_probe_dir}/probe.c" -lrocksdb \
+            -o "${tsan_rocksdb_probe_dir}/selected/probe"
+    run_logged tsan-rocksdb-probe-run "${tsan_rocksdb_probe_dir}/selected/probe"
+    audit_tsan_rocksdb_linkage probe \
+        --must "${tsan_rocksdb_probe_dir}/selected/probe"
+    if [[ "${system_rocksdb_library}" == /* ]]; then
+        run_logged tsan-rocksdb-control-build \
+            "${rust_linker}" "--config=${unwind_config}" -fsanitize=thread -O1 -g \
+                "${tsan_rocksdb_probe_dir}/probe.c" "${system_rocksdb_library}" \
+                -o "${tsan_rocksdb_probe_dir}/control/probe"
+        if audit_tsan_rocksdb_linkage control \
+                --must "${tsan_rocksdb_probe_dir}/control/probe"; then
+            echo "the RocksDB linkage audit accepted an executable linked against ${system_rocksdb_library}" >&2
+            exit 1
+        fi
+        if ! grep -Fq "${tsan_rocksdb_probe_dir}/control/probe: " \
+                "${build_dir}/sanitizer-logs/tsan-rocksdb-linkage-control.log"; then
+            echo "the RocksDB linkage audit failed without naming the control executable" >&2
+            exit 1
+        fi
+        # Its log and report stay. The executable does not: the audit after
+        # the build step covers every image in the build directory, and this
+        # one is linked against the image's library on purpose.
+        rm -f "${tsan_rocksdb_probe_dir}/control/probe"
+        echo "tsan_rocksdb_linkage_control=rejected;linked-against=${system_rocksdb_library}" >>"${manifest}"
+    else
+        echo "tsan_rocksdb_linkage_control=not-run;the-compiler-finds-no-system-librocksdb" >>"${manifest}"
+    fi
+fi
+
 if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
     # The focused runner rejects fake linkage, audits exact test inventories,
     # and records each leak-qualified rerun. It clears the legacy native
@@ -1484,7 +2000,11 @@ print("verified all seven native adapter translation units and Masstree context 
 PY
     printf '%s\n' "focused_scope=native-rust-adapter-and-cache" \
         "focused_test_report=${build_dir}/rust-sto-cache-tests.json" >>"${manifest}"
+    audit_tsan_rocksdb_linkage cache \
+        --tree "${build_dir}/rust-cache-target/${rust_target:+${rust_target}/}" \
+        --unsanitized-tree "${build_dir}/rust-model-target"
     verify_unwind_config
+    verify_tsan_rocksdb
     exit 0
 fi
 
@@ -1505,7 +2025,7 @@ python3 - "${build_dir}/sanitizer-logs/rust-sto-integration-build-commands.txt" 
     "${workspace_native_libs}" "${workspace_loader_environment}" \
     "${workspace_loader_value}" "${repo_root}" "${rustflags}" \
     "${rustdocflags}" "${selected_cargo}" "${cxx_compiler}" \
-    "${rust_std_sysroot}" <<'PY'
+    "${rust_std_sysroot}" "${tsan_rocksdb_config}" <<'PY'
 import pathlib
 import shlex
 import sys
@@ -1529,6 +2049,7 @@ rustdocflags = sys.argv[16]
 selected_cargo = pathlib.Path(sys.argv[17]).resolve()
 cxx_compiler = pathlib.Path(sys.argv[18])
 rust_std_sysroot = sys.argv[19]
+tsan_rocksdb_config = sys.argv[20]
 build_dir = pathlib.Path(sys.argv[1]).resolve().parents[1]
 
 clippy_commands = [
@@ -1670,6 +2191,9 @@ if rust_compiler_instrumented:
         f"--target {rust_target}",
         f"RUSTUP_TOOLCHAIN={rustup_toolchain}",
     )
+    if tsan_rocksdb_config:
+        # The thread gate's instrumented RocksDB, first for every -lrocksdb.
+        required += (f"-C link-arg=--config={tsan_rocksdb_config}",)
     for label, command in (("Clippy", clippy_commands[0]), ("test", test_commands[0])):
         missing = [fragment for fragment in required if fragment not in command]
         if missing:
@@ -1740,6 +2264,8 @@ fi
 run_native_abi_profile point
 audit_one_rust_std native-abi-point \
     --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}"
+audit_tsan_rocksdb_linkage native-abi-point \
+    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}"
 
 ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
     rocksdbInterfaceTest test_silo_nontxn_api test_silo_runtime \
@@ -1747,7 +2273,8 @@ ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
 python3 - "${build_dir}/sanitizer-logs/sto-tpcc-build-commands.txt" \
     "-fsanitize=${sanitizer}" "${rust_compiler_instrumented}" \
     "${rust_sanitizer_target}" "${rust_linker_environment}" \
-    "${rust_linker}" "${selected_rustup_toolchain}" "${rust_std_sysroot}" <<'PY'
+    "${rust_linker}" "${selected_rustup_toolchain}" "${rust_std_sysroot}" \
+    "${tsan_rocksdb_config}" <<'PY'
 import pathlib
 import re
 import sys
@@ -1760,6 +2287,7 @@ linker_environment = sys.argv[5]
 rust_linker = sys.argv[6]
 rustup_toolchain = sys.argv[7]
 rust_std_sysroot = sys.argv[8]
+tsan_rocksdb_config = sys.argv[9]
 
 rust_builds = [line for line in commands if "--package sto-tpcc-ffi" in line]
 if len(rust_builds) != 1:
@@ -1820,6 +2348,10 @@ for executable in boundary_executables:
         raise SystemExit(f"{executable} native link lacks {required_flag}")
     if "-fno-sanitize" in link:
         raise SystemExit(f"{executable} native link disables sanitizer coverage")
+    if tsan_rocksdb_config and f"--config={tsan_rocksdb_config}" not in link.split():
+        raise SystemExit(
+            f"{executable} native link does not load the instrumented RocksDB configuration"
+        )
     if required_flag in ("-fsanitize=address", "-fsanitize=thread"):
         allocator_tokens = ("jemalloc", "tcmalloc")
         forbidden = [token for token in allocator_tokens if token in link]
@@ -1887,6 +2419,19 @@ audit_one_rust_std build \
     --tree "${build_dir}/rust-native-target/${rust_target_subdir}" \
         "${build_dir}/rust-cache-target/${rust_target_subdir}" \
     --may-dir "${build_dir}"
+# The native executables are checked here, before CTest runs them. Every ELF
+# image in the build directory is in scope, wherever a target puts it: one
+# that records RocksDB must use the instrumented library. The Raft and
+# sharding target directories hold no RocksDB consumer in this configuration;
+# a Raft disk build or a sharding test executable that linked the image's
+# library would fail here. The Loom model tree is the one special case, and
+# it must record no RocksDB.
+audit_tsan_rocksdb_linkage build \
+    --must "${build_dir}/dbtest" "${build_dir}/rocksdbInterfaceTest" \
+    --tree "${build_dir}/rust-workspace-target/${rust_target_subdir}" \
+        "${build_dir}/rust-cache-target/${rust_target_subdir}" \
+    --may-tree "${build_dir}" \
+    --unsanitized-tree "${build_dir}/rust-model-target"
 
 # Do not trust the toggle alone. Confirm that every boundary translation unit
 # actually received the sanitizer flag in this generated build.
@@ -2418,6 +2963,9 @@ run_native_abi_profile rmw
 audit_one_rust_std sto-rmw \
     --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}" \
     --may-dir "${build_dir}"
+audit_tsan_rocksdb_linkage sto-rmw \
+    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}" \
+    --may-dir "${build_dir}"
 
 # The growth fixture composes its own insert, so it belongs to the ON profile.
 # Run the whole existing CTest here rather than dropping its supported cases or
@@ -2533,6 +3081,7 @@ else
 fi
 
 verify_unwind_config
+verify_tsan_rocksdb
 
 final_head_sha="$("${repository_git[@]}" rev-parse --verify HEAD)"
 final_tree_status="$("${repository_git[@]}" status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)"

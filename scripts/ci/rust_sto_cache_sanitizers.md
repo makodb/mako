@@ -42,17 +42,63 @@ instrument Rust and rebuild its standard library. UBSan instruments native
 C++, with stable Rust linked to the matching UBSan runtime; it is not Rust
 UBSan coverage.
 
-An explicitly rebuilt RocksDB can be selected through the existing
-`ROCKSDB_LIB_DIR` and matching runtime library search path. For TSan, build it
-with the same Clang sanitizer runtime and preserve its native C++ ABI. An
-uninstrumented dependency's function-local-static guard fast path can hide
+The thread profile links and loads its own RocksDB, not the system package's.
+The gate builds upstream v8.9.1 (commit
+`49ce8a1064dd1ad89117899839bf136365e49e79`), whose SONAME is
+`librocksdb.so.8` rather than the Ubuntu package's `librocksdb.so.8.9`, with
+`-fsanitize=thread` (`scripts/ci/build_tsan_rocksdb.sh`). The script refuses
+to run unless the image's RocksDB headers are that version. Its stamp names
+the compiler, and the gate reuses a directory only when that is the Clang
+CMake selected, so the library and the executables share one sanitizer
+runtime. The library uses that compiler's default C++ standard library.
+The library is selected for every link through a retained Clang
+configuration (`-L` and a run path) and `ROCKSDB_LIB_DIR`; an ambient
+`ROCKSDB_LIB_DIR` or `ROCKSDB_STATIC` is rejected.
+
+The gate then checks the artifacts, not only the commands. An ELF executable
+or shared object that records RocksDB must record that library's SONAME,
+carry the library's directory as a run path, and resolve to the library both
+in the gate's own environment and with the loader path Cargo's test
+executables get. No image may define `rocksdb_open` itself, as a statically
+linked copy would. The check covers:
+
+- before the long build, a probe and a control: the control is linked
+  against the system library and must be rejected;
+- after the build step, every image in the build directory. This is before
+  CTest runs the native executables; the Rust workspace tests have already
+  run inside the build step;
+- after each native ABI profile, the workspace target directory, and after
+  the `STO_RMW` rebuild also the executables directly in the build directory;
+- in the focused cache run, the cache target directory.
+
+The Loom model executables described below are the one special case. They
+are built without the sanitizer and without this library, so no image in
+their target directory may record RocksDB at all, or carry the TSan runtime.
+
+By default every thread run, the focused one included, fetches the pinned
+commit from GitHub and builds the library into `<build dir>/tsan-rocksdb`.
+`MAKO_SANITIZER_ROCKSDB_DIR` names a directory to build into once and reuse
+when its stamp matches; `MAKO_SANITIZER_ROCKSDB_SOURCE` names a local checkout
+of the pinned commit to build from, which needs no network.
+
+ASan and UBSan use the system package. `ROCKSDB_LIB_DIR` does not select a
+rebuilt RocksDB for their complete gate: only the `mako-cache`, `mrx`,
+`mrx-ffi` and `mrx-rocks` build scripts read it, while CMake's `rocksdb`
+links and `mako-local` do not.
+
+An uninstrumented dependency's function-local-static guard fast path can hide
 its publication edge from TSan; do not suppress the resulting report without
 attribution. The STO-shape campaign retains same-source control/instrumented
-RocksDB 8.9.1-2 builds and a Rust/C-ABI guard diagnostic: three control runs
-report the mutex race, three instrumented runs pass, and the original 14-test
-MRX executable has the same paired outcome. Its TSan launcher hashes all
-selected DSO aliases before and after the gate. This diagnostic does not
-qualify unrelated system libraries or the complete sanitizer gate.
+builds of the Ubuntu package source, RocksDB 8.9.1-2, which is not the
+upstream commit the gate builds, and a Rust/C-ABI guard diagnostic: three
+control runs report the mutex race, three instrumented runs pass, and the
+original 14-test MRX executable has the same paired outcome. That campaign
+selected its library through `ROCKSDB_LIB_DIR` and the loader path, and its
+TSan launcher hashed all selected DSO aliases before and after its run. The
+thread gate now rejects that selection and replaces it with its own
+configuration, the artifact check above and a final re-hash of the
+configuration file and the library. The diagnostic does not qualify unrelated
+system libraries or the complete sanitizer gate.
 
 ## Leak qualifications
 
