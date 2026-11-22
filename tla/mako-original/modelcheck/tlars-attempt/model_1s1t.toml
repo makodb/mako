@@ -1,0 +1,26 @@
+[constants.assignments]
+shards = 1
+threads = 1
+comp = 1
+
+[quantifiers.int]
+min = -1
+max = 2
+
+[quantifiers.nat]
+max = 2
+
+[collections]
+max_seq_len = 2
+max_set_len = 2
+max_map_len = 2
+
+[search]
+max_depth = 6
+max_states = 20000
+timeout_ms = 120000
+
+[properties]
+invariants = ["LInv"]
+check_deadlock = false
+successor_semantics = "deadlock"

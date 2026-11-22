@@ -1,0 +1,68 @@
+UNMUTATED / ABSTRACTION RUNS
+abs_s1t1_x2_freeids        states=265934    trans=445355    depth=19  exhaustive=True      55s committed=113450 2comm=17104 comm_after_crash=101314 comm_reader=10080 xepoch_read=2240 abprep_fvw=23424 rollback=81661 :: no violation
+abs_s1t1_x2_nocanon        states=1071764   trans=1281573   depth=19  exhaustive=True     215s committed=776842 2comm=216835 comm_after_crash=758533 comm_reader=131336 xepoch_read=22088 abprep_fvw=41448 rollback=654470 canon_images=132969 :: no violation
+abs_s2c2_b3_x2_nocanon     states=5000001   trans=10880183  depth=15  exhaustive=False    998s committed=73925 2comm=0 comm_after_crash=73249 comm_reader=0 xepoch_read=0 abprep_fvw=166088 rollback=1335993 canon_images=258166 :: no violation
+s1t1_b4_x3                 states=439192    trans=783929    depth=24  exhaustive=True     124s committed=306071 2comm=126780 comm_after_crash=281247 comm_reader=88056 xepoch_read=20386 abprep_fvw=40752 rollback=145188 :: no violation
+s1t1_x1                    states=851       trans=1230      depth=11  exhaustive=True       0s committed=105 2comm=0 comm_after_crash=90 comm_reader=0 xepoch_read=0 abprep_fvw=48 rollback=238 :: no violation
+s1t1_x2                    states=132969    trans=222679    depth=19  exhaustive=True      27s committed=56725 2comm=8552 comm_after_crash=50657 comm_reader=5040 xepoch_read=1120 abprep_fvw=11712 rollback=40831 :: no violation
+s1t1_x2_crash2             states=836310    trans=1830010   depth=22  exhaustive=True     200s committed=349858 2comm=53120 comm_after_crash=343790 comm_reader=30240 xepoch_read=11200 abprep_fvw=111744 rollback=437368 :: no violation
+s1t2_b2_x3_nocrash         states=36813     trans=67316     depth=20  exhaustive=True       8s committed=4208 2comm=544 comm_after_crash=0 comm_reader=368 xepoch_read=0 abprep_fvw=0 rollback=0 :: no violation
+s1t2_x2                    states=563258    trans=1030515   depth=18  exhaustive=True     117s committed=60528 2comm=2196 comm_after_crash=53320 comm_reader=0 xepoch_read=0 abprep_fvw=61488 rollback=165323 :: no violation
+s2c1_all_x2                states=6710863   trans=18133030  depth=27  exhaustive=True    1740s committed=594582 2comm=19012 comm_after_crash=585606 comm_reader=0 xepoch_read=0 abprep_fvw=425392 rollback=1521062 :: no violation
+s2c1_b2r_x2                states=74521     trans=189191    depth=22  exhaustive=True      18s committed=19159 2comm=2114 comm_after_crash=18887 comm_reader=0 xepoch_read=0 abprep_fvw=3046 rollback=16519 :: no violation
+s2c1_b3_x2                 states=344785    trans=938968    depth=27  exhaustive=True      87s committed=1296 2comm=0 comm_after_crash=1272 comm_reader=0 xepoch_read=0 abprep_fvw=24240 rollback=79178 :: no violation
+s2c1_b3_x3_nocrash         states=439143    trans=1109830   depth=29  exhaustive=True     129s committed=9896 2comm=736 comm_after_crash=0 comm_reader=840 xepoch_read=0 abprep_fvw=0 rollback=0 :: no violation
+s2c2_all_x2                states=6840971   trans=18467398  depth=27  exhaustive=True    1823s committed=721426 2comm=26196 comm_after_crash=711778 comm_reader=3056 xepoch_read=896 abprep_fvw=432368 rollback=1569146 :: no violation
+s2c2_all_x2_nocrash        states=128457    trans=252736    depth=19  exhaustive=True      27s committed=9648 2comm=252 comm_after_crash=0 comm_reader=0 xepoch_read=0 abprep_fvw=0 rollback=0 :: no violation
+s2c2_b2r_x2                states=76307     trans=193584    depth=22  exhaustive=True      18s committed=20855 2comm=2386 comm_after_crash=20574 comm_reader=207 xepoch_read=72 abprep_fvw=3102 rollback=17276 :: no violation
+s2c2_b3_x2                 states=352687    trans=959528    depth=27  exhaustive=True      92s committed=8842 2comm=36 comm_after_crash=8776 comm_reader=54 xepoch_read=0 abprep_fvw=24712 rollback=82374 :: no violation
+s2c2_b3_x3_nocrash         states=450851    trans=1135190   depth=29  exhaustive=True     136s committed=22540 2comm=1036 comm_after_crash=0 comm_reader=1190 xepoch_read=0 abprep_fvw=0 rollback=0 :: no violation
+
+MUTATIONS (I = invariant conjunct, P = durability/atomicity/rollback-safety/ack, S = strictly_serializable)
+abs_s1t1_x2_nocanon_freeids_crash_drop_all         states=2215516  exhaustive=True  I:inv_all_logs P:durability P:atomicity S
+abs_s1t1_x2_nocanon_freeids_fetch_no_inc           states=3430836  exhaustive=True  I:inv_txns I:inv_streams P:atomicity P:durability P:rollback_safety S
+abs_s1t1_x2_nocanon_freeids_no_below_wm            states=4152276  exhaustive=True  I:inv_committed P:durability P:rollback_safety S
+s1t1_x2_abort_committed                            states=148500   exhaustive=True  P:ack_is_final P:atomicity I:inv_streams I:inv_all_logs S P:rollback_safety
+s1t1_x2_close_ignore_pending                       states=132969   exhaustive=True  NOT CAUGHT
+s1t1_x2_crash_drop_all                             states=136041   exhaustive=True  I:inv_all_logs P:durability P:atomicity S
+s1t1_x2_crash_keep_all+rollback_noop               states=128001   exhaustive=True  I:inv_rolled_back P:atomicity
+s1t1_x2_crash_keep_all                             states=129657   exhaustive=True  NOT CAUGHT
+s1t1_x2_fetch_no_inc                               states=176797   exhaustive=True  I:inv_txns I:inv_streams P:atomicity P:durability P:rollback_safety S
+s1t1_x2_inf_all                                    states=132969   exhaustive=True  NOT CAUGHT
+s1t1_x2_no_below_wm                                states=186877   exhaustive=True  I:inv_committed P:durability P:rollback_safety S
+s1t1_x2_no_coord_clock                             states=132969   exhaustive=True  NOT CAUGHT
+s1t1_x2_no_lock_check                              states=132969   exhaustive=True  NOT CAUGHT
+s1t1_x2_read_no_fvw                                states=136041   exhaustive=True  I:inv_reads
+s1t1_x2_rollback_noop                              states=132969   exhaustive=True  NOT CAUGHT
+s1t2_b2_x3_nocrash_no_lock_check                   states=56073    exhaustive=True  I:inv_locks I:inv_reads I:inv_versions S
+s1t2_x2_close_ignore_pending                       states=563258   exhaustive=True  NOT CAUGHT
+s1t2_x2_inf_all                                    states=563258   exhaustive=True  NOT CAUGHT
+s1t2_x2_no_coord_clock                             states=563258   exhaustive=True  NOT CAUGHT
+s1t2_x2_no_lock_check                              states=672770   exhaustive=True  I:inv_locks I:inv_reads I:inv_versions
+s1t2_x2_read_no_fvw                                states=572442   exhaustive=True  I:inv_reads P:rollback_safety
+s2c1_b2r_x2_read_no_fvw                            states=77751    exhaustive=True  I:inv_reads S P:rollback_safety
+s2c1_b3_x2_abort_committed                         states=345457   exhaustive=True  P:ack_is_final I:inv_streams I:inv_all_logs P:atomicity
+s2c1_b3_x2_close_ignore_pending                    states=835809   exhaustive=True  I:inv_final P:durability
+s2c1_b3_x2_crash_drop_all                          states=349831   exhaustive=True  I:inv_all_logs P:durability P:atomicity
+s2c1_b3_x2_crash_keep_all+rollback_noop            states=332561   exhaustive=True  I:inv_rolled_back P:atomicity
+s2c1_b3_x2_crash_keep_all                          states=337253   exhaustive=True  NOT CAUGHT
+s2c1_b3_x2_fetch_no_inc                            states=680575   exhaustive=True  I:inv_txns I:inv_streams P:durability P:atomicity S P:rollback_safety
+s2c1_b3_x2_inf_all                                 states=360347   exhaustive=True  I:inv_all_logs P:atomicity
+s2c1_b3_x2_no_below_wm                             states=800145   exhaustive=True  I:inv_committed P:durability S P:rollback_safety
+s2c1_b3_x2_no_coord_clock                          states=353221   exhaustive=True  I:inv_streams I:inv_all_logs
+s2c1_b3_x2_no_lock_check                           states=543535   exhaustive=True  I:inv_locks I:inv_reads I:inv_versions
+s2c1_b3_x2_read_no_fvw                             states=369519   exhaustive=True  I:inv_reads P:rollback_safety
+s2c1_b3_x2_rollback_noop                           states=341237   exhaustive=True  I:inv_rolled_back P:atomicity
+s2c2_b2r_x2_read_no_fvw                            states=79880    exhaustive=True  I:inv_reads S P:rollback_safety
+s2c2_b3_x2_abort_committed                         states=354355   exhaustive=True  P:ack_is_final I:inv_streams I:inv_all_logs P:atomicity
+s2c2_b3_x2_close_ignore_pending                    states=861601   exhaustive=True  I:inv_final P:durability P:rollback_safety
+s2c2_b3_x2_crash_drop_all                          states=357733   exhaustive=True  I:inv_all_logs P:durability P:atomicity
+s2c2_b3_x2_crash_keep_all+rollback_noop            states=340819   exhaustive=True  I:inv_rolled_back P:atomicity
+s2c2_b3_x2_crash_keep_all                          states=345155   exhaustive=True  NOT CAUGHT
+s2c2_b3_x2_fetch_no_inc                            states=683581   exhaustive=True  I:inv_txns I:inv_streams P:durability P:atomicity S P:rollback_safety
+s2c2_b3_x2_inf_all                                 states=368595   exhaustive=True  I:inv_all_logs P:atomicity
+s2c2_b3_x2_no_below_wm                             states=801825   exhaustive=True  I:inv_committed P:durability S P:rollback_safety
+s2c2_b3_x2_no_coord_clock                          states=362419   exhaustive=True  I:inv_streams I:inv_all_logs P:atomicity S P:rollback_safety I:inv_committed
+s2c2_b3_x2_no_lock_check                           states=555763   exhaustive=True  I:inv_locks I:inv_reads I:inv_versions
+s2c2_b3_x2_read_no_fvw                             states=378643   exhaustive=True  I:inv_reads P:rollback_safety
+s2c2_b3_x2_rollback_noop                           states=349495   exhaustive=True  I:inv_rolled_back P:atomicity
