@@ -11,6 +11,7 @@
 #include <set>
 #include "rocksdb_persistence_fwd.h"
 
+#include <ctype.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -962,9 +963,12 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
     }
     std::string line;
     while (std::getline(ifs, line)) {
-      // Look for "ab:" field in YAML - match patterns like "ab: raft", "ab:raft"
-      auto pos = line.find("ab:");
-      if (pos != std::string::npos) {
+      // Match a YAML line whose key is exactly "ab": "ab: raft", "ab:raft",
+      // `ab: "Raft"`. A comment line, or a key that merely ends in "ab", is
+      // not a selection. The value is compared without regard to case, as
+      // Config::LoadModeYML and replication_helper's YAML reader do.
+      auto pos = line.find_first_not_of(" \t");
+      if (pos != std::string::npos && line.compare(pos, 3, "ab:") == 0) {
         auto value = line.substr(pos + 3);
         // Trim leading whitespace
         auto start = value.find_first_not_of(" \t");
@@ -975,6 +979,14 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
         auto end = value.find_first_of(" \t#\r\n");
         if (end != std::string::npos) {
           value = value.substr(0, end);
+        }
+        // Strip one pair of surrounding quotes.
+        if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') &&
+            value.back() == value.front()) {
+          value = value.substr(1, value.size() - 2);
+        }
+        for (auto& ch : value) {
+          ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
         }
         if (value == "raft") {
           Notice("Auto-detected replication type '%s' from config file: %s",
