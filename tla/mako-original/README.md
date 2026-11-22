@@ -7,6 +7,8 @@ log per shard), is modelled and proved separately in
 [`../mako`](../mako/README.md). The two crates share no source file. Nothing
 in the build reads this directory and the CI proof gate does not run it. The
 results below were recorded on 2026-09-27; the sources have not changed since.
+After the move to this directory the proof was run again on 2026-11-22 with the
+same pinned Verus and Rust: `274 verified, 0 errors`.
 
 This directory is a [tla-rs](https://github.com/stonysystems/tla-rs) style
 model of Mako's speculative two-phase commit (OSDI'25, *Mako: Speculative
