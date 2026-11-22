@@ -2,7 +2,9 @@
 # Reproduce the tla-rs model-check construct probes. Each probe evaluates one
 # expression as an invariant on a trivial 2-state model and prints the result.
 set -u
-B=/home/shuai/tmp/claude-3000/-home-users-shuai-mako/800b988f-cadf-4cf3-9746-5ada68c42ba2/scratchpad/tla-rs/transpiler/target/release/verus-transpile
+# TLARS_TRANSPILE: the verus-transpile binary of a tla-rs checkout
+# (transpiler/target/release/verus-transpile).
+B="${TLARS_TRANSPILE:?set TLARS_TRANSPILE to the tla-rs verus-transpile binary}"
 d="$(mktemp -d)"
 cat > "$d/t.rs" <<'EOT'
 use vstd::prelude::*;

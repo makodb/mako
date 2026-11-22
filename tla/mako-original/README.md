@@ -1,4 +1,12 @@
-# Mako in tla-rs: model and proofs
+# Original Mako (the OSDI'25 paper protocol) in tla-rs: model and proofs
+
+**Status: historical and self-contained.** This is the protocol as the paper
+describes it: vector clocks and one Paxos stream per (shard, coordinator,
+worker thread). The current design, MakoV2 (one scalar timestamp and one Raft
+log per shard), is modelled and proved separately in
+[`../mako`](../mako/README.md). The two crates share no source file. Nothing
+in the build reads this directory and the CI proof gate does not run it. The
+results below were recorded on 2026-09-27; the sources have not changed since.
 
 This directory is a [tla-rs](https://github.com/stonysystems/tla-rs) style
 model of Mako's speculative two-phase commit (OSDI'25, *Mako: Speculative
@@ -72,7 +80,7 @@ The pinned toolchain is Verus `0.2026.08.02.b677dd5` with Rust `1.97.1`, the
 same pin tla-rs uses.
 
 ```bash
-VERUS_PATH=/path/to/verus tla/mako/scripts/verify.sh --triggers-mode silent
+VERUS_PATH=/path/to/verus tla/mako-original/scripts/verify.sh --triggers-mode silent
 ```
 
 The modules also verify unchanged inside a tla-rs checkout, as
@@ -210,6 +218,8 @@ with file and line evidence. None was reproduced by running the system.
 | 12 | Followers discard a whole queued batch at an epoch boundary instead of filtering per transaction | `mako.hh:299-318`, `sto/ReplayDB.cc:14-77` | Durability after a second failure |
 | 13 | The encoded replication callback value `timestamp*10+status` overflows `int` | `mako.hh:339`, `mako.hh:429` | Batches that fail the safety check are neither replayed nor queued |
 
-Paths in the table are relative to `src/mako`. Item 7 is a deviation from the
-paper's stated design rather than a violation of its formal theorems; the
-others can violate a property the paper proves.
+Paths in the table are relative to `src/mako`. Line numbers are those of commit
+`3e102604d` (2026-09-24), the tree that was reviewed; these files have changed
+since, and the list has not been re-checked against the current code. Item 7
+is a deviation from the paper's stated design rather than a violation of its
+formal theorems; the others can violate a property the paper proves.
