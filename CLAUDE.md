@@ -44,25 +44,12 @@ make -j32
 # simple transactions (Docker)
 ./docker_build.sh ci simpleTransaction
 
-# simple replication (Docker)
-./docker_build.sh ci simplePaxos
-
 # two shards without replication (Docker)
 ./docker_build.sh ci shardNoReplication
 
-# 1 shard with replication on dbtest (Docker)
-./docker_build.sh ci shard1Replication
-
-# 2 shards with replication on dbtest (Docker)
-./docker_build.sh ci shard2Replication
-
-# 1 shard with replication on simple transaction (Docker)
-./docker_build.sh ci shard1ReplicationSimple
-
-# 2 shards with replication on simple transaction (Docker)
-./docker_build.sh ci shard2ReplicationSimple
-
-# Raft replication tests (same as above but with Raft instead of Paxos)
+# Raft replication tests: 1 and 2 shards, on dbtest and on simple transaction
+# (Docker). There is no Paxos suite: Paxos is deprecated and its tests were
+# removed (src/deptran/paxos/DEPRECATED.md).
 ./docker_build.sh ci shard1ReplicationRaft
 ./docker_build.sh ci shard2ReplicationRaft
 ./docker_build.sh ci shard1ReplicationSimpleRaft
@@ -83,12 +70,6 @@ BUILD_DIR=build_docker ./ci/ci.sh raftLabTest
 # RocksDB persistence and partitioned queues tests (Docker)
 ./docker_build.sh ci rocksdbTests
 
-# Shard fault tolerance test (Docker container fallback)
-# 1) enter Docker dev environment
-./docker_build.sh enter
-# 2) inside container, run:
-BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
-
 # Multi-shard single-process mode (runs multiple shards in one process) (Docker)
 ./docker_build.sh ci multiShardSingleProcess
 
@@ -103,9 +84,9 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Paxos/Raft replication and their shared runtime support
+- `src/deptran/`: Raft replication, the deprecated Paxos implementation, and their shared runtime support
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
-- `src/bench/`: Benchmark implementations (TPC-C, TPC-A, RW, Micro)
+- `src/mako/benchmarks/`: Benchmark workloads and drivers (TPC-C in `tpcc.cc`, the `dbtest` driver)
 - `src/srpc/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
@@ -135,7 +116,21 @@ retired, source-guarded, and neither selectable nor runnable. Mako always uses
 STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
 `SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
 engine. The project-wide `janus::` C++ namespace remains for compatibility.
-- **Paxos** (`src/deptran/paxos/`): Consensus for replication
+- **Raft** (`src/deptran/raft/`): the supported and tested replication engine, and
+  the default: a replicated run that names no protocol runs Raft.
+- **Paxos** (`src/deptran/paxos/`, `src/deptran/paxos_worker.*`,
+  `src/deptran/paxos_main_helper.cc`): **DEPRECATED** (owner's decision of
+  2026-11-22). It is still compiled into every build, but no test covers it
+  and it must not be extended. It runs only when selected explicitly, with
+  `--replication paxos` or a mode file whose `ab` says `paxos` or
+  `multi_paxos` (`config/paxos.yml`); an explicit flag wins over the files. A
+  process that starts it logs one `[PAXOS-DEPRECATED]` warning from
+  `paxos_impl::setup`. Many names that say "paxos" are shared with Raft
+  and are NOT deprecated
+  (`shutdown_paxos`, `ElectionState`, `PaxosStatus`, `--paxos-proc-name`,
+  `MAKO_PAXOS_CONFIG_DIR`, `bash/shard.sh`, and others).
+  `src/deptran/paxos/DEPRECATED.md` has the file set, the shared names and the
+  files that must not be edited.
 
 ### Transport Layer Architecture
 
@@ -170,12 +165,12 @@ is `SrpcRequestHandle`.
 ### Configuration System
 - **Host configuration**: `config/hosts*.yml` defines cluster topology and network settings
 - **Benchmark configuration**: YAML files specify workload parameters
-- **Build configuration**: Controlled via CMake flags or Makefile variables (SHARDS, PAXOS_LIB_ENABLED, etc.)
+- **Build configuration**: Controlled via CMake flags. (`PAXOS_LIB_ENABLED` is read by no build file in this tree; only legacy scripts under `src/mako` mention it.)
 
 ### Key Classes and Components
-- `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
-  Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
+- `Coordinator`: Coordinates distributed transactions across shards. Its only subclasses are the deprecated Paxos ones (`CoordinatorMultiPaxos`)
+- `TxLogServer`: The replication-engine INTERFACE implemented by the Raft
+  server and the deprecated Paxos server (`src/deptran/scheduler.h`). It holds no state: it was six
   shared data members until they were moved down into the two
   concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
@@ -440,7 +435,7 @@ enum class ReplicationType : int {  // explicit backing type
 
 namespace janus {
 // @safe - Using rusty::Cell for thread-safe interior mutability
-static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::PAXOS};
+static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::RAFT};
 
 // @safe - Read-only access
 ReplicationType get_replication_type() {
@@ -501,10 +496,10 @@ New protocols should be added under `src/deptran/` following the existing patter
 3. Add configuration support in benchmark YAML files
 
 ### Modifying Benchmarks
-Benchmarks are in `src/bench/`. Each benchmark directory (e.g., `tpcc/`, `tpca/`, `rw/`) typically has:
-- Workload generator (`workload.cc`, `workload.h`)
-- Stored procedures (`procedure.cc`, `procedure.h`, plus individual transaction files like `new_order.cc`, `payment.cc`)
-- Sharding logic (`sharding.cc`, `sharding.h`)
+Benchmarks are in `src/mako/benchmarks/`: one file per workload (`tpcc.cc`,
+`tpcc_simple.cc`, `ycsb.cc`, `bid.cc`, `queue.cc`), run by the `dbtest` driver
+(`dbtest.cc`) through the worker framework in `bench.cc`. There is no
+`src/bench/` directory.
 
 ### Debugging
 - Use `MODE=debug` for debug builds with symbols
