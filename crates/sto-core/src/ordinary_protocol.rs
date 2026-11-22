@@ -2,6 +2,7 @@
 //! same irreversible boundary and hook protocol.
 
 use super::*;
+#[cfg(feature = "distributed")]
 use mako_clock::distributed::DistributedTimeTerm;
 
 pub(super) type DriverStep = Result<(), Result<CommitOutcome, CommitFailure>>;
@@ -194,7 +195,7 @@ impl CommitDriver<'_, '_> {
 
     pub(super) fn install_ordinary(
         &mut self,
-        decision: Option<DistributedTimeTerm>,
+        #[cfg(feature = "distributed")] decision: Option<DistributedTimeTerm>,
         retain_locks: bool,
     ) -> DriverStep {
         // No fallible metadata allocation or abort is permitted beyond here.
@@ -209,7 +210,12 @@ impl CommitDriver<'_, '_> {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let (frame, locks) = self.parts_mut();
                 let mut cx = locks
-                    .install_context_with_decision(commit_id, decision, retain_locks)
+                    .install_context_with_decision(
+                        commit_id,
+                        #[cfg(feature = "distributed")]
+                        decision,
+                        retain_locks,
+                    )
                     .expect("certified plan retains held guards");
                 if frame.batch_active {
                     frame

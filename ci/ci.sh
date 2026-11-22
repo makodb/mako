@@ -998,6 +998,9 @@ case "${1:-}" in
     makoLocalMiriGate)
         run_mako_local_miri_gate
         ;;
+    rocksdbRaft)
+        bash ./ci/rocksdb_raft.sh
+        ;;
     nativeShardingProof)
         bash ./scripts/verify_native_sharding.sh
         ;;

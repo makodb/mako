@@ -2,6 +2,65 @@
 
 A comprehensive developer guide for the Raft consensus implementation in Mako.
 
+**Product profiles:** the Mako/C++ integration described below remains the
+default. The optional `ROCKSDB_RAFT` profile instead embeds the same native
+`raft-core` and `raft-store` in `crates/raft-host`, with SRPC and a fallible
+`StateMachine` implementation supplied by `rocksdb-raft-service`. It does not
+route transactions through `add_log_to_nc()` or the legacy learner callback.
+
+With the default sync policy, a proposal handle distinguishes local durable admission,
+quorum commitment, local application, unknown outcome and authoritative discard.
+Every replica persists committed-prefix authority before applying a user batch.
+Internal no-ops advance the application's complete prefix too. Fresh transaction
+readiness requires a committed current-term entry, a quorum-confirmed heartbeat
+round launched after admission, and application through the captured committed
+prefix. The native host exposes the existing core `AuthorityLedger`; the
+published leader bit and previously confirmed rounds are not read authority.
+Concurrent requests admitted before a round launches can share it without
+appending a new no-op for each read. Operations inside that admitted snapshot
+transaction do not repeat the barrier.
+Pending reads prompt a new round when older RPCs free enough peer slots for a
+quorum; they do not wait unnecessarily for the periodic heartbeat. That scheduling
+change does not permit a pre-admission confirmation to authorize a later read.
+
+Each native group independently randomizes every election-timer reset within
+`[base, 2 × base)`. A keyed hash of the group, node and advancing draw counter
+provides fresh jitter without coupling it to elapsed time or term numbers.
+Deterministic clock-origin/node salts can keep surviving replicas in repeated
+split ballots; increasing a timeout does not correct that policy flaw.
+
+The native host defaults to 40-ms heartbeats, one-second peer RPC deadlines and
+a three-second election base (actual timeout `[3 s, 6 s)`). Peer replies include
+durable WAL sync, not just network RTT. These bounds allow headroom over the
+measured shared-HDD sync latency; they trade slower failure detection for fewer
+storage-induced elections. They do not change the default Mako/C++ configuration
+or the service's transaction deadlines, and cannot mask unbounded disk stalls.
+
+Native RocksDB checkpoints use hashed manifests and bounded file chunks.
+Installation durably stages files, persists Raft authority, publishes the user
+DB generation, then publishes readiness. Compaction and image reclamation retain
+durable references and active transfer leases. Snapshot contacts refresh follower
+election timers throughout a transfer; a multi-frame transfer is not one long,
+unacknowledged heartbeat.
+
+The explicit `ROCKSDB_RAFT` async experiment selects `Config.sync_writes=false`
+through server JSON `durability: "async"`. It retains WAL writes but omits
+foreground persistence barriers; quorum/application completion is **not** a
+power-crash durability guarantee. The async base uses WAL-enabled `sync=false`
+RocksDB writes and nonwaiting flushes, protecting process-restart recovery after
+Raft segment reclamation without waiting for a foreground base flush. Existing
+Mako/default store callers retain synchronous behavior. Persistent identities
+reject cross-policy reuse, and separate Raft envelope versions reject mixed-mode
+peers before votes/appends/snapshots reach the core. Background RocksDB work and
+explicit application checkpoint maintenance may still synchronize storage.
+See [durability selection](rocksdb_interface.md#durability-selection).
+
+Use `./docker_build.sh ci rocksdbRaft` for this profile's Docker qualification.
+Its fault-enabled binaries are separate from the production build. See
+[operation and API](rocksdb_interface.md#direct-rocksdb-service-profile) and
+[the implementation design](plans/rocksdb-raft-mode.md) for the local-only scope,
+request-outcome rules, crash scenarios and evaluation.
+
 ---
 
 ## Table of Contents
