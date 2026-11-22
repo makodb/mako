@@ -549,7 +549,12 @@ void stuff_todo_learner_upgrade(){
 // `OneTimeJob`, `leader_callback_`), but nothing on the live path
 // invokes them.
 
-void* heartbeatBackground(void* arg) {
+// @unsafe - Runs on a detached thread that main() never joins. `state` is the
+// election state owned by the spawning closure in setup2(), NOT the global
+// `es`: exit() destroys every static owner of that state while this thread can
+// still be parked in a heartbeat RPC (srpc::Future waits up to 1 s), so a
+// `running` check through `es` reads freed memory (heap-use-after-free).
+void* heartbeatBackground(ElectionState& state) {
   auto poll_arc = PollThread::create();
   auto rpc_cli = srpc::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(
@@ -563,12 +568,15 @@ void* heartbeatBackground(void* arg) {
   }
 
   // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<srpc::Client*>(rpc_cli.get()));
-  while (es->running) {
+  // The proxy only borrows `rpc_cli`, which outlives it in this scope. It was
+  // heap-allocated and never deleted, a direct leak whenever this thread
+  // returns before the process exits.
+  ServerControlProxy client_proxy(const_cast<srpc::Client*>(rpc_cli.get()));
+  while (state.running) {
     ServerControlProxy::RpcServerHeartBeatRequest req;
-    auto connected = client_proxy->server_heart_beat(req);
+    auto connected = client_proxy.server_heart_beat(req);
     if (connected.is_ok()){
-      es->set_heartbeat_seen();
+      state.set_heartbeat_seen();
     }
     std::this_thread::sleep_for(10ms); // CAN'T run it too fast, otherwise error!
   }
@@ -582,12 +590,15 @@ void* heartbeatBackground(void* arg) {
 // and the constant gating that branch was hard-coded `false`.
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
-void* heartbeatMonitor2(void* arg) { // happens on the learner
+// @unsafe - Detached like heartbeatBackground, so the loop reads the flag and
+// the heartbeat timestamp through the spawning closure's `state`, never the
+// global `es`. The failover branch below still reaches process globals.
+void* heartbeatMonitor2(ElectionState& state) { // happens on the learner
   time_t st = time(NULL);
   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
 
-  while (es->running) {
-    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+  while (state.running) {
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - state.heartbeat_seen);
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);
@@ -643,9 +654,14 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
   // `heartbeatBackground2` / `heartbeatMonitor3`, both removed above.
   if (Config::GetConfig()->proc_name_.compare("learner")==0) {
     // Rust-idiomatic: the dropped JoinHandle detaches (std-faithful).
-    (void)rusty::thread::spawn([]() { heartbeatBackground(nullptr); });
+    // @unsafe - Nothing joins these threads, so each closure captures its own
+    // owning copy of the election state (same idiom as send_sync_logs). That
+    // copy keeps the state alive until the thread returns, even after exit()
+    // has destroyed the global `es`.
+    auto state = es;
+    (void)rusty::thread::spawn([state]() { heartbeatBackground(*state); });
 
-    (void)rusty::thread::spawn([]() { heartbeatMonitor2(nullptr); });
+    (void)rusty::thread::spawn([state]() { heartbeatMonitor2(*state); });
   }
   // 20 / 4e-19 / 4e-16: cleared a stale
   // commented-out block that referenced now-deleted thread entry
