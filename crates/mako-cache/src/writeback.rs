@@ -6936,6 +6936,18 @@ mod tests {
 
     const TABLE: u64 = 1;
 
+    /// Upper bound for an event a test expects another thread to produce: a
+    /// waiter registering, a publication waking it, a result arriving. A
+    /// passing run never waits this long, because every use blocks or polls
+    /// only until the event happens; the bound decides how long a real
+    /// regression takes to fail. It must exceed the worst scheduling delay of
+    /// a loaded CI runner. One second did not: on a 4-core runner that was
+    /// running other test binaries, a spawned waiter had not registered within
+    /// a second in
+    /// `publishing_a_later_slot_does_not_wake_a_waiter_blocked_on_the_front`.
+    /// Windows in which a test expects NO event stay short and separate.
+    const EXPECTED_EVENT_BOUND: Duration = Duration::from_secs(60);
+
     #[test]
     fn huge_page_advice_never_extends_beyond_the_allocation() {
         const PAGE: usize = 4_096;
@@ -7549,7 +7561,7 @@ mod tests {
             let observed_coordinator = &coordinator;
             let observer =
                 scope.spawn(move || sent.send(observed_coordinator.gc_snapshot()).unwrap());
-            let snapshot = received.recv_timeout(Duration::from_secs(1));
+            let snapshot = received.recv_timeout(EXPECTED_EVENT_BOUND);
             backend.release();
             observer.join().unwrap();
             assert!(matches!(
@@ -7727,7 +7739,7 @@ mod tests {
 
             assert_eq!(
                 bound_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .expect("healthy reserve+bind blocked on Writeback::state")
                     .get(),
                 1
@@ -8852,7 +8864,7 @@ mod tests {
         let waiter = std::thread::spawn(move || {
             returned_tx.send(waiter_writeback.wait_applied()).unwrap();
         });
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + EXPECTED_EVENT_BOUND;
         while writeback.activity_waiter_count() == 0 {
             assert!(
                 Instant::now() < deadline,
@@ -8875,7 +8887,7 @@ mod tests {
         assert_eq!(writeback.highest_acknowledged(), 0);
         assert_eq!(
             returned_rx
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(EXPECTED_EVENT_BOUND)
                 .expect("sequence one did not wake the dense apply barrier")
                 .unwrap(),
             2
@@ -9274,7 +9286,7 @@ mod tests {
     fn wait_until_ready<B: Blobs>(writeback: &Writeback<B>, raw_sequence: u64) {
         let sequence = CommitSeq::new(raw_sequence).expect("test sequence is nonzero");
         let token = QueueToken::new(sequence);
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + EXPECTED_EVENT_BOUND;
         let mut state = lock_recover(&writeback.state);
         loop {
             writeback.import_bound_locked(&mut state);
@@ -9291,7 +9303,7 @@ mod tests {
 
             let remaining = deadline
                 .checked_duration_since(Instant::now())
-                .expect("publication did not make its slot Ready within one second");
+                .expect("publication did not make its slot Ready within the expected-event bound");
             let (next_state, timeout) = writeback
                 .acknowledgement_changed
                 .wait_timeout(state, remaining)
@@ -9306,7 +9318,7 @@ mod tests {
                         || writeback
                             .publication_cell(sequence)
                             .is_published(sequence, writeback.publication_shift),
-                    "publication did not make its slot Ready within one second"
+                    "publication did not make its slot Ready within the expected-event bound"
                 );
                 return;
             }
@@ -9314,7 +9326,7 @@ mod tests {
     }
 
     fn wait_for_acknowledgement_waiters<B: Blobs>(writeback: &Writeback<B>, expected: usize) {
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + EXPECTED_EVENT_BOUND;
         while writeback.acknowledgement_waiters.load(Ordering::SeqCst) < expected {
             assert!(
                 Instant::now() < deadline,
@@ -9683,7 +9695,7 @@ mod tests {
 
             second.pin_unknown().unwrap();
             assert!(matches!(
-                published_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                published_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap(),
                 Err(ResolveError::BlockedByPriorUnknown {
                     sequence,
                     prior_unknown,
@@ -10091,7 +10103,7 @@ mod tests {
                     if sequence.get() == 1
             ));
             assert!(matches!(
-                published_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                published_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap(),
                 Err(ResolveError::BlockedByPriorRecordFailure {
                     sequence,
                     prior_failure,
@@ -10130,7 +10142,7 @@ mod tests {
                 if sequence.get() == 1
         ));
         let (sequence, source) = result_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(EXPECTED_EVENT_BOUND)
             .unwrap()
             .expect("backpressured reservation observed the permanent failure");
         assert_eq!(sequence.get(), 1);
@@ -10206,7 +10218,7 @@ mod tests {
             bound_first.publish().unwrap();
             assert_eq!(
                 published_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
@@ -10280,7 +10292,7 @@ mod tests {
             second.publish().unwrap();
             assert_eq!(
                 published_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
@@ -10339,7 +10351,7 @@ mod tests {
             first.publish().unwrap();
             assert_eq!(
                 published_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
@@ -10429,7 +10441,7 @@ mod tests {
             first.publish().unwrap();
             assert_eq!(
                 second_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
@@ -10437,7 +10449,7 @@ mod tests {
             );
             assert_eq!(
                 third_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
@@ -10616,7 +10628,7 @@ mod tests {
 
         assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
         first.pin_unknown().unwrap();
-        assert!(result_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert!(result_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap());
         producer.join().unwrap();
     }
 
@@ -10662,7 +10674,7 @@ mod tests {
         });
 
         returned_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(EXPECTED_EVENT_BOUND)
             .expect("a Ready front must not wait for a second notification");
         thread.join().unwrap();
     }
@@ -10685,7 +10697,7 @@ mod tests {
             returned_tx.send(()).unwrap();
         });
 
-        let registration_deadline = Instant::now() + Duration::from_secs(1);
+        let registration_deadline = Instant::now() + EXPECTED_EVENT_BOUND;
         while writeback.activity_waiter_count() == 0 {
             assert!(
                 Instant::now() < registration_deadline,
@@ -10695,7 +10707,7 @@ mod tests {
         }
         pending.publish().unwrap();
         returned_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(EXPECTED_EVENT_BOUND)
             .expect("publication did not wake the explicit apply waiter");
         waiter.join().unwrap();
         assert_eq!(writeback.activity_waiter_count(), 0);
@@ -10715,10 +10727,13 @@ mod tests {
         );
         first.publish().unwrap();
         assert_eq!(writeback.activity_waiters.load(Ordering::SeqCst), 0);
+        // A waiter that missed the earlier publication sleeps for the whole
+        // timeout. Compare against half of it, not a few milliseconds, so a
+        // descheduled test thread cannot fail this check.
         let started = Instant::now();
-        writeback.wait_for_activity(Duration::from_secs(1));
+        writeback.wait_for_activity(EXPECTED_EVENT_BOUND);
         assert!(
-            started.elapsed() < Duration::from_millis(100),
+            started.elapsed() < EXPECTED_EVENT_BOUND / 2,
             "post-registration recheck slept after an earlier publication"
         );
         assert!(matches!(
@@ -10735,10 +10750,12 @@ mod tests {
         let (returned_tx, returned_rx) = mpsc::channel();
         let waiter_writeback = Arc::clone(&writeback);
         let waiter = std::thread::spawn(move || {
-            waiter_writeback.wait_for_activity(Duration::from_secs(10));
+            // Longer than the receiver's bound below: a waiter that missed
+            // the wake must still be asleep when that bound expires.
+            waiter_writeback.wait_for_activity(EXPECTED_EVENT_BOUND * 2);
             returned_tx.send(()).unwrap();
         });
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + EXPECTED_EVENT_BOUND;
         while writeback.activity_waiters.load(Ordering::SeqCst) == 0 {
             assert!(
                 Instant::now() < deadline,
@@ -10748,7 +10765,7 @@ mod tests {
         }
         second.publish().unwrap();
         returned_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(EXPECTED_EVENT_BOUND)
             .expect("registered activity waiter missed healthy publication");
         waiter.join().unwrap();
         assert_eq!(writeback.activity_waiters.load(Ordering::SeqCst), 0);
@@ -10770,8 +10787,8 @@ mod tests {
                 waiter_writeback.wait_for_apply_progress(2);
                 returned_tx.send(()).unwrap();
             });
-            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(1);
+            started_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap();
+            let deadline = Instant::now() + EXPECTED_EVENT_BOUND;
             while writeback.activity_waiters.load(Ordering::SeqCst) == 0 {
                 assert!(
                     Instant::now() < deadline,
@@ -10795,13 +10812,13 @@ mod tests {
             first.publish().unwrap();
             assert_eq!(
                 published_rx
-                    .recv_timeout(Duration::from_secs(1))
+                    .recv_timeout(EXPECTED_EVENT_BOUND)
                     .unwrap()
                     .unwrap()
                     .get(),
                 2
             );
-            returned_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            returned_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap();
             publisher.join().unwrap();
             waiter.join().unwrap();
         });
@@ -10834,7 +10851,7 @@ mod tests {
             writeback.process_front(),
             ProcessOutcome::Advanced
         ));
-        reserved_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        reserved_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap();
         producer.join().unwrap();
         assert_eq!(writeback.queue_len(), 0);
         assert_eq!(writeback.detached_len(), 0);
@@ -10858,7 +10875,7 @@ mod tests {
 
         assert!(reserved_rx.recv_timeout(Duration::from_millis(30)).is_err());
         drop(first);
-        reserved_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        reserved_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap();
         producer.join().unwrap();
         assert_eq!(writeback.detached_len(), 0);
         assert_eq!(writeback.queue_len(), 0);
@@ -10925,7 +10942,7 @@ mod tests {
             ProcessOutcome::Advanced
         ));
         assert!(
-            result_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            result_rx.recv_timeout(EXPECTED_EVENT_BOUND).unwrap(),
             "the capacity waiter did not reach legacy tail exhaustion"
         );
         waiter.join().unwrap();
@@ -10986,7 +11003,7 @@ mod tests {
     impl ApplyThenBlockBlobs {
         fn wait_until_applied(&self) -> bool {
             let mut gate = self.gate.lock().unwrap();
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            let deadline = std::time::Instant::now() + EXPECTED_EVENT_BOUND;
             while !gate.0 {
                 let now = std::time::Instant::now();
                 if now >= deadline {
@@ -11060,7 +11077,7 @@ mod tests {
                 None
             };
             let snapshot_while_blocked =
-                reached_backend.then(|| snapshot_rx.recv_timeout(Duration::from_secs(1)));
+                reached_backend.then(|| snapshot_rx.recv_timeout(EXPECTED_EVENT_BOUND));
 
             // Release before asserting or joining. If a regression held the
             // queue-state mutex across backend IO, the observer above times
@@ -11110,7 +11127,7 @@ mod tests {
                 bound_tx.send(second.sequence()).unwrap();
                 second.publish().unwrap();
             });
-            let bound = bound_rx.recv_timeout(Duration::from_secs(1));
+            let bound = bound_rx.recv_timeout(EXPECTED_EVENT_BOUND);
             // Always release the consumer before asserting, so a regression
             // reports a failure instead of hanging the scoped-thread join.
             backend.release();
