@@ -62,6 +62,14 @@ public/reference, test/benchmark, or dormant. Do not claim the entire directory
 safe by checking only a scalar demo or silently excluding a public datatype.
 Dormant-code retirement is a separate decision, not an automatic cleanup here.
 
+Update, 2026-11-22: that decision has been taken. The dormant and
+test/benchmark files (`TCounter`, `TVector`, `TArray`, the predicate types,
+`RBTree`, the queues, Boosting, the `unit-t*` programs and the benchmark
+programs; 64 files) were deleted. The last commit that has them is `fd3ed37e1`;
+read one with, for example, `git show fd3ed37e1:src/mako/sto/TCounter.hh`. Of
+the reference datatypes named above only `TBox` remains (used by
+`tests/test_silo_runtime.cc`). `src/mako/sto` now holds 37 files.
+
 At the time of this proposal, it excluded changes to the native Rust STO's
 naming, storage layout, backend selection and public behavior. That historical
 scope restriction does not constrain the separately approved native alignment.

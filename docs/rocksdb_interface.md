@@ -11,8 +11,8 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 > **Backend terminology:** Current Mako transactions use STO `Transaction`
 > with MassTrans/Masstree through `mbta_wrapper`. Older revisions of this
 > document used “Silo” as shorthand for that lineage. The original Silo
-> `transaction_base`/`dbtuple`/`txn_btree` engine is retired and guarded
-> against compilation. Literal `SiloRuntime` references below remain current:
+> `transaction_base`/`dbtuple`/`txn_btree` engine has been removed from the
+> tree. Literal `SiloRuntime` references below remain current:
 > it is live allocator, RCU, and Masstree runtime support for STO/MassTrans.
 >
 > **Supported local-facade backend:** `Options::storage_engine` must be `"cpp"`

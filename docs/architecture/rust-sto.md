@@ -448,9 +448,11 @@ as though release had succeeded.
 
 #### TxnCounter and TCounter: one composed delta
 
-Read [`txn_counter.rs`](../../crates/sto-core/src/txn_counter.rs) beside
-[`TCounter.hh`](../../src/mako/sto/TCounter.hh). Rust deliberately implements a
-smaller counter: `get` and `increment`, with wrapping `i64` deltas. It does not
+Read [`txn_counter.rs`](../../crates/sto-core/src/txn_counter.rs) beside the
+former C++ `src/mako/sto/TCounter.hh`. That file was removed from the tree; read
+it with `git show fd3ed37e1:src/mako/sto/TCounter.hh`. The `TCounter.hh` line
+citations below refer to that commit. Rust deliberately implements a smaller
+counter: `get` and `increment`, with wrapping `i64` deltas. It does not
 implement C++ counter assignment or interval predicates.
 
 | Step | C++ `TCounter<T, W>` | Rust `TxnCounter` |
@@ -5461,22 +5463,18 @@ Required tests include:
 
 ### N.2 Legacy semantic oracle
 
-The stronger existing programs, rather than only current CMake smoke tests,
-should seed the compatibility suite:
+The stronger historical programs, rather than only current CMake smoke tests,
+should seed the compatibility suite. They were removed from the tree; read one
+with `git show fd3ed37e1:src/mako/sto/<name>`:
 
-- [`unit-tgeneric.cc`](../../src/mako/sto/unit-tgeneric.cc): generic reads,
-  writes, opacity, non-opacity, and read-your-writes;
-- [`unit-tcounter.cc`](../../src/mako/sto/unit-tcounter.cc): commutative updates
-  and optimistic predicates;
-- [`unit-tarray.cc`](../../src/mako/sto/unit-tarray.cc) and
-  [`unit-tvector.cc`](../../src/mako/sto/unit-tvector.cc): indexed conflicts,
-  iterators, and predicate composition;
-- [`rbtree.cc`](../../src/mako/sto/rbtree.cc): insert/delete/reinsert and abort
-  cleanup;
-- [`single.cc`](../../src/mako/sto/single.cc): MassTrans point/range schedules;
-  and
-- [`concurrent.cc`](../../src/mako/sto/concurrent.cc): randomized concurrent
-  workloads.
+- `unit-tgeneric.cc`: generic reads, writes, opacity, non-opacity, and
+  read-your-writes;
+- `unit-tcounter.cc`: commutative updates and optimistic predicates;
+- `unit-tarray.cc` and `unit-tvector.cc`: indexed conflicts, iterators, and
+  predicate composition;
+- `rbtree.cc`: insert/delete/reinsert and abort cleanup;
+- `single.cc`: MassTrans point/range schedules; and
+- `concurrent.cc`: randomized concurrent workloads.
 
 The native crate MUST add Rust version-word parity tests against the committed
 C++ `TransactionTid` behavior. Those tests are a bit-level migration oracle,

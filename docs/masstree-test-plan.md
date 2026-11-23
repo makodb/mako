@@ -2,8 +2,9 @@
 
 Scope: `src/masstree/` only. Excludes the live SiloRuntime support layer
 (`test_silo_runtime.cc`, `test_silo_multi_site_stress.cc`) and excludes
-the STO transaction suite under `src/mako/sto/`. The original Silo
-transaction engine is retired and is not what those SiloRuntime tests cover.
+the STO tests (`test_sto_transaction*.cc`, `test_silo_nontxn_api.cc`,
+`src/mako/sto/unit-rcu.cc`). The original Silo transaction engine is retired
+and is not what those SiloRuntime tests cover.
 
 ## Current state (baseline)
 

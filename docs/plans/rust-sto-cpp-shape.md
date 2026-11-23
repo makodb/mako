@@ -909,8 +909,10 @@ representations of the same protocol, not alternative public object models.
 The source comparison uses [TObject](../../src/mako/sto/Interface.hh),
 [TransItem/TransProxy](../../src/mako/sto/TransItem.hh),
 [Transaction](../../src/mako/sto/Transaction.hh), and the
-[TBox](../../src/mako/sto/TBox.hh) and [TCounter](../../src/mako/sto/TCounter.hh)
-adapters. It is not a promise to port all historical datatypes or capabilities.
+[TBox](../../src/mako/sto/TBox.hh) and TCounter adapters (`TCounter` was
+`src/mako/sto/TCounter.hh`, since removed; read it with
+`git show fd3ed37e1:src/mako/sto/TCounter.hh`). It is not a promise to port all
+historical datatypes or capabilities.
 
 ## Target concepts and bounded naming changes
 

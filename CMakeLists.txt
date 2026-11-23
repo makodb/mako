@@ -1246,96 +1246,6 @@ add_custom_command(
   VERBATIM
 )
 
-# The original Silo transaction engine is retained as source-only history.
-# Production Mako uses STO/MassTrans through storage/mbta_wrapper.hh. Keep the
-# explicit manifest and configure-time assertion so an archived source cannot
-# silently drift back into libmako. The headers also fail closed through
-# src/mako/retired_silo_engine.h.
-set(RETIRED_SILO_ENGINE_SOURCES
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/btree.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/tuple.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_btree.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/txn_proto2_impl.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/${W}/test.cc"
-)
-set(RETIRED_SILO_ENGINE_REALPATHS "")
-foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
-  file(REAL_PATH "${RETIRED_SILO_ENGINE_SOURCE}"
-    RETIRED_SILO_ENGINE_REALPATH)
-  list(APPEND RETIRED_SILO_ENGINE_REALPATHS
-    "${RETIRED_SILO_ENGINE_REALPATH}")
-endforeach()
-
-function(COLLECT_BUILDSYSTEM_TARGETS DIRECTORY_PATH OUTPUT_VARIABLE)
-  get_property(LOCAL_TARGETS DIRECTORY "${DIRECTORY_PATH}"
-    PROPERTY BUILDSYSTEM_TARGETS)
-  set(ALL_TARGETS ${LOCAL_TARGETS})
-
-  get_property(CHILD_DIRECTORIES DIRECTORY "${DIRECTORY_PATH}"
-    PROPERTY SUBDIRECTORIES)
-  foreach(CHILD_DIRECTORY IN LISTS CHILD_DIRECTORIES)
-    COLLECT_BUILDSYSTEM_TARGETS("${CHILD_DIRECTORY}" CHILD_TARGETS)
-    list(APPEND ALL_TARGETS ${CHILD_TARGETS})
-  endforeach()
-
-  set(${OUTPUT_VARIABLE} "${ALL_TARGETS}" PARENT_SCOPE)
-endfunction()
-
-function(ASSERT_NO_RETIRED_SILO_SOURCES)
-  COLLECT_BUILDSYSTEM_TARGETS("${CMAKE_SOURCE_DIR}" ALL_BUILD_TARGETS)
-  foreach(BUILD_TARGET IN LISTS ALL_BUILD_TARGETS)
-    get_target_property(TARGET_SOURCE_DIR "${BUILD_TARGET}" SOURCE_DIR)
-    get_target_property(TARGET_SOURCES "${BUILD_TARGET}" SOURCES)
-    if(NOT TARGET_SOURCES OR TARGET_SOURCES STREQUAL "TARGET_SOURCES-NOTFOUND")
-      continue()
-    endif()
-
-    foreach(TARGET_SOURCE IN LISTS TARGET_SOURCES)
-      # Generator expressions cannot be canonicalized at configure time, so
-      # reject any expression containing an absolute, source-root-relative,
-      # or target-source-relative spelling of an archived file before the
-      # normal real-path comparison below.
-      foreach(RETIRED_SILO_ENGINE_SOURCE IN LISTS RETIRED_SILO_ENGINE_SOURCES)
-        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_ROOT
-          "${CMAKE_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
-        file(RELATIVE_PATH RETIRED_SILO_SOURCE_FROM_TARGET
-          "${TARGET_SOURCE_DIR}" "${RETIRED_SILO_ENGINE_SOURCE}")
-        foreach(RETIRED_SILO_SOURCE_SPELLING
-            "${RETIRED_SILO_ENGINE_SOURCE}"
-            "${RETIRED_SILO_SOURCE_FROM_ROOT}"
-            "${RETIRED_SILO_SOURCE_FROM_TARGET}")
-          string(FIND "${TARGET_SOURCE}" "${RETIRED_SILO_SOURCE_SPELLING}"
-            RETIRED_SILO_SOURCE_TEXT_INDEX)
-          if(NOT RETIRED_SILO_SOURCE_TEXT_INDEX EQUAL -1)
-            message(FATAL_ERROR
-              "Target ${BUILD_TARGET} attempts to compile the retired "
-              "original Silo engine source through '${TARGET_SOURCE}': "
-              "${RETIRED_SILO_ENGINE_SOURCE}")
-          endif()
-        endforeach()
-      endforeach()
-
-      if(TARGET_SOURCE MATCHES "\\$<" OR TARGET_SOURCE MATCHES ">")
-        continue()
-      endif()
-      cmake_path(ABSOLUTE_PATH TARGET_SOURCE
-        BASE_DIRECTORY "${TARGET_SOURCE_DIR}" NORMALIZE
-        OUTPUT_VARIABLE CANONICAL_TARGET_SOURCE)
-      if(EXISTS "${CANONICAL_TARGET_SOURCE}")
-        file(REAL_PATH "${CANONICAL_TARGET_SOURCE}" CANONICAL_TARGET_SOURCE)
-      endif()
-      list(FIND RETIRED_SILO_ENGINE_REALPATHS
-        "${CANONICAL_TARGET_SOURCE}" RETIRED_SILO_SOURCE_INDEX)
-      if(NOT RETIRED_SILO_SOURCE_INDEX EQUAL -1)
-        message(FATAL_ERROR
-          "Target ${BUILD_TARGET} attempts to compile the retired original "
-          "Silo engine source: ${CANONICAL_TARGET_SOURCE}")
-      endif()
-    endforeach()
-  endforeach()
-endfunction()
-
 # Source files
 set(MAKO_SRCFILES
   "${W}/allocator.cc"
@@ -1359,8 +1269,6 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/queue.cc"
   "${W}/benchmarks/tpcc.cc"
   "${W}/benchmarks/rpc_setup.cc"
-  #"${W}/benchmarks/tpcc_simple.cc"
-  #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
   "${W}/sto/Transaction.cc"
   "${W}/sto/MakoTimestampClock.cc"
@@ -2133,9 +2041,6 @@ endif()
 
 # Add the mako library
 add_library(mako STATIC ${MAKO_SRCFILES})
-# Run after every subdirectory has been configured so no current or future
-# target can hide a retired source behind target_sources() or a helper library.
-cmake_language(DEFER CALL ASSERT_NO_RETIRED_SILO_SOURCES)
 # masstree/compiler.hh does a bare `#include "config.h"`. Put the masstree
 # generated-config dir at the FRONT of this target's include path so it
 # resolves to masstree's own config.h and not src/deptran/config.h (also on
@@ -4126,7 +4031,8 @@ if(BUILD_TESTS)
     # LIVE SILO SUPPORT + STO TESTS (merged from tests/ directory)
     #
     # "Silo" here names shared support such as allocator, RCU, and
-    # SiloRuntime. The original Silo transaction engine is quarantined above.
+    # SiloRuntime. The original Silo transaction engine has been removed from
+    # the tree.
 
     # Test: Silo Varint (Utility)
     add_executable(test_silo_varint tests/test_silo_varint.cc)
