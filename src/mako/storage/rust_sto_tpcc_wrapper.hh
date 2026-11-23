@@ -108,6 +108,12 @@ public:
   bool shard_scan(const std::string &start_key, const std::string *end_key,
                   oi_scan_callback &callback, str_arena *arena) override;
 
+  // @unsafe - Sharding storage host only: the borrowed native table of an
+  // owner-local index, nullptr for a remote facade. Ownership stays here.
+  sto_tpcc_table *sharding_host_table() const noexcept {
+    return is_remote_ ? nullptr : table_;
+  }
+
 private:
   // @unsafe - Colocated replicated rows still use their owning participant.
   bool routes_remotely() const noexcept;
@@ -206,6 +212,13 @@ public:
   void replay_thread_init() override;
   void replay_thread_select_partition(int partition) override;
   void observe_replay_timestamp(uint32_t source_time_term) override;
+
+  // @unsafe - Sharding storage host only: this OS thread's native handle after
+  // thread_init, or nullptr when the thread is unattached or an adapter
+  // transaction is active on it. Ownership stays with the thread.
+  static sto_tpcc_thread *sharding_host_idle_thread() noexcept {
+    return tls_transaction_active_ ? nullptr : tls_thread_;
+  }
 
 private:
   // Table IDs are in [1, kTableIdLimit); tables_by_id_ has one slot for each.

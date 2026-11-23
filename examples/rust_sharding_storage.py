@@ -4,9 +4,10 @@
 Each scenario is one run of build/rust_sharding_storage_fixture against a real
 Rust-engine database, the real sharding crate and real srpc. This driver only
 starts the process and compares what it reported with what the scenario must
-report: the exact set of failed checks, the summary line, the exit code and
-the required standard-error lines. A scenario named red-* injects or keeps a
-defect, and its expected result is the failure.
+report: the state of every check (ok, FAILED with its detail, or SKIPPED, and
+no check missing), the summary line, the exit code, the standard-error lines
+that must be there and those that must not. A scenario named red-* injects or
+keeps a defect, and its expected result is the failure.
 
     python3 examples/rust_sharding_storage.py [--only SCENARIO]
 """
@@ -26,7 +27,7 @@ BINARY = BUILD / "rust_sharding_storage_fixture"
 LOGS = BUILD / "rust-sharding-storage"
 PROCESS_TIMEOUT_SECONDS = 180
 
-CALLS = (r"rust_sharding_fixture: calls owner={owner}"
+CALLS = (r"^rust_sharding_fixture: calls owner={owner}"
          r" scan_next={scan} scan_next_ok={scan_ok} scan_next_last={scan_last}"
          r" put={put} put_ok={put_ok} put_last={put_last}"
          r" remove={remove} remove_ok={remove_ok} remove_last={remove_last}$")
@@ -40,13 +41,97 @@ def calls(owner, scan, scan_ok, scan_last, put="0", put_ok="0", put_last="none",
                         remove_ok=remove_ok, remove_last=remove_last)
 
 
+def epochs(owner, cuts="0", busy="0", ok="0"):
+    """A pattern for the fixture's per-owner line of forwarded epoch calls."""
+    return (rf"^rust_sharding_fixture: epochs owner={owner} cuts={cuts}"
+            rf" drained_busy={busy} drained_ok={ok} drained_other=0$")
+
+
+def moved(rows):
+    """Storage calls of a committed migration of `rows` source rows.
+
+    The destination starts with two stale rows in the range: m0007, which the
+    source also has, and m9999, which it has not.
+
+    Source: precopy and the final capture each read every row and then get
+    NOT_FOUND (1); the cleanup after the commit does the same and removes each
+    row once. Nothing is ever put on the source.
+    Destination: precopy puts every row, m0007 among them. The final copy then
+    reads every row it holds, finds each equal to the source's and puts
+    nothing, removes m9999, and ends on NOT_FOUND.
+    """
+    return [
+        calls(0, scan=3 * (rows + 1), scan_ok=3 * rows, scan_last="1",
+              remove=rows, remove_ok=rows, remove_last="0"),
+        calls(1, scan=rows + 2, scan_ok=rows + 1, scan_last="1",
+              put=rows, put_ok=rows, put_last="0", remove="1", remove_ok="1", remove_last="0"),
+    ]
+
+
+# Standard-error lines that only the Rust storage callbacks write: the C++
+# glue when the crate's storage thread of an owner enters and leaves, and the
+# Rust verbs the first time each runs on that thread. They show that the Rust
+# functions ran, which the counts of the fixture's wrapper cannot.
+ENTERED_AND_LEFT = [
+    r"^rust_sharding_host: entered owner=0 slot=\d+$",
+    r"^rust_sharding_host: entered owner=1 slot=\d+$",
+    r"^rust_sharding_host: left owner=0$",
+    r"^rust_sharding_host: left owner=1$",
+    r"^rust_sharding_fixture: threads owner=0 enter=1 enter_ok=1 leave=1 attached_after_leave=0$",
+    r"^rust_sharding_fixture: threads owner=1 enter=1 enter_ok=1 leave=1 attached_after_leave=0$",
+]
+FIRST_USE_COMMITTED = [
+    r"^mako_sto_shard_host: first scan_next owner=0 table=1001$",
+    r"^mako_sto_shard_host: first scan_next owner=1 table=1001$",
+    r"^mako_sto_shard_host: first put owner=1 table=1001$",
+    r"^mako_sto_shard_host: first remove owner=0 table=1001$",
+    r"^mako_sto_shard_host: first remove owner=1 table=1001$",
+]
+# No passing run may print these: a contained panic, an engine handle that
+# could not be released, a refusal or an indefinite outcome inside a verb, a
+# requirement of the fixture that did not hold, or a put on the source.
+NEVER_WHEN_PASSING = [
+    r"panicked at",
+    r"^rust_sharding_host: .* failed",
+    r"^mako_sto_shard_host: .*(refused|contained a panic|not definite)",
+    r"SETUP ERROR",
+    r"^mako_sto_shard_host: first put owner=0 ",
+]
+
+BEFORE_MIGRATION = ["tick-running", "registration-guarded", "open-registered-only",
+                    "unentered-thread-refused"]
+AFTER_COMMIT = ["route-moved", "destination-image", "stale-collide-replaced",
+                "stale-extra-removed", "destination-outside-untouched", "source-range-empty",
+                "source-outside-untouched", "callbacks-ran", "no-pin-left"]
+
 # Per scenario:
-#   exit     the exit code
-#   summary  PASS or FAIL
-#   failed   check name -> pattern its detail must match; the names are the
-#            exact set of checks that may report FAILED
-#   stderr   patterns that must each match one line of standard error
+#   exit       the exit code
+#   summary    PASS or FAIL
+#   ok         the checks that must report ok
+#   failed     check name -> pattern its detail must match
+#   skipped    the checks that must report SKIPPED
+#              (ok, failed and skipped together are every check the run may
+#              print; a check that is missing is a difference like any other)
+#   stderr     patterns that must each match exactly one line of standard error
+#   forbidden  patterns that no line of standard error may match
 SCENARIOS = {
+    # ["", "n") moves from owner 0 to owner 1 on the Rust storage callbacks:
+    # 605 rows in two capture pages.
+    "migrate": {
+        "exit": 0,
+        "summary": "PASS",
+        "ok": BEFORE_MIGRATION + ["outcome-committed"] + AFTER_COMMIT
+              + ["ordered-scan-agrees", "threads-left"],
+        "failed": {},
+        "skipped": [],
+        "stderr": ENTERED_AND_LEFT + FIRST_USE_COMMITTED + moved(605) + [
+            # One cut on the source at Freeze, and one OK answer once it has
+            # drained; the destination takes no cut.
+            epochs(0, cuts="1", busy=r"\d+", ok="1"),
+            epochs(1),
+        ],
+        "forbidden": NEVER_WHEN_PASSING,
+    },
     # The C++ storage callbacks, unchanged, on a Rust-engine database.
     #
     # The C++ scan finds no MBTA table behind the handle and answers IO (6)
@@ -58,7 +143,10 @@ SCENARIOS = {
     "red-baseline": {
         "exit": 1,
         "summary": "FAIL",
+        "ok": ["tick-running"],
         "failed": {"outcome-committed": r"outcome=pending$"},
+        "skipped": ["registration-guarded", "open-registered-only", "unentered-thread-refused"]
+                   + AFTER_COMMIT,
         "stderr": [
             # The source's scan was reached and refused; nothing was put or
             # removed. Without this line "pending" could come from a migration
@@ -68,6 +156,8 @@ SCENARIOS = {
             # at least; it is retried every 20 ms).
             calls(1, scan=r"[1-9]\d+", scan_ok="0", scan_last="6"),
         ],
+        # The Rust storage callbacks are not installed here.
+        "forbidden": [r"^rust_sharding_host: ", r"^mako_sto_shard_host: "],
     },
 }
 
@@ -159,10 +249,28 @@ def compare(scenario, expected, code, out_path, err_path):
         elif not re.search(pattern, failed[name]):
             differences.append(f"check {name} FAILED with '{failed[name]}', "
                                f"expected a detail matching '{pattern}'")
+    # Every other check has one expected state, and no other check may appear.
+    for state, names in (("ok", expected["ok"]), ("SKIPPED", expected["skipped"])):
+        for name in names:
+            seen = checks.get(name, ("not reported", ""))[0]
+            if seen not in (state, "FAILED"):
+                differences.append(f"check {name} is {seen}, expected {state}")
+    known = set(expected["ok"]) | set(expected["skipped"]) | set(expected["failed"])
+    for name in sorted(set(checks) - set(failed) - known):
+        differences.append(f"check {name} is {checks[name][0]}, expected it not to be reported")
 
     for pattern in expected["stderr"]:
-        if not any(re.search(pattern, line) for line in err_lines):
+        matches = sum(1 for line in err_lines if re.search(pattern, line))
+        if matches == 0:
             differences.append(f"no standard-error line matches '{pattern}'")
+        elif matches > 1:
+            differences.append(f"{matches} standard-error lines match '{pattern}', expected one")
+    for pattern in expected["forbidden"]:
+        for line in err_lines:
+            if re.search(pattern, line):
+                differences.append(f"standard error has '{line.strip()[:160]}', "
+                                   f"which matches the forbidden '{pattern}'")
+                break
 
     reported = "; ".join(f"{name} FAILED {detail}" for name, detail in sorted(failed.items()))
     return differences, reported or "no failed check"

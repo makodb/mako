@@ -3188,8 +3188,12 @@ if(MAKO_CARGO_EXECUTABLE)
 
     # Rust-engine sharding storage fixture: one scenario per process, driven
     # by examples/rust_sharding_storage.py. It is not a CTest.
+    # rust_sto_sharding_host.cc is FFI and thread-registration glue around the
+    # Rust storage verbs; it is compiled only here and is in no borrow_check
+    # list, like rust_sto_tpcc_wrapper.cc.
     add_executable(rust_sharding_storage_fixture EXCLUDE_FROM_ALL
         examples/rust_sharding_storage_fixture.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_include_directories(rust_sharding_storage_fixture PRIVATE
         ${MASSTREE_CONFIG_INCLUDE_DIR}
@@ -3204,6 +3208,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${BENCH_CXXFLAGS})
     mako_force_include_masstree_config(
         examples/rust_sharding_storage_fixture.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(rust_sharding_storage_fixture PRIVATE
         CONFIG_H="${CONFIG_H}"
