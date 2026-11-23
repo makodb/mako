@@ -391,7 +391,7 @@ public:
     }
   }
 
-  // these are wrappers for concurrent.cc and other
+  // these are wrappers for the
   // frameworks we use the hashtable in
   Value transGet(Key k) {
     Value v;

@@ -172,7 +172,7 @@ BUILD_DIR=build bash examples/test_1shard_replication_raft.sh 6
 The maintained script generates isolated configs and launches the leader and
 followers with the current CLI. There is no `--db-type`: Mako always uses
 STO/MassTrans, while Paxos or Raft selects replication only. The original
-Silo/NDB transaction engine is retired and guarded against compilation.
+Silo/NDB transaction engine has been removed.
 
 ---
 

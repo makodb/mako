@@ -2,8 +2,8 @@
 
 > **Storage status:** Production Mako uses STO `Transaction` with MassTrans
 > through `storage/mbta_wrapper.hh`. The original Silo
-> `txn`/`txn_btree`/`txn_proto2` engine is retained only as guarded source
-> history and cannot be compiled. `SiloRuntime`, allocator, RCU, and Masstree
+> `txn`/`txn_btree`/`txn_proto2` engine has been removed (last present at
+> commit fd3ed37e1). `SiloRuntime`, allocator, RCU, and Masstree
 > support remain live; see [`RETIRED_SILO_ENGINE.md`](RETIRED_SILO_ENGINE.md).
 
 ### How to setup environment step by step

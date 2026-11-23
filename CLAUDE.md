@@ -111,9 +111,9 @@ includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
 Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
 unsupported. The former standalone DepTran OCC implementation is also retired;
 Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
-original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine is likewise
-retired, source-guarded, and neither selectable nor runnable. Mako always uses
-STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
+original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine has been removed
+(last present at commit fd3ed37e1); it is neither selectable nor runnable. Mako
+always uses STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
 `SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
 engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Raft** (`src/deptran/raft/`): the supported and tested replication engine, and
@@ -497,7 +497,7 @@ New protocols should be added under `src/deptran/` following the existing patter
 
 ### Modifying Benchmarks
 Benchmarks are in `src/mako/benchmarks/`: one file per workload (`tpcc.cc`,
-`tpcc_simple.cc`, `ycsb.cc`, `bid.cc`, `queue.cc`), run by the `dbtest` driver
+`bid.cc`, `queue.cc`), run by the `dbtest` driver
 (`dbtest.cc`) through the worker framework in `bench.cc`. There is no
 `src/bench/` directory.
 
