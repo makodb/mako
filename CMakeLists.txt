@@ -2906,6 +2906,7 @@ if(MAKO_CARGO_EXECUTABLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/build.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/shard-host-core/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/build.rs"
@@ -2918,7 +2919,8 @@ if(MAKO_CARGO_EXECUTABLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mako-engine-api/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/src/*.rs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs")
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/shard-host-core/src/*.rs")
     # LTO is off for this archive, and that is a link requirement, not a
     # tuning choice. Every binary that links it also links `mako`, which now
     # carries the native sharding and Raft staticlibs. Rust staticlibs can

@@ -32,6 +32,7 @@ members = [
     "mtx-sys",
     "raft-host",
     "rocksdb-raft-service",
+    "shard-host-core",
     "sto-core",
     "sto-masstree",
     "sto-rocksdb",

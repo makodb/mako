@@ -14,8 +14,23 @@
 //! Every export contains panics and answers with a sharding status. An engine
 //! outcome that is not definite stops the process, because the callback
 //! contract has no status for "may or may not have happened".
+//!
+//! This module is the shell around `shard-host-core`, the crate Verus checks.
+//! The decisions that crate holds are made there and only there: what a verb
+//! answers for an engine result (`map_engine`), and which arguments
+//! `scan_next` refuses, when a cursor ends the range and where the engine's
+//! scan begins (`scan_flags_valid`, `scan_arguments`). The module adds no rule
+//! of its own to them; `scripts/verify_shard_host_core.sh` refuses a second
+//! definition of one of the core's names here.
 use super::*;
 use mako_clock::distributed::DistributedTerm;
+// RETRY is answered only through `map_engine`; the tests name it.
+#[cfg(test)]
+use shard_host_core::SHARD_RETRY;
+use shard_host_core::{
+    map_engine, scan_arguments, scan_flags_valid, Mapped, ScanLower, ScanRefusal, ScanStart, Stage,
+    ENGINE_FATAL, ENGINE_OK, SHARD_EXHAUSTED, SHARD_INVALID, SHARD_IO, SHARD_NOT_FOUND, SHARD_OK,
+};
 use std::{
     ffi::c_void,
     io::Write as _,
@@ -44,27 +59,20 @@ const _: [(); 0] = [(); mem::offset_of!(MakoStoShardBytes, data)];
 #[cfg(target_pointer_width = "64")]
 const _: [(); 8] = [(); mem::offset_of!(MakoStoShardBytes, len)];
 
-// The numbers of `enum MakoShardStatus`. BUSY (4) is not listed: no export
-// returns it.
-const SHARD_OK: u32 = 0;
-const SHARD_NOT_FOUND: u32 = 1;
-const SHARD_RETRY: u32 = 2;
-const SHARD_INVALID: u32 = 3;
-const SHARD_EXHAUSTED: u32 = 5;
-const SHARD_IO: u32 = 6;
+// The verified crate names the engine's statuses by number, because Verus does
+// not evaluate `Status::code` in a constant. The build fails here if one of
+// its numbers is not the engine's.
+const _: () = {
+    assert!(shard_host_core::ENGINE_OK == Status::Ok.code());
+    assert!(shard_host_core::ENGINE_RETRY == Status::Retry.code());
+    assert!(shard_host_core::ENGINE_FATAL == Status::Fatal.code());
+    assert!(shard_host_core::ENGINE_EXHAUSTED == Status::ResourceExhausted.code());
+    assert!(shard_host_core::ENGINE_UNKNOWN == Status::Unknown.code());
+    assert!(shard_host_core::ENGINE_COMMITTED_ERROR == Status::CommittedError.code());
+};
 
-// The engine statuses the protocol exports return, as `i32`.
-const ENGINE_OK: i32 = Status::Ok.code();
+/// The one engine status the verbs read that the mapping does not tell apart.
 const ENGINE_MISS: i32 = Status::Miss.code();
-const ENGINE_RETRY: i32 = Status::Retry.code();
-const ENGINE_FATAL: i32 = Status::Fatal.code();
-const ENGINE_EXHAUSTED: i32 = Status::ResourceExhausted.code();
-const ENGINE_UNKNOWN: i32 = Status::Unknown.code();
-const ENGINE_COMMITTED_ERROR: i32 = Status::CommittedError.code();
-
-// `StoTpccProtocolReport::disposition`.
-const ABORTED: u32 = 1;
-const COMMITTED: u32 = 2;
 
 /// The term of a non-replicated node. Migration is refused on a replicated
 /// one, and the C++ glue refuses to hand these verbs to it.
@@ -147,59 +155,6 @@ unsafe impl Sync for TableEntry {}
 /// Per-entry registration and removal only: several databases of one process
 /// (the Rust tests) register here side by side.
 static TABLES: RwLock<Vec<TableEntry>> = RwLock::new(Vec::new());
-
-/// What a verb answers for an engine result.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Mapped {
-    Shard(u32),
-    /// The outcome is not definite. The process must stop.
-    FailStop,
-}
-
-/// Where an engine status came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Stage {
-    /// A step failed and the closing `finish(.., 0, ..)` has returned OK.
-    Closed,
-    /// The result of `sto_tpcc_protocol_commit`.
-    Commit,
-    /// The result of the committing `finish(.., 1, ..)` of a read-only attempt.
-    ReadOnlyFinish,
-}
-
-/// Maps an engine status and the disposition of its report (0 none, 1
-/// aborted, 2 committed, 3 uncertain) to what the verb answers.
-///
-/// `Shard(SHARD_OK)` means "this step succeeded": the caller answers OK after
-/// `Commit` and goes on with the row or the next lookahead after
-/// `ReadOnlyFinish`. A status that reaches `Closed` belongs to a step that
-/// failed, so OK there is a caller's bug and is never success.
-const fn map_engine(stage: Stage, status: i32, disposition: u32) -> Mapped {
-    match stage {
-        Stage::Closed => map_failure(status),
-        Stage::Commit => match (status, disposition) {
-            (ENGINE_OK, COMMITTED) => Mapped::Shard(SHARD_OK),
-            (ENGINE_RETRY | ENGINE_EXHAUSTED | ENGINE_FATAL, ABORTED) => map_failure(status),
-            // Anything else may or may not have installed the write.
-            _ => Mapped::FailStop,
-        },
-        Stage::ReadOnlyFinish => match (status, disposition) {
-            (ENGINE_OK, COMMITTED) => Mapped::Shard(SHARD_OK),
-            (ENGINE_OK, _) => Mapped::Shard(SHARD_IO),
-            _ => map_failure(status),
-        },
-    }
-}
-
-/// The answer for a failed step whose attempt is known to be aborted.
-const fn map_failure(status: i32) -> Mapped {
-    match status {
-        ENGINE_RETRY => Mapped::Shard(SHARD_RETRY),
-        ENGINE_EXHAUSTED => Mapped::Shard(SHARD_EXHAUSTED),
-        ENGINE_UNKNOWN | ENGINE_COMMITTED_ERROR => Mapped::FailStop,
-        _ => Mapped::Shard(SHARD_IO),
-    }
-}
 
 /// Writes one line to standard error with a single write, so that lines of
 /// other threads cannot split it.
@@ -622,7 +577,7 @@ unsafe fn scan_next(
         ));
         return SHARD_INVALID;
     };
-    if has_hi > 1 || has_after > 1 {
+    if !scan_flags_valid(has_hi, has_after) {
         set_last_error(format_args!(
             "shard host scan_next: has_hi and has_after must be 0 or 1"
         ));
@@ -640,18 +595,20 @@ unsafe fn scan_next(
     let (Some(lo), Some(hi), Some(after_coordinate), Some(after_key)) = spans else {
         return SHARD_INVALID;
     };
-    let hi = (has_hi == 1).then_some(hi);
-    if hi.is_some_and(|hi| lo >= hi) {
-        set_last_error(format_args!("shard host scan_next: the range is empty"));
-        return SHARD_INVALID;
-    }
-    // The coordinate of a raw table's row is its key.
-    if has_after == 1 && after_coordinate != after_key {
-        set_last_error(format_args!(
-            "shard host scan_next: the cursor's coordinate differs from its key"
-        ));
-        return SHARD_INVALID;
-    }
+    let start = match scan_arguments(has_hi, has_after, lo, hi, after_coordinate, after_key) {
+        Ok(start) => start,
+        Err(refusal) => {
+            set_last_error(format_args!(
+                "shard host scan_next: {}",
+                match refusal {
+                    ScanRefusal::Flags => "has_hi and has_after must be 0 or 1",
+                    ScanRefusal::EmptyRange => "the range is empty",
+                    ScanRefusal::CursorIdentity => "the cursor's coordinate differs from its key",
+                }
+            ));
+            return SHARD_INVALID;
+        }
+    };
     // Every refusal comes before the answer for an exhausted range: NOT_FOUND
     // certifies the end of the range and must not stand for an unknown table.
     let Some(entry) = table_for(catalog_table, entered.owner) else {
@@ -661,13 +618,12 @@ unsafe fn scan_next(
     if !unsafe { handle_is_idle(entered.thread) } {
         return SHARD_INVALID;
     }
-    // The cursor is exclusive on the key bytes themselves. A cursor below the
-    // range starts at its lower bound, which is inclusive.
-    let exclusive = has_after == 1 && after_key >= lo;
-    let start = if exclusive { after_key } else { lo };
-    if hi.is_some_and(|hi| start >= hi) {
-        return SHARD_NOT_FOUND;
-    }
+    // Acted on only here, after the refusals above: the cursor is at or
+    // beyond the upper bound.
+    let (first, upper) = match start {
+        ScanStart::Exhausted => return SHARD_NOT_FOUND,
+        ScanStart::Rows { lower, upper } => (lower, upper),
+    };
     log_first_use(FIRST_SCAN_NEXT, "scan_next", entered.owner, catalog_table);
 
     let Ok(term) = DistributedTerm::new(TERM) else {
@@ -675,14 +631,14 @@ unsafe fn scan_next(
     };
     // The newest committed version of every record.
     let visibility = ReadVisibility::latest(term);
-    let upper = hi.map_or(ScanBound::Unbounded, ScanBound::Excluded);
+    let upper = upper.map_or(ScanBound::Unbounded, ScanBound::Excluded);
     // The last deleted key a lookahead walked; the next one starts after it.
     let mut resume: Option<Box<[u8]>> = None;
     loop {
-        let lower = match resume.as_deref() {
-            Some(walked) => ScanBound::Excluded(walked),
-            None if exclusive => ScanBound::Excluded(start),
-            None => ScanBound::Included(start),
+        let lower = match (resume.as_deref(), first) {
+            (Some(walked), _) => ScanBound::Excluded(walked),
+            (None, ScanLower::Excluded(cursor)) => ScanBound::Excluded(cursor),
+            (None, ScanLower::Included(lo)) => ScanBound::Included(lo),
         };
         // SAFETY: The handle is registered and idle; the table is registered.
         match unsafe { lookahead(entered.thread, entry.table, lower, upper, visibility) } {

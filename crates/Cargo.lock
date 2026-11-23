@@ -851,6 +851,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shard-host-core"
+version = "0.0.0"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -931,6 +940,7 @@ version = "0.0.0"
 dependencies = [
  "mako-clock",
  "masstree",
+ "shard-host-core",
  "sto-core",
  "sto-masstree",
 ]
