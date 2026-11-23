@@ -39,6 +39,14 @@
 //   migrate       ["", "n") moves from owner 0 to owner 1 on the Rust storage
 //                 callbacks: 605 rows, two capture pages, one row replaced and
 //                 one removed on the destination.
+//   pinned        As migrate, with an STO epoch older than the cut held by
+//                 another thread: the migration must wait in the drain loop
+//                 until the pin is released.
+//   deleted-keys  ["c", "n") moves; on both owners 5,000 deleted keys lie in
+//                 the range below the first live row.
+//   aborted       As pinned, but the migration is aborted while it waits. The
+//                 expected outcome is "aborted": the source keeps every row
+//                 and the destination's stage range is emptied.
 //   red-baseline  The C++ storage callback table, unchanged, on a Rust-engine
 //                 database, with both table handles registered directly. This
 //                 is the defect the Rust storage callbacks remove, and its
@@ -61,6 +69,7 @@
 #include "storage/rust_sto_sharding_host.hh"
 #include <rusty/cell.hpp>
 #include <rusty/sync/atomic.hpp>
+#include <rusty/thread.hpp>
 
 namespace {
 
@@ -70,16 +79,25 @@ constexpr uint32_t kOwners = 2;
 constexpr uint32_t kNoStatus = UINT32_MAX;
 constexpr unsigned kPollMicros = 100000;
 constexpr unsigned kPollsPerSecond = 1000000 / kPollMicros;
+constexpr unsigned kTombstones = 5000;
+constexpr uint64_t kDrainAnswersWanted = 5;
 const char kRawName[] = "rs_raw";
 const MakoShardTxn kNonce{0x5253545348415244ULL, 1};
 
-enum class Scenario { red_baseline, migrate };
+enum class Scenario { red_baseline, migrate, pinned, deleted_keys, aborted };
 
 // What a scenario does differently from `migrate`.
 struct Shape {
     // false keeps the C++ callback table: the defect of red-baseline.
     bool rust_callbacks;
-    // One adapter scan of each whole table after the migration.
+    // 5,000 deleted keys below the first live row of the range, on both owners.
+    bool tombstones;
+    // Another thread holds an STO epoch older than the cut through the drain loop.
+    bool pin;
+    // The migration is aborted while the pin holds it; "aborted" is the success.
+    bool abort;
+    // One adapter scan of each whole table. Each walked directory entry is a
+    // transaction item, so only a scenario without the tombstones can afford it.
     bool ordered_scan;
     std::string lo;
     std::string hi;
@@ -117,11 +135,24 @@ struct OwnerCounts {
     rusty::sync::atomic::AtomicU64 drained_other{0};
 };
 
+constexpr uint32_t kPinStarting = 0;
+constexpr uint32_t kPinHeld = 1;
+constexpr uint32_t kPinRelease = 2;
+constexpr uint32_t kPinReleased = 3;
+constexpr uint32_t kPinFailed = 4;
+// The thread that holds an STO epoch for `pinned` and `aborted`.
+struct Pin {
+    rusty::sync::atomic::AtomicU32 state{kPinStarting};
+    rusty::sync::atomic::AtomicU64 epoch{0};
+    rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> thread;
+};
+
 // Main-thread state.
 rusty::Cell<const char*> scenario_name{""};
 rusty::Cell<bool> any_check_failed{false};
 abstract_ordered_index* raw[kOwners]{};
 mako::NativeShardingHost* host_of[kOwners]{};
+Pin pin;
 // The callback tables the fixture wraps; written before the nodes start.
 MakoShardHost real[kOwners]{};
 OwnerCounts counts[kOwners];
@@ -139,10 +170,18 @@ const char* const kAfterCommitChecks[] = {
     "callbacks-ran",
     "no-pin-left",
 };
+// Checks that follow an aborted migration in scenario `aborted`.
+const char* const kAfterAbortChecks[] = {
+    "route-unmoved",
+    "source-intact",
+    "destination-stage-clean",
+    "callbacks-ran",
+    "no-pin-left",
+};
 
 // @safe - the scenario's differences from `migrate`.
 Shape shape_of(Scenario scenario) {
-    Shape shape{true, false, std::string(), "n", 60};
+    Shape shape{true, false, false, false, false, std::string(), "n", 60};
     switch (scenario) {
         case Scenario::red_baseline:
             shape.rust_callbacks = false;
@@ -151,6 +190,17 @@ Shape shape_of(Scenario scenario) {
             break;
         case Scenario::migrate:
             shape.ordered_scan = true;
+            break;
+        case Scenario::pinned:
+            shape.pin = true;
+            break;
+        case Scenario::deleted_keys:
+            shape.tombstones = true;
+            shape.lo = "c";
+            break;
+        case Scenario::aborted:
+            shape.pin = true;
+            shape.abort = true;
             break;
     }
     return shape;
@@ -277,6 +327,14 @@ std::string m_key(unsigned row) {
     return text;
 }
 
+// @unsafe - the keys d00000, d00001, ... of the deleted rows of one owner.
+// Formats through stdio.
+std::string tombstone_key(char prefix, unsigned row) {
+    char text[16];
+    snprintf(text, sizeof(text), "%c%05u", prefix, row);
+    return text;
+}
+
 // @safe - owner 0's rows after loading, in bytewise key order. Keys are byte
 // strings: the empty key, embedded NUL bytes and 0xff are all present.
 rusty::Vec<Row> source_rows() {
@@ -321,7 +379,8 @@ size_t rows_in_range(const Shape& shape, const rusty::Vec<Row>& rows) {
 }
 
 // @safe - how many of the destination's rows in the migrated range the source
-// does not have: the rows the final copy must remove there.
+// does not have: the rows a final copy or an abort must remove there beyond
+// the copied ones.
 size_t destination_only_in_range(const Shape& shape, const rusty::Vec<Row>& source,
                                  const rusty::Vec<Row>& destination) {
     size_t only = 0;
@@ -358,6 +417,24 @@ void load(const rusty::Vec<Row>& source, const rusty::Vec<Row>& destination) {
     for (const auto& row : destination)
         if (!raw[1]->put(lcdf::Str(row.key), row.value))
             setup_error("destination row " + printable(row.key) + " was not a new row");
+}
+
+// @unsafe - writes and then deletes kTombstones keys on `owner` through the
+// adapter verbs. The table's directory keeps a deleted key, so afterwards
+// that many deleted entries lie between "c" and the first live row m0000.
+void load_tombstones(unsigned owner, char prefix, size_t live_rows) {
+    const std::string who = "owner " + std::to_string(owner);
+    for (unsigned row = 0; row < kTombstones; ++row)
+        if (!raw[owner]->put(lcdf::Str(tombstone_key(prefix, row)), "deleted-before-migration"))
+            setup_error(who + " row " + tombstone_key(prefix, row) + " was not a new row");
+    if (raw[owner]->size() != live_rows + kTombstones)
+        setup_error(who + " holds " + std::to_string(raw[owner]->size())
+                    + " rows with the rows to delete, expected "
+                    + std::to_string(live_rows + kTombstones));
+    for (unsigned row = 0; row < kTombstones; ++row)
+        if (!raw[owner]->remove(lcdf::Str(tombstone_key(prefix, row))))
+            setup_error(who + " row " + tombstone_key(prefix, row)
+                        + " was not present when deleted");
 }
 
 // @unsafe - point reads through the adapter on the loader thread. The C++
@@ -546,6 +623,44 @@ void poll(MakoShardAdminResult& result) {
                    MAKO_SHARD_OK, "admin poll");
 }
 
+// @unsafe - the body of the pin thread. It takes an STO thread slot of its
+// own, announces the current epoch as an ordinary transaction would, and
+// keeps it until the main thread asks for the release. It never attaches to
+// the Rust engine.
+void hold_pin() {
+    Transaction::register_thread();
+    const auto announced = Transaction::epoch_enter();
+    pin.epoch.store(announced);
+    if (announced == 0) {
+        pin.state.store(kPinFailed);
+        return;
+    }
+    pin.state.store(kPinHeld);
+    while (pin.state.load() != kPinRelease) usleep(1000);
+    Transaction::epoch_leave();
+    pin.state.store(kPinReleased);
+}
+
+// @unsafe - starts the pin thread and waits until its epoch is announced.
+void start_pin() {
+    pin.thread = rusty::Some(rusty::thread::spawn([]() { hold_pin(); }));
+    for (unsigned attempt = 0; attempt < 5000 && pin.state.load() == kPinStarting; ++attempt)
+        usleep(1000);
+    require(pin.state.load() == kPinHeld && pin.epoch.load() != 0,
+            "the pin thread did not announce an STO epoch");
+    fprintf(stderr, "rust_sharding_fixture: pin epoch=%llu\n",
+            static_cast<unsigned long long>(pin.epoch.load()));
+}
+
+// @unsafe - lets the pin thread leave its epoch and joins it.
+void release_pin() {
+    pin.state.store(kPinRelease);
+    pin.thread.as_mut().unwrap().join().unwrap();
+    pin.thread = rusty::None;
+    require(pin.state.load() == kPinReleased, "the pin thread did not leave its epoch");
+    stage("pin-released");
+}
+
 // @unsafe - one adapter point read on the attached main thread. It reads the
 // table directly; no sharding admission is involved.
 bool read_row(unsigned owner, const std::string& key, std::string& value) {
@@ -638,6 +753,42 @@ void expect_scan(Problems& problems, unsigned owner, const rusty::Vec<Row>& expe
                          + std::to_string(seen.rows[at].value.size())
                          + " bytes that differ from the "
                          + std::to_string(expected[at].value.size()) + " expected");
+    }
+}
+
+// Asks one adapter scan for its first row only.
+struct FirstRow final : oi_scan_callback {
+    rusty::Option<std::string> key;
+    // @safe - the base destructor does not throw.
+    ~FirstRow() noexcept override {}
+    // @unsafe - copies the key the adapter lends for this call and stops.
+    bool invoke(const char* row_key, size_t key_length, const std::string&) override {
+        key = rusty::Some(std::string(row_key, key_length));
+        return false;
+    }
+    // @safe - one row is all the caller consumes.
+    size_t max_records_hint() const override { return 1; }
+};
+
+// @unsafe - the premise of `deleted-keys`. The adapter's own scan is one
+// transaction, every directory entry it walks is one of its items, and the
+// adapter caps a transaction at 1,024 items; so with 5,000 deleted keys in
+// front of the first live row it must fail, on both owners, even when it is
+// asked for one row. If it ever succeeds, this scenario no longer shows that
+// the storage lookahead crosses what one transaction cannot.
+void tombstones_block_one_scan(Problems& problems, const Shape& shape) {
+    for (uint32_t owner = 0; owner < kOwners; ++owner) {
+        FirstRow first;
+        try {
+            raw[owner]->scan(shape.lo, &shape.hi, first, nullptr);
+            problems.add("one adapter scan of the range on owner " + std::to_string(owner)
+                         + (first.key.is_some()
+                                ? " reached row " + printable(first.key.as_ref().unwrap())
+                                : std::string(" ended without a row"))
+                         + " instead of failing at the item cap");
+        } catch (const storage_resource_exhausted&) {
+            // The expected result: the deleted keys alone exceed the cap.
+        }
     }
 }
 
@@ -751,6 +902,47 @@ void committed_checks(const Shape& shape, const rusty::Vec<Row>& source,
         expect_ok_calls(problems, 0, "remove", counts[0].remove, inside);
         expect_ok_calls(problems, 1, "remove", counts[1].remove,
                         destination_only_in_range(shape, source, destination));
+        expect_no_calls(problems, 0, "put", counts[0].put);
+    });
+    check("no-pin-left", no_pin_left);
+}
+
+// @unsafe - the checks that follow the aborted migration of scenario
+// `aborted`: nothing moved, and the destination removed its stage range,
+// stale rows included.
+void aborted_checks(const Shape& shape, const rusty::Vec<Row>& source,
+                    const rusty::Vec<Row>& destination) {
+    const size_t inside = rows_in_range(shape, source);
+    conclude("route-unmoved", route_problems(shape, source, false));
+    check("source-intact", [&](Problems& problems) {
+        for (const auto& row : source) expect_row(problems, 0, row);
+        expect_absent(problems, 0, m_key(600));
+        expect_size(problems, 0, source.size());
+    });
+    check("destination-stage-clean", [&](Problems& problems) {
+        for (const auto& row : source)
+            if (in_range(shape, row.key)) expect_absent(problems, 1, row.key);
+        size_t outside = 0;
+        for (const auto& row : destination) {
+            if (in_range(shape, row.key)) {
+                expect_absent(problems, 1, row.key);
+            } else {
+                expect_row(problems, 1, row);
+                ++outside;
+            }
+        }
+        expect_size(problems, 1, outside);
+    });
+    check("callbacks-ran", [&](Problems& problems) {
+        // Precopy read every row on the source and wrote it on the
+        // destination; the abort removed all of them there, and the stale
+        // row that precopy did not overwrite. The source removed nothing.
+        const size_t staged = inside + destination_only_in_range(shape, source, destination);
+        expect_ok_calls(problems, 0, "scan_next", counts[0].scan_next, inside);
+        expect_ok_calls(problems, 1, "scan_next", counts[1].scan_next, staged);
+        expect_ok_calls(problems, 1, "put", counts[1].put, inside);
+        expect_ok_calls(problems, 1, "remove", counts[1].remove, staged);
+        expect_no_calls(problems, 0, "remove", counts[0].remove);
         expect_no_calls(problems, 0, "put", counts[0].put);
     });
     check("no-pin-left", no_pin_left);
@@ -924,6 +1116,10 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     const auto source = source_rows();
     const auto destination = destination_rows();
     load(source, destination);
+    if (shape.tombstones) {
+        load_tombstones(0, 'd', source.size());
+        load_tombstones(1, 'e', destination.size());
+    }
     TThread::in_loading_phase = false;
     require_loaded(0, source);
     require_loaded(1, destination);
@@ -933,6 +1129,11 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
                 "m0600 is still present on owner 0");
     }
     stage("loaded");
+    if (shape.tombstones) {
+        check("tombstones-block-one-scan", [&](Problems& problems) {
+            tombstones_block_one_scan(problems, shape);
+        });
+    }
 
     // The advancer alone, not ensure_epoch_runtime: this thread's Masstree
     // context must stay the one the Rust engine attached.
@@ -990,6 +1191,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         check_skipped("unentered-thread-refused");
     }
 
+    if (shape.pin) start_pin();
     MakoShardAdminResult result{};
     require_status(mako_sharding_admin_begin(kNonce, bytes(kRawName), bytes(shape.lo), 1,
                                              bytes(shape.hi), 0, 1, host_of[0], admin_call,
@@ -997,7 +1199,55 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
                    MAKO_SHARD_OK, "admin begin");
     stage("begun");
     unsigned polls = 0;
-    for (const unsigned limit = shape.wait_seconds * kPollsPerSecond;
+    uint64_t busy_before_release = 0;
+    uint64_t ok_before_release = 0;
+    if (shape.pin) {
+        Problems held;
+        // The coordinator must reach its drain loop and stay there: one cut
+        // on the source, then BUSY from `epoch_drained` again and again.
+        bool draining = false;
+        for (unsigned attempt = 0; attempt < 30 * kPollsPerSecond && result.outcome == 0
+                 && !draining; ++attempt) {
+            poll(result);
+            ++polls;
+            draining = counts[0].cuts.load() >= 1
+                && counts[0].drained_busy.load() >= kDrainAnswersWanted;
+        }
+        if (result.outcome != 0) {
+            held.add(std::string("migration reached outcome=") + outcome_text(result.outcome)
+                     + " while a pin older than the cut was held");
+        } else if (!draining) {
+            held.add("drain loop not reached");
+        } else {
+            const uint64_t cut = counts[0].last_cut.load();
+            if (pin.epoch.load() >= cut)
+                held.add("the pin announces epoch " + std::to_string(pin.epoch.load())
+                         + ", which is not older than the cut " + std::to_string(cut));
+            // One more second: still pending, and the cut still not drained.
+            for (unsigned attempt = 0; attempt < kPollsPerSecond && held.count == 0; ++attempt) {
+                poll(result);
+                ++polls;
+                if (result.outcome != 0)
+                    held.add(std::string("migration reached outcome=")
+                             + outcome_text(result.outcome)
+                             + " while a pin older than the cut was held");
+                else if (Transaction::epoch_drained(cut))
+                    held.add("the STO clock reports the cut " + std::to_string(cut)
+                             + " drained while the pin was held");
+            }
+        }
+        conclude("pinned-stays-pending", held);
+        stage("held");
+        if (shape.abort) {
+            require_status(mako_sharding_admin_abort(kNonce, host_of[0], admin_call, &result),
+                           MAKO_SHARD_OK, "admin abort");
+            stage("abort-requested");
+        }
+        busy_before_release = counts[0].drained_busy.load();
+        ok_before_release = counts[0].drained_ok.load();
+        release_pin();
+    }
+    for (const unsigned limit = polls + shape.wait_seconds * kPollsPerSecond;
          result.outcome == 0 && polls < limit;) {
         poll(result);
         ++polls;
@@ -1007,15 +1257,37 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
             polls);
     report_calls();
 
-    if (result.outcome == 1) {
-        check_ok("outcome-committed");
-        committed_checks(shape, source, destination);
+    if (scenario == Scenario::pinned) {
+        // The source answered BUSY while the pin was held and OK only after
+        // its release.
+        Problems drain;
+        if (busy_before_release < kDrainAnswersWanted)
+            drain.add("the source answered BUSY " + std::to_string(busy_before_release)
+                      + " times before the release, expected at least "
+                      + std::to_string(kDrainAnswersWanted));
+        if (ok_before_release != 0)
+            drain.add("the source answered OK " + std::to_string(ok_before_release)
+                      + " times before the release");
+        if (counts[0].drained_ok.load() == 0)
+            drain.add("the source never answered OK after the release");
+        conclude("drain-observed", drain);
+    }
+
+    const uint32_t expected_outcome = shape.abort ? 2 : 1;
+    const char* outcome_check = shape.abort ? "outcome-aborted" : "outcome-committed";
+    if (result.outcome == expected_outcome) {
+        check_ok(outcome_check);
+        if (shape.abort) aborted_checks(shape, source, destination);
+        else committed_checks(shape, source, destination);
     } else {
-        check_failed("outcome-committed",
-                     std::string("outcome=") + outcome_text(result.outcome));
-        for (const char* name : kAfterCommitChecks)
-            if (shape.ordered_scan || strcmp(name, "ordered-scan-agrees") != 0)
-                check_skipped(name);
+        check_failed(outcome_check, std::string("outcome=") + outcome_text(result.outcome));
+        if (shape.abort) {
+            for (const char* name : kAfterAbortChecks) check_skipped(name);
+        } else {
+            for (const char* name : kAfterCommitChecks)
+                if (shape.ordered_scan || strcmp(name, "ordered-scan-agrees") != 0)
+                    check_skipped(name);
+        }
     }
     // A failed check leaves through _Exit in main(): an injected or real
     // defect may have left the engine or the crate unable to stop.
@@ -1055,6 +1327,9 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
 // @safe - the scenario a command-line name selects.
 rusty::Option<Scenario> parse_scenario(const char* name) {
     if (strcmp(name, "migrate") == 0) return rusty::Some(Scenario::migrate);
+    if (strcmp(name, "pinned") == 0) return rusty::Some(Scenario::pinned);
+    if (strcmp(name, "deleted-keys") == 0) return rusty::Some(Scenario::deleted_keys);
+    if (strcmp(name, "aborted") == 0) return rusty::Some(Scenario::aborted);
     if (strcmp(name, "red-baseline") == 0) return rusty::Some(Scenario::red_baseline);
     return rusty::None;
 }

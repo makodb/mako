@@ -47,6 +47,9 @@ def epochs(owner, cuts="0", busy="0", ok="0"):
             rf" drained_busy={busy} drained_ok={ok} drained_other=0$")
 
 
+AT_LEAST_FIVE = r"(?:[5-9]|[1-9]\d+)"
+
+
 def moved(rows):
     """Storage calls of a committed migration of `rows` source rows.
 
@@ -103,6 +106,8 @@ BEFORE_MIGRATION = ["tick-running", "registration-guarded", "open-registered-onl
 AFTER_COMMIT = ["route-moved", "destination-image", "stale-collide-replaced",
                 "stale-extra-removed", "destination-outside-untouched", "source-range-empty",
                 "source-outside-untouched", "callbacks-ran", "no-pin-left"]
+AFTER_ABORT = ["route-unmoved", "source-intact", "destination-stage-clean", "callbacks-ran",
+               "no-pin-left"]
 
 # Per scenario:
 #   exit       the exit code
@@ -131,6 +136,71 @@ SCENARIOS = {
             epochs(1),
         ],
         "forbidden": NEVER_WHEN_PASSING,
+    },
+    # As migrate, while another thread holds an STO epoch older than the cut:
+    # the source must answer BUSY until the pin is released.
+    "pinned": {
+        "exit": 0,
+        "summary": "PASS",
+        "ok": BEFORE_MIGRATION + ["pinned-stays-pending", "drain-observed", "outcome-committed"]
+              + AFTER_COMMIT + ["threads-left"],
+        "failed": {},
+        "skipped": [],
+        "stderr": ENTERED_AND_LEFT + FIRST_USE_COMMITTED + moved(605) + [
+            # While the pin was held the source answered BUSY, at least the
+            # five times the fixture waits for; OK came once, after the release.
+            epochs(0, cuts="1", busy=AT_LEAST_FIVE, ok="1"),
+            epochs(1),
+        ],
+        "forbidden": NEVER_WHEN_PASSING,
+    },
+    # ["c", "n") moves: 601 rows. On both owners 5,000 deleted keys lie in
+    # the range below the first live row, so the first lookahead of every
+    # capture, of the destination's final copy and of the source's cleanup
+    # must cross them. tombstones-block-one-scan is the scenario's premise:
+    # the adapter's own scan, one transaction, cannot.
+    "deleted-keys": {
+        "exit": 0,
+        "summary": "PASS",
+        "ok": ["tombstones-block-one-scan"] + BEFORE_MIGRATION + ["outcome-committed"]
+              + AFTER_COMMIT + ["threads-left"],
+        "failed": {},
+        "skipped": [],
+        "stderr": ENTERED_AND_LEFT + FIRST_USE_COMMITTED + moved(601) + [
+            epochs(0, cuts="1", busy=r"\d+", ok="1"),
+            epochs(1),
+        ],
+        "forbidden": NEVER_WHEN_PASSING,
+    },
+    # As pinned, but the migration is aborted while the pin holds it in the
+    # drain loop, with every row already copied to the destination. "Aborted"
+    # is this scenario's success: the source keeps every row and removes
+    # nothing, and the destination removes its whole stage range, which is
+    # the 605 copied rows and the stale m9999.
+    "aborted": {
+        "exit": 0,
+        "summary": "PASS",
+        "ok": BEFORE_MIGRATION + ["pinned-stays-pending", "outcome-aborted"] + AFTER_ABORT
+              + ["threads-left"],
+        "failed": {},
+        "skipped": [],
+        "stderr": ENTERED_AND_LEFT + [
+            r"^mako_sto_shard_host: first scan_next owner=0 table=1001$",
+            r"^mako_sto_shard_host: first scan_next owner=1 table=1001$",
+            r"^mako_sto_shard_host: first put owner=1 table=1001$",
+            r"^mako_sto_shard_host: first remove owner=1 table=1001$",
+            # The source: one precopy pass, no cleanup.
+            calls(0, scan=606, scan_ok=605, scan_last="1"),
+            # The destination: 605 puts, then the cleanup reads and removes
+            # 606 rows and ends on NOT_FOUND.
+            calls(1, scan=607, scan_ok=606, scan_last="1", put=605, put_ok=605, put_last="0",
+                  remove=606, remove_ok=606, remove_last="0"),
+            # A drain round that was already on its way when the abort was
+            # recorded may still be answered after the release.
+            epochs(0, cuts="1", busy=AT_LEAST_FIVE, ok="[01]"),
+            epochs(1),
+        ],
+        "forbidden": NEVER_WHEN_PASSING + [r"^mako_sto_shard_host: first remove owner=0 "],
     },
     # The C++ storage callbacks, unchanged, on a Rust-engine database.
     #
