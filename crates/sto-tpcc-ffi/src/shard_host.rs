@@ -3,8 +3,9 @@
 //! The sharding crate reads and writes the rows of a migrating range through
 //! a table of C callbacks. This module is the engine side of the storage
 //! slots for a database that runs on this crate: the lookahead `scan_next`,
-//! and the registry that leads from the crate's `(catalog table, owner)` to a
-//! native table and from the calling OS thread to its engine handle.
+//! the one-row writes `put` and `remove`, and the registry that leads from
+//! the crate's `(catalog table, owner)` to a native table and from the calling
+//! OS thread to its engine handle.
 //!
 //! The module declares the C types it needs for itself. It neither depends on
 //! nor links the sharding crate; the C++ glue assigns the exports to the
@@ -54,6 +55,7 @@ const SHARD_IO: u32 = 6;
 
 // The engine statuses the protocol exports return, as `i32`.
 const ENGINE_OK: i32 = Status::Ok.code();
+const ENGINE_MISS: i32 = Status::Miss.code();
 const ENGINE_RETRY: i32 = Status::Retry.code();
 const ENGINE_FATAL: i32 = Status::Fatal.code();
 const ENGINE_EXHAUSTED: i32 = Status::ResourceExhausted.code();
@@ -85,7 +87,19 @@ const TERM: u32 = 0;
 /// is built here.
 const SCAN_HOP_ENTRIES: usize = 256;
 
+/// The longest key and the longest value `put` and `remove` accept. The
+/// protocol's write ledger and its log record keep both lengths in 16 bits.
+const MAX_LOGGED_BYTES: usize = u16::MAX as usize;
+
+// Operations of `sto_tpcc_protocol_mutate`.
+const PROTOCOL_UPSERT: u8 = 0;
+const PROTOCOL_DELETE: u8 = 2;
+/// The action of a protocol request that hands over the log record.
+const PROTOCOL_LOG: u32 = 5;
+
 const FIRST_SCAN_NEXT: u8 = 1;
+const FIRST_PUT: u8 = 2;
+const FIRST_REMOVE: u8 = 4;
 
 /// The binding of the calling OS thread, made by
 /// `mako_sto_shard_thread_register`.
@@ -148,8 +162,6 @@ enum Stage {
     /// A step failed and the closing `finish(.., 0, ..)` has returned OK.
     Closed,
     /// The result of `sto_tpcc_protocol_commit`.
-    // `put` and `remove`, which commit, arrive with the next change.
-    #[allow(dead_code)]
     Commit,
     /// The result of the committing `finish(.., 1, ..)` of a read-only attempt.
     ReadOnlyFinish,
@@ -232,6 +244,31 @@ unsafe fn close_and_map(operation: &str, thread: *mut StoTpccThread, status: i32
     shard_status(
         operation,
         map_engine(Stage::Closed, status, report.disposition),
+    )
+}
+
+/// Certifies the reads of the open attempt, which staged no write, and
+/// finishes it committed. OK only when it did; otherwise the status the verb
+/// answers, with the attempt closed.
+///
+/// A validated attempt without writes finishes committed without an install
+/// and without reserving a timestamp.
+///
+/// # Safety
+/// `thread` is the registered handle of the calling thread.
+unsafe fn certify_read_only(operation: &str, thread: *mut StoTpccThread) -> u32 {
+    // SAFETY: Guaranteed by the caller.
+    let validated = unsafe { sto_tpcc_protocol_validate(thread) };
+    if validated != ENGINE_OK {
+        // SAFETY: As above.
+        return unsafe { close_and_map(operation, thread, validated) };
+    }
+    let mut report = StoTpccProtocolReport::default();
+    // SAFETY: As above; the report is a live local.
+    let finished = unsafe { sto_tpcc_protocol_finish(thread, 1, &mut report) };
+    shard_status(
+        operation,
+        map_engine(Stage::ReadOnlyFinish, finished, report.disposition),
     )
 }
 
@@ -555,20 +592,7 @@ unsafe fn lookahead(
         after_walk();
     }
     // SAFETY: As above.
-    let validated = unsafe { sto_tpcc_protocol_validate(thread) };
-    if validated != ENGINE_OK {
-        // SAFETY: As above.
-        return Err(unsafe { close_and_map(OPERATION, thread, validated) });
-    }
-    // A validated attempt without writes finishes committed without an
-    // install and without reserving a timestamp.
-    let mut report = StoTpccProtocolReport::default();
-    // SAFETY: As above; the report is a live local.
-    let finished = unsafe { sto_tpcc_protocol_finish(thread, 1, &mut report) };
-    match shard_status(
-        OPERATION,
-        map_engine(Stage::ReadOnlyFinish, finished, report.disposition),
-    ) {
+    match unsafe { certify_read_only(OPERATION, thread) } {
         SHARD_OK => Ok(found),
         status => Err(status),
     }
@@ -692,7 +716,8 @@ unsafe fn scan_next(
 /// decides whether to call again. INVALID for a thread that is not registered
 /// for `context`, a malformed argument or a handle with an open transaction.
 /// IO for a table that is not registered for the thread's owner. EXHAUSTED
-/// for an engine limit.
+/// for an engine limit; a bound or a cursor longer than the engine's
+/// configured key length meets one.
 ///
 /// A lookahead is one committed observation. Behind many deleted keys it is
 /// a sequence of them, see `SCAN_HOP_ENTRIES`; a sequence of lookaheads is
@@ -732,6 +757,284 @@ pub unsafe extern "C" fn mako_sto_shard_scan_next(
                 sink_context,
             )
         }
+    })
+}
+
+/// Commit callback of a non-replicated node: the log record is dropped. A
+/// transaction without a remote participant is asked for nothing else.
+unsafe extern "C" fn shard_log_callback(
+    _context: *mut c_void,
+    request: *mut StoTpccProtocolRequest,
+) -> i32 {
+    // SAFETY: The engine passes a live request for the call.
+    if unsafe { (*request).action } == PROTOCOL_LOG {
+        ENGINE_OK
+    } else {
+        ENGINE_FATAL
+    }
+}
+
+/// Refuses a key or a value the protocol's log record cannot carry, with one
+/// line: the migration that needed the write is aborted by this answer.
+fn refuse_oversized(
+    verb: &str,
+    entered: Entered,
+    catalog_table: u64,
+    what: &str,
+    length: usize,
+) -> u32 {
+    set_last_error(format_args!(
+        "shard host {verb}: a {what} of {length} bytes is longer than {MAX_LOGGED_BYTES}"
+    ));
+    diagnostic(format_args!(
+        "{verb} refused owner={} table={catalog_table}: a {what} of {length} bytes is longer \
+         than {MAX_LOGGED_BYTES}",
+        entered.owner
+    ));
+    SHARD_INVALID
+}
+
+/// The checks `put` and `remove` share before they ask the engine, in the
+/// order of `scan_next`: the calling thread's binding, the registered table
+/// and the key. `Err` carries the refusal.
+///
+/// # Safety
+/// As `mako_sto_shard_put`; the key is borrowed for the returned lifetime.
+unsafe fn write_target<'a>(
+    verb: &str,
+    first_use: u8,
+    context: *mut c_void,
+    catalog_table: u64,
+    coordinate: MakoStoShardBytes,
+    key: MakoStoShardBytes,
+) -> Result<(Entered, TableEntry, &'a [u8]), u32> {
+    let Some(entered) = entered_for(context) else {
+        return Err(SHARD_INVALID);
+    };
+    // SAFETY: The caller lends both spans for the call.
+    let spans = unsafe { (span_bytes(coordinate, "coordinate"), span_bytes(key, "key")) };
+    let (Some(coordinate), Some(key)) = spans else {
+        return Err(SHARD_INVALID);
+    };
+    // The coordinate of a raw table's row is its key.
+    if coordinate != key {
+        set_last_error(format_args!(
+            "shard host {verb}: the coordinate differs from the key"
+        ));
+        return Err(SHARD_INVALID);
+    }
+    let Some(entry) = table_for(catalog_table, entered.owner) else {
+        return Err(SHARD_IO);
+    };
+    // SAFETY: The registration contract keeps the handle alive.
+    if !unsafe { handle_is_idle(entered.thread) } {
+        return Err(SHARD_INVALID);
+    }
+    log_first_use(first_use, verb, entered.owner, catalog_table);
+    if key.len() > MAX_LOGGED_BYTES {
+        return Err(refuse_oversized(
+            verb,
+            entered,
+            catalog_table,
+            "key",
+            key.len(),
+        ));
+    }
+    Ok((entered, entry, key))
+}
+
+/// Commits the one write staged in the open attempt: lock, reserve one
+/// distributed timestamp, validate, install, hand over the log record,
+/// finish. Anything but "committed" or a failure the engine reports with an
+/// aborted attempt stops the process.
+///
+/// # Safety
+/// `thread` is the registered handle of the calling thread.
+unsafe fn commit_staged(operation: &str, thread: *mut StoTpccThread) -> u32 {
+    let mut report = StoTpccProtocolReport::default();
+    // SAFETY: Guaranteed by the caller; the callback reads its request only.
+    let committed = unsafe {
+        sto_tpcc_protocol_commit(
+            thread,
+            0,
+            Some(shard_log_callback),
+            ptr::null_mut(),
+            &mut report,
+        )
+    };
+    shard_status(
+        operation,
+        map_engine(Stage::Commit, committed, report.disposition),
+    )
+}
+
+/// # Safety
+/// As `mako_sto_shard_put`.
+unsafe fn put(
+    context: *mut c_void,
+    catalog_table: u64,
+    coordinate: MakoStoShardBytes,
+    key: MakoStoShardBytes,
+    value: MakoStoShardBytes,
+) -> u32 {
+    const OPERATION: &str = "put";
+    // SAFETY: The caller lends the span for the call.
+    let Some(value) = (unsafe { span_bytes(value, "value") }) else {
+        return SHARD_INVALID;
+    };
+    // SAFETY: Forwarded.
+    let target = unsafe {
+        write_target(
+            OPERATION,
+            FIRST_PUT,
+            context,
+            catalog_table,
+            coordinate,
+            key,
+        )
+    };
+    let (entered, entry, key) = match target {
+        Ok(target) => target,
+        Err(refusal) => return refusal,
+    };
+    if value.len() > MAX_LOGGED_BYTES {
+        return refuse_oversized(OPERATION, entered, catalog_table, "value", value.len());
+    }
+    let thread = entered.thread;
+    // SAFETY: The handle is registered and idle; the table is registered and
+    // the engine copies the key and the value before it returns.
+    unsafe {
+        let begun = sto_tpcc_protocol_begin(thread, TERM);
+        if begun != ENGINE_OK {
+            return close_and_map(OPERATION, thread, begun);
+        }
+        // Reads the current version, records the write and stages it.
+        let staged = sto_tpcc_protocol_mutate(
+            thread,
+            entry.table,
+            entry.table_id,
+            PROTOCOL_UPSERT,
+            key.as_ptr(),
+            key.len(),
+            value.as_ptr(),
+            value.len(),
+            0,
+        );
+        if staged != ENGINE_OK {
+            return close_and_map(OPERATION, thread, staged);
+        }
+        commit_staged(OPERATION, thread)
+    }
+}
+
+/// # Safety
+/// As `mako_sto_shard_remove`.
+unsafe fn remove(
+    context: *mut c_void,
+    catalog_table: u64,
+    coordinate: MakoStoShardBytes,
+    key: MakoStoShardBytes,
+) -> u32 {
+    const OPERATION: &str = "remove";
+    // SAFETY: Forwarded.
+    let target = unsafe {
+        write_target(
+            OPERATION,
+            FIRST_REMOVE,
+            context,
+            catalog_table,
+            coordinate,
+            key,
+        )
+    };
+    let (entered, entry, key) = match target {
+        Ok(target) => target,
+        Err(refusal) => return refusal,
+    };
+    let thread = entered.thread;
+    // SAFETY: As in `put`.
+    unsafe {
+        let begun = sto_tpcc_protocol_begin(thread, TERM);
+        if begun != ENGINE_OK {
+            return close_and_map(OPERATION, thread, begun);
+        }
+        let staged = sto_tpcc_protocol_mutate(
+            thread,
+            entry.table,
+            entry.table_id,
+            PROTOCOL_DELETE,
+            key.as_ptr(),
+            key.len(),
+            ptr::null(),
+            0,
+            0,
+        );
+        match staged {
+            ENGINE_OK => commit_staged(OPERATION, thread),
+            // The key is absent and nothing was staged. The absence is a
+            // read like any other: certify it and finish read-only.
+            ENGINE_MISS => certify_read_only(OPERATION, thread),
+            failed => close_and_map(OPERATION, thread, failed),
+        }
+    }
+}
+
+/// Makes `value` the committed value of `key` in `table` on the registered
+/// owner, as one protocol commit of this one key.
+///
+/// OK means exactly that: the key now has this value, visible to the next
+/// lookahead on this thread. Every other status means the table is
+/// unchanged; when the engine cannot say which of the two holds, the process
+/// stops. RETRY for a conflict, EXHAUSTED for an engine limit (a key longer
+/// than the engine's configured key length meets one), IO for a table that
+/// is not registered for the thread's owner and for an engine failure.
+/// INVALID for a thread that is not registered for `context`, a coordinate
+/// that is not the key, and a handle with an open transaction.
+///
+/// INVALID also for a key or a value longer than 65,535 bytes. The protocol's
+/// log record keeps both lengths in 16 bits, so such a row cannot be written
+/// here, and a migration that carries one is aborted by this answer.
+///
+/// Every committed put takes one value of the process's distributed clock.
+/// The log record of the write is dropped, which is right on a non-replicated
+/// node only.
+///
+/// # Safety
+/// Every span of non-zero length must be readable for the call.
+#[no_mangle]
+pub unsafe extern "C" fn mako_sto_shard_put(
+    context: *mut c_void,
+    table: u64,
+    coordinate: MakoStoShardBytes,
+    key: MakoStoShardBytes,
+    value: MakoStoShardBytes,
+) -> u32 {
+    contain_verb("put", || {
+        // SAFETY: Forwarded from this export's contract.
+        unsafe { put(context, table, coordinate, key, value) }
+    })
+}
+
+/// Makes `key` absent from `table` on the registered owner, as one protocol
+/// commit of this one key. OK also when the key was absent already.
+///
+/// The statuses are those of `mako_sto_shard_put`, with the same limit of
+/// 65,535 bytes on the key. A committed delete of a row takes one value of
+/// the process's distributed clock; the deleted key stays in the table's
+/// directory.
+///
+/// # Safety
+/// Every span of non-zero length must be readable for the call.
+#[no_mangle]
+pub unsafe extern "C" fn mako_sto_shard_remove(
+    context: *mut c_void,
+    table: u64,
+    coordinate: MakoStoShardBytes,
+    key: MakoStoShardBytes,
+) -> u32 {
+    contain_verb("remove", || {
+        // SAFETY: Forwarded from this export's contract.
+        unsafe { remove(context, table, coordinate, key) }
     })
 }
 
@@ -888,6 +1191,14 @@ mod tests {
                     Some(count_rows),
                     (&raw mut rows).cast(),
                 ),
+                SHARD_INVALID
+            );
+            assert_eq!(
+                mako_sto_shard_put(context, 1, empty, empty, empty),
+                SHARD_INVALID
+            );
+            assert_eq!(
+                mako_sto_shard_remove(context, 1, empty, empty),
                 SHARD_INVALID
             );
             // Nothing was registered, so there is nothing to end, and a null

@@ -527,6 +527,7 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         protocol_scan_with_limit_one_cannot_cross_more_tombstones_than_the_item_cap
         scan_next_crosses_five_thousand_tombstones_and_returns_the_first_live_row
         scan_next_orders_empty_nul_and_prefix_keys_and_honours_bounds
+        put_and_remove_commit_through_the_protocol_over_rows_with_history
         oversized_values_unregistered_tables_and_foreign_contexts_are_refused_without_effect
         verbs_leave_the_thread_handle_idle_on_every_path
         scan_next_returns_the_newest_committed_version_and_no_deleted_row_with_history)

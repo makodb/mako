@@ -13,6 +13,7 @@ const RESOURCE_EXHAUSTED: i32 = 6;
 const SHARD_OK: u32 = 0;
 const SHARD_NOT_FOUND: u32 = 1;
 const SHARD_INVALID: u32 = 3;
+const SHARD_EXHAUSTED: u32 = 5;
 const SHARD_IO: u32 = 6;
 
 /// The owner every test registers as.
@@ -167,33 +168,41 @@ impl Native {
         rows
     }
 
-    /// A committed read-only point read of a key the table does not hold.
-    /// It leaves the key in the directory as a deleted entry without history.
-    fn miss(&self, key: &[u8]) {
+    /// A committed read-only point read: the status, the value, and the
+    /// time-term of the version read (0 when the key has no decided version).
+    fn get(&self, key: &[u8]) -> (i32, Vec<u8>, u32) {
         self.begin();
+        let mut value = vec![0_u8; 70_000];
         let mut actual = usize::MAX;
         let mut time_term = u32::MAX;
+        let status = unsafe {
+            sto_tpcc_protocol_get(
+                self.thread,
+                self.table,
+                key.as_ptr(),
+                key.len(),
+                value.as_mut_ptr(),
+                value.len(),
+                &mut actual,
+                &mut time_term,
+            )
+        };
+        value.truncate(actual);
         assert_eq!(
-            unsafe {
-                sto_tpcc_protocol_get(
-                    self.thread,
-                    self.table,
-                    key.as_ptr(),
-                    key.len(),
-                    ptr::null_mut(),
-                    0,
-                    &mut actual,
-                    &mut time_term,
-                )
-            },
-            MISS,
+            unsafe { sto_tpcc_protocol_validate(self.thread) },
+            OK,
             "{}",
             native_error()
         );
-        assert_eq!((actual, time_term), (0, 0));
-        assert_eq!(unsafe { sto_tpcc_protocol_validate(self.thread) }, OK);
-        let (status, report) = self.finish(true);
-        assert_eq!((status, report.disposition), (OK, COMMITTED));
+        let (finished, report) = self.finish(true);
+        assert_eq!((finished, report.disposition), (OK, COMMITTED));
+        (status, value, time_term)
+    }
+
+    /// A point read of a key the table has never held. It leaves the key in
+    /// the directory as a deleted entry without history.
+    fn miss(&self, key: &[u8]) {
+        assert_eq!(self.get(key), (MISS, Vec::new(), 0), "{}", native_error());
     }
 
     /// The entries of the table's directory, deleted keys included.
@@ -479,6 +488,32 @@ impl Host {
         found
     }
 
+    /// One `put` with every argument chosen by the caller.
+    fn put_as(
+        &self,
+        context: *mut c_void,
+        catalog: u64,
+        coordinate: &[u8],
+        key: &[u8],
+        value: &[u8],
+    ) -> u32 {
+        unsafe { mako_sto_shard_put(context, catalog, span(coordinate), span(key), span(value)) }
+    }
+
+    /// As the sharding crate calls for a raw table: the coordinate is the key.
+    fn put(&self, key: &[u8], value: &[u8]) -> u32 {
+        self.put_as(self.context(), self.catalog, key, key, value)
+    }
+
+    /// One `remove` with every argument chosen by the caller.
+    fn remove_as(&self, context: *mut c_void, catalog: u64, coordinate: &[u8], key: &[u8]) -> u32 {
+        unsafe { mako_sto_shard_remove(context, catalog, span(coordinate), span(key)) }
+    }
+
+    fn remove(&self, key: &[u8]) -> u32 {
+        self.remove_as(self.context(), self.catalog, key, key)
+    }
+
     /// Every row of `[lo, hi)`, each lookahead with the previous row as its
     /// cursor, until the host answers NOT_FOUND.
     fn walk(&self, lo: &[u8], hi: Option<&[u8]>) -> Vec<Row> {
@@ -684,6 +719,80 @@ fn scan_next_orders_empty_nul_and_prefix_keys_and_honours_bounds() {
     host.assert_idle();
 }
 
+/// `put` and `remove` commit through the participant protocol. A row that
+/// was written by a protocol commit has history, and over such a row the
+/// engine refuses a write that carries no decision.
+#[test]
+fn put_and_remove_commit_through_the_protocol_over_rows_with_history() {
+    let host = Host::new(9_004);
+    let native = &host.native;
+    native.commit_mutation(PUT, b"k", b"first");
+    let (status, value, written) = native.get(b"k");
+    assert_eq!((status, value), (OK, b"first".to_vec()));
+    assert_ne!(written, 0);
+
+    // `put` over the row: a new version whose decision is later than the one
+    // it replaces.
+    assert_eq!(host.put(b"k", b"second"), SHARD_OK, "{}", native_error());
+    let (status, value, overwritten) = native.get(b"k");
+    assert_eq!((status, value), (OK, b"second".to_vec()));
+    assert!(overwritten > written, "{overwritten} after {written}");
+    assert_eq!(native.rows(), 1);
+
+    // New rows: a key the table never held, the empty key, an empty value,
+    // and the longest value the protocol's log record can carry.
+    let longest = vec![0xa5_u8; 65_535];
+    assert_eq!(host.put(b"n", b"new"), SHARD_OK, "{}", native_error());
+    assert_eq!(host.put(b"", b"empty key"), SHARD_OK, "{}", native_error());
+    assert_eq!(host.put(b"e", b""), SHARD_OK, "{}", native_error());
+    assert_eq!(host.put(b"long", &longest), SHARD_OK, "{}", native_error());
+    assert_eq!(native.rows(), 5);
+    let (status, value, created) = native.get(b"n");
+    assert_eq!((status, value), (OK, b"new".to_vec()));
+    assert_ne!(created, 0);
+    // The next lookahead on this thread sees every committed put.
+    assert_eq!(
+        host.walk(b"", None),
+        vec![
+            row(b"", b"empty key"),
+            row(b"e", b""),
+            row(b"k", b"second"),
+            row(b"long", &longest),
+            row(b"n", b"new"),
+        ]
+    );
+
+    // `remove` of the row: a deleted version with a later decision.
+    assert_eq!(host.remove(b"k"), SHARD_OK, "{}", native_error());
+    let (status, value, removed) = native.get(b"k");
+    assert_eq!((status, value), (MISS, Vec::new()));
+    assert!(removed > overwritten, "{removed} after {overwritten}");
+    assert_eq!(native.rows(), 4);
+    // Removing an absent key succeeds and changes nothing: the key that was
+    // just deleted, and a key the table never held.
+    assert_eq!(host.remove(b"k"), SHARD_OK, "{}", native_error());
+    assert_eq!(native.get(b"k"), (MISS, Vec::new(), removed));
+    assert_eq!(host.remove(b"never"), SHARD_OK, "{}", native_error());
+    assert_eq!(native.rows(), 4);
+    // The empty key, and a put over the deleted row.
+    assert_eq!(host.remove(b""), SHARD_OK, "{}", native_error());
+    assert_eq!(host.put(b"k", b"third"), SHARD_OK, "{}", native_error());
+    let (status, value, restored) = native.get(b"k");
+    assert_eq!((status, value), (OK, b"third".to_vec()));
+    assert!(restored > removed, "{restored} after {removed}");
+    assert_eq!(native.rows(), 4);
+    assert_eq!(
+        host.walk(b"", None),
+        vec![
+            row(b"e", b""),
+            row(b"k", b"third"),
+            row(b"long", &longest),
+            row(b"n", b"new"),
+        ]
+    );
+    host.assert_idle();
+}
+
 /// An error is never the end of a range, and a refused call changes nothing.
 #[test]
 fn oversized_values_unregistered_tables_and_foreign_contexts_are_refused_without_effect() {
@@ -732,9 +841,65 @@ fn oversized_values_unregistered_tables_and_foreign_contexts_are_refused_without
         (SHARD_INVALID, vec![])
     );
 
+    // `put` and `remove` refuse the same callers, and a coordinate that is
+    // not the key.
+    let context = host.context();
+    let foreign = host.foreign_context();
+    assert_eq!(
+        host.put_as(context, UNREGISTERED, b"k", b"k", b"other"),
+        SHARD_IO
+    );
+    assert_eq!(host.remove_as(context, UNREGISTERED, b"k", b"k"), SHARD_IO);
+    assert_eq!(
+        host.put_as(foreign, host.catalog, b"k", b"k", b"other"),
+        SHARD_INVALID
+    );
+    assert_eq!(
+        host.remove_as(foreign, host.catalog, b"k", b"k"),
+        SHARD_INVALID
+    );
+    assert_eq!(
+        host.put_as(context, host.catalog, b"j", b"k", b"other"),
+        SHARD_INVALID
+    );
+    assert_eq!(
+        host.remove_as(context, host.catalog, b"j", b"k"),
+        SHARD_INVALID
+    );
+    // The protocol's log record has 16-bit lengths: one byte more than
+    // 65,535 in a value or a key is refused before the engine is asked.
+    let oversized = vec![0x5a_u8; 65_536];
+    assert_eq!(host.put(b"big", &oversized), SHARD_INVALID);
+    assert_eq!(host.put(&oversized, b"value"), SHARD_INVALID);
+    assert_eq!(host.remove(&oversized), SHARD_INVALID);
+    // A key longer than the engine's configured maximum (1,024 bytes, as the
+    // C++ adapter sets it) meets an engine limit: EXHAUSTED from every verb,
+    // also for a lookahead with such a bound or cursor, which must not read
+    // as the end of the range.
+    let long_key = vec![b'x'; 1_025];
+    assert_eq!(host.put(&long_key, b"value"), SHARD_EXHAUSTED);
+    assert_eq!(host.remove(&long_key), SHARD_EXHAUSTED);
+    for request in [
+        Lookahead::new(&long_key, None, None),
+        Lookahead::new(b"", None, Some(&long_key)),
+        Lookahead::new(b"", Some(&long_key), None),
+    ] {
+        assert_eq!(
+            host.lookahead(context, host.catalog, request),
+            (SHARD_EXHAUSTED, vec![]),
+            "{}",
+            native_error()
+        );
+    }
+
     host.assert_idle();
+    // Nothing reached the table: its one row, and not even a directory entry
+    // for a refused key.
     assert_eq!(native.rows(), 1);
+    assert_eq!(native.directory_entries(), 1);
     assert_eq!(host.walk(b"", None), rows);
+    assert_eq!(native.get(b"k").1, b"value");
+    assert_eq!(native.get(b"big"), (MISS, Vec::new(), 0));
 }
 
 /// Whatever a verb answers, it leaves no attempt open on the thread handle.
@@ -801,10 +966,44 @@ fn verbs_leave_the_thread_handle_idle_on_every_path() {
     );
     host.assert_idle();
 
+    // `put`: a new key and an overwrite. `remove`: a row, the key it has
+    // just deleted, and a key the table never held.
+    for value in [&b"new"[..], b"overwritten"] {
+        assert_eq!(host.put(b"p", value), SHARD_OK, "{}", native_error());
+        host.assert_idle();
+    }
+    for key in [&b"p"[..], b"p", b"never"] {
+        assert_eq!(host.remove(key), SHARD_OK, "{}", native_error());
+        host.assert_idle();
+    }
+    // Refused writes.
+    let oversized = vec![0_u8; 65_536];
+    let context = host.context();
+    let refused = [
+        host.put(b"p", &oversized),
+        host.remove(&oversized),
+        host.put_as(context, host.catalog, b"j", b"p", b"value"),
+        host.remove_as(context, host.catalog, b"j", b"k"),
+        host.put_as(host.foreign_context(), host.catalog, b"p", b"p", b"value"),
+        host.remove_as(host.foreign_context(), host.catalog, b"k", b"k"),
+    ];
+    assert_eq!(refused, [SHARD_INVALID; 6]);
+    host.assert_idle();
+    assert_eq!(
+        host.put_as(context, UNREGISTERED, b"p", b"p", b"value"),
+        SHARD_IO
+    );
+    host.assert_idle();
+    assert_eq!(host.remove_as(context, UNREGISTERED, b"k", b"k"), SHARD_IO);
+    host.assert_idle();
+    assert_eq!(native.rows(), 1);
+
     // A handle with an attempt open is refused, and that attempt is left as
     // it was for its owner to finish.
     native.begin();
     assert_eq!(host.scan(b"", None, None), (SHARD_INVALID, vec![]));
+    assert_eq!(host.put(b"p", b"value"), SHARD_INVALID);
+    assert_eq!(host.remove(b"k"), SHARD_INVALID);
     let mut report = StoTpccProtocolReport::default();
     let mut empty = 0;
     assert_eq!(
