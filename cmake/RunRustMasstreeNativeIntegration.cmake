@@ -370,6 +370,12 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
     # runtime and table set. The native registries have process-wide lifetimes,
     # so discover the cases first and run each one in a fresh process.
     set(_sto_tpcc_unit_expected_tests
+        shard_host::tests::a_panic_inside_scan_next_is_contained_and_closes_the_attempt
+        shard_host::tests::engine_status_mapping_is_total_and_stops_on_indefinite_outcomes
+        shard_host::tests::scan_next_returns_retry_when_a_key_is_interned_between_walk_and_validation
+        shard_host::tests::status_numbers_and_span_layout_are_stable
+        shard_host::tests::table_registry_rejects_conflicts_and_bad_ids
+        shard_host::tests::verbs_refuse_an_unentered_thread
         tests::checked_get_zeroes_actual_before_rejecting_an_invalid_handle
         tests::dense_item_and_stock_paths_warm_mix_and_disable_on_warehouse_mismatch
         tests::fixed_key_views_require_exact_nonoverflowing_storage
@@ -518,7 +524,12 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
     # The sharding storage host on the Rust engine. The cases share one
     # process and run on parallel threads; each creates its own database.
     set(_sto_tpcc_shard_host_expected_tests
-        protocol_scan_with_limit_one_cannot_cross_more_tombstones_than_the_item_cap)
+        protocol_scan_with_limit_one_cannot_cross_more_tombstones_than_the_item_cap
+        scan_next_crosses_five_thousand_tombstones_and_returns_the_first_live_row
+        scan_next_orders_empty_nul_and_prefix_keys_and_honours_bounds
+        oversized_values_unregistered_tables_and_foreign_contexts_are_refused_without_effect
+        verbs_leave_the_thread_handle_idle_on_every_path
+        scan_next_returns_the_newest_committed_version_and_no_deleted_row_with_history)
     _mako_run_native_suite(
         LABEL "Rust STO sharding storage host integration"
         PACKAGE sto-tpcc-ffi

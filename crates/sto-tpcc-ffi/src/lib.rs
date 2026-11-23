@@ -1268,6 +1268,8 @@ macro_rules! with_active_transaction {
 
 mod protocol;
 pub use protocol::*;
+mod shard_host;
+pub use shard_host::*;
 
 fn abort_active_attempt_after_fatal(handle: &mut StoTpccThread) -> FfiResult<()> {
     let ActiveAttempt { rcu_scope } = handle
