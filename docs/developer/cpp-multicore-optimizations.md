@@ -401,7 +401,7 @@ On x86, `PAUSE` (encoding: `F3 90`, also `REP NOP`) does two things:
 
 ## 4. Memory Ordering (Acquire/Release Semantics)
 
-**Files:** `src/mako/circbuf.h`, `src/mako/ticker.h`, `src/srpc/base/threading.hpp`
+**Files:** `src/mako/ticker.h`, `src/srpc/base/threading.hpp`
 
 ### The Problem
 
@@ -428,7 +428,9 @@ provides them. On ARM/POWER, they generate explicit fence instructions.
 
 ### Usage in the Codebase
 
-**Circular buffer** (`src/mako/circbuf.h`) -- producer/consumer with acquire/release:
+**Circular buffer** (historical: `src/mako/circbuf.h`, from Silo, was removed from
+the tree; read it with `git show fd3ed37e1:src/mako/circbuf.h`) -- producer/consumer
+with acquire/release:
 
 ```cpp
 // Producer: store pointer with RELEASE semantics.
@@ -585,12 +587,12 @@ instructions).
 
 ## 6. Lock-Free Data Structures
 
-**Files:** `src/mako/circbuf.h`, `src/deptran/concurrentqueue.h`
+**Files:** `src/deptran/concurrentqueue.h`
 
 ### Circular Buffer (MPSC -- Multiple Producers, Single Consumer)
 
 ```cpp
-// src/mako/circbuf.h
+// src/mako/circbuf.h at commit fd3ed37e1 (removed from the tree)
 
 template <typename Tp, unsigned int Capacity>
 class circbuf {
@@ -655,7 +657,7 @@ This prevents two producers from writing to the same slot.
 
 ### Moodycamel Concurrent Queue (MPMC)
 
-The codebase also includes the **moodycamel lock-free queue**
+The codebase includes the **moodycamel lock-free queue**
 (`src/deptran/concurrentqueue.h`), which is a highly optimized multi-producer,
 multi-consumer queue with per-producer blocks and efficient memory reclamation.
 It is used in the Deptran transaction framework.
@@ -667,7 +669,7 @@ It is used in the Deptran transaction framework.
 - **Memory reclamation:** Lock-free structures can't simply `delete` nodes that other
   threads might be reading. Solutions: RCU (Section 7), hazard pointers, or
   epoch-based reclamation.
-- **Bounded vs unbounded:** `circbuf` is bounded (fixed capacity). If producers
+- **Bounded vs unbounded:** The `circbuf` above is bounded (fixed capacity). If producers
   outpace the consumer, `enq()` blocks (spins). Size the capacity based on expected
   throughput.
 

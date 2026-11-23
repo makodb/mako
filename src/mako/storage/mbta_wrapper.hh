@@ -134,8 +134,8 @@ std::atomic<long> ht_del(0);
 // the historical table lifetime (tables are never torn down mid-run;
 // close_index has no callers).
 //
-// (mbta_wrapper_norm.hh / mbta_wrapper_arena.hh are unused legacy
-// copies of this file; they are not included anywhere.)
+// (The unused legacy copies of this file have been deleted; this is
+// the only one.)
 // ============================================================================
 
 // MassTrans table type at namespace scope, so the kernels and external

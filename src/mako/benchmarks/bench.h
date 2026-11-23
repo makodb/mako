@@ -31,10 +31,8 @@ inline void report_benchmark_resource_exhaustion(
   }
 }
 
-extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 extern bench_runner* tpcc_do_test(abstract_db *db, int argc, char **argv, int, bench_runner *);
 extern bench_runner* tpcc_do_test(abstract_db *db, int argc, char **argv, int, bench_runner *, int shard_index);
-extern void tpcc_simple_do_test(abstract_db *db, int argc, char **argv);
 extern void queue_do_test(abstract_db *db, int argc, char **argv);
 extern void encstress_do_test(abstract_db *db, int argc, char **argv);
 extern void bid_do_test(abstract_db *db, int argc, char **argv);

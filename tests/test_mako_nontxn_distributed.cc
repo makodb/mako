@@ -1,6 +1,6 @@
 // Distributed gating tests for docs/storage-interface.md.
 //
-// Two shards in ONE process, mirroring examples' ut/simpleShards.cc:
+// Two shards in ONE process:
 //   - Server role: FastTransport bound to shard 1's URI + ShardServer
 //     with its own LOCAL-view table objects, running in detached
 //     threads (event-driven).
