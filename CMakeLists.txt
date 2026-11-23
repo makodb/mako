@@ -3582,6 +3582,41 @@ if(MAKO_CARGO_EXECUTABLE)
         VERBATIM
         COMMENT "Checking the Rust STO workspace and native integration"
     )
+    # Component tests. The transaction manager runs on its in-memory test
+    # datatypes. The tree tests link the narrow mt_* ABI archive.
+    add_custom_target(rust_sto_transaction_tests
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            ${_MAKO_RUST_STO_SCOPED_SANITIZER_ENV}
+            "${MAKO_CARGO_EXECUTABLE}" test --locked
+            --target-dir "${CMAKE_CURRENT_BINARY_DIR}/rust-workspace-target"
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            -p sto-core -p sto-test-datatypes --all-features
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/crates"
+        USES_TERMINAL VERBATIM
+        COMMENT "Running Rust transaction manager tests on in-memory datatypes"
+    )
+    set(_MAKO_MTREE_BOUNDARY_ENV
+        "MAKO_MTREE_NATIVE_INTEGRATION=1"
+        "MAKO_MTREE_NATIVE_LIB_DIRS=$<TARGET_FILE_DIR:mako_mtree_boundary>:$<TARGET_FILE_DIR:masstree>:${_MAKO_CXX_COMPILER_ROOT}/lib"
+        "MAKO_MTREE_NATIVE_LIBS=static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+        "${_MAKO_MTREE_LOADER_PATH_VARIABLE}=${_MAKO_CXX_COMPILER_ROOT}/lib")
+    add_custom_target(rust_masstree_tests
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            ${_MAKO_RUST_STO_SCOPED_SANITIZER_ENV}
+            ${_MAKO_MTREE_BOUNDARY_ENV}
+            "${MAKO_CARGO_EXECUTABLE}" test --locked
+            --target-dir "${CMAKE_CURRENT_BINARY_DIR}/rust-native-target"
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+            -p mtree-sys -p masstree
+        DEPENDS mako_mtree_boundary
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/crates"
+        USES_TERMINAL VERBATIM
+        COMMENT "Running Masstree ABI and Rust wrapper tests"
+    )
     # Keep the selected engine and its cache in the same instrumented link
     # closure. Passing all workspace features would select both backends.
     add_custom_target(rust_sto_cache_integration
@@ -3593,10 +3628,7 @@ if(MAKO_CARGO_EXECUTABLE)
             --unset=CARGO_ENCODED_RUSTFLAGS
             "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-cache-target"
             ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
-            "MAKO_MTREE_NATIVE_INTEGRATION=1"
-            "MAKO_MTREE_NATIVE_LIB_DIRS=$<TARGET_FILE_DIR:mako_mtree_boundary>:$<TARGET_FILE_DIR:masstree>:${_MAKO_CXX_COMPILER_ROOT}/lib"
-            "MAKO_MTREE_NATIVE_LIBS=static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
-            "${_MAKO_MTREE_LOADER_PATH_VARIABLE}=${_MAKO_CXX_COMPILER_ROOT}/lib"
+            ${_MAKO_MTREE_BOUNDARY_ENV}
             "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_rust_sto_cache_tests.py"
             --cargo "${MAKO_CARGO_EXECUTABLE}"
