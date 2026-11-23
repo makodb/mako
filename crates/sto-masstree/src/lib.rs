@@ -28,7 +28,9 @@ mod local_version_tests;
 
 mod distributed;
 use distributed::{publish_distributed_if_needed, DistributedVersion};
-pub use distributed::{ReadVisibility, VersionedRead, VersionedScan, VersionedScanRecord};
+pub use distributed::{
+    ReadVisibility, VersionedLookahead, VersionedRead, VersionedScan, VersionedScanRecord,
+};
 use mako_clock::distributed::DistributedTimeTerm;
 
 #[cfg(feature = "fixed-u64")]
