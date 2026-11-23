@@ -3185,6 +3185,46 @@ if(MAKO_CARGO_EXECUTABLE)
         $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
     add_dependencies(sto_tpcc_cpp_wrapper_scan_smoke
         mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
+
+    # Rust-engine sharding storage fixture: one scenario per process, driven
+    # by examples/rust_sharding_storage.py. It is not a CTest.
+    add_executable(rust_sharding_storage_fixture EXCLUDE_FROM_ALL
+        examples/rust_sharding_storage_fixture.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_include_directories(rust_sharding_storage_fixture PRIVATE
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+        ${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/include)
+    target_compile_options(rust_sharding_storage_fixture PRIVATE
+        ${BENCH_CXXFLAGS})
+    mako_force_include_masstree_config(
+        examples/rust_sharding_storage_fixture.cc
+        src/mako/storage/rust_sto_tpcc_wrapper.cc)
+    target_compile_definitions(rust_sharding_storage_fixture PRIVATE
+        CONFIG_H="${CONFIG_H}"
+        MAKO_RUST_STO_TPCC=1)
+    target_link_libraries(rust_sharding_storage_fixture PRIVATE
+        sto_tpcc_rust_ffi
+        mako
+        ${TXLOG_LINK_LIBS}
+        ${BENCH_LDFLAGS}
+        yaml-cpp
+        pthread
+        $<$<PLATFORM_ID:Linux>:util>
+        numa
+        event_pthreads
+        rocksdb
+        ${LIBEVENT_LDFLAGS}
+        ${GFLAGS_LDFLAGS}
+        ${PROTOBUF_LDFLAGS}
+        $<$<AND:$<NOT:$<BOOL:${MAKO_ASAN_ENABLED}>>,$<NOT:$<BOOL:${MAKO_TSAN_ENABLED}>>>:${JEMALLOC_LDFLAGS}>)
+    add_dependencies(rust_sharding_storage_fixture
+        mako sto_tpcc_rust_build ${TXLOG_BUILD_DEPS})
 else()
     message(STATUS "Cargo not found; sto_tpcc_bench target is unavailable")
 endif()
