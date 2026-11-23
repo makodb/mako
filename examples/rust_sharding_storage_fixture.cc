@@ -15,7 +15,8 @@
 //   RUST_SHARD_STORAGE FAIL <scenario>
 // Standard error carries `rust_sharding_fixture: ...` lines: one per stage
 // reached, the poll result, and per owner the calls the crate made through
-// the callback table (`calls`, `epochs`, and after an orderly stop `threads`).
+// the callback table (`calls`, `epochs`, `opens`, and after an orderly stop
+// `threads`).
 //
 // Exit code 0 follows PASS, which is printed only after both nodes have
 // stopped, the hosts are destroyed, this thread has left the engine and the
@@ -27,8 +28,9 @@
 // database under them.
 //
 // The crate never receives a callback table directly. It receives a copy in
-// which the two thread slots, the three storage verbs and the two epoch slots
-// are fixture functions that count the call and forward it unchanged. A
+// which the two thread slots, `open`, the three storage verbs and the two
+// epoch slots are fixture functions that count the call and forward it
+// unchanged. A
 // scenario's checks read those counts, and read the rows of both owners with
 // the adapter's own one-row verbs on the main thread once the migration has
 // ended. While a migration is in flight the main thread only polls: a first
@@ -126,6 +128,7 @@ struct OwnerCounts {
     rusty::sync::atomic::AtomicU64 leave{0};
     // Returns of thread_leave after which the thread still held an engine handle.
     rusty::sync::atomic::AtomicU64 left_attached{0};
+    rusty::sync::atomic::AtomicU64 opens{0};
     // The STO thread id of the owner's storage thread, -1 before it entered.
     rusty::sync::atomic::AtomicI32 slot{-1};
     rusty::sync::atomic::AtomicU64 cuts{0};
@@ -491,6 +494,15 @@ void fx_thread_leave(void* context) {
         counts[owner].left_attached.fetch_add(1);
 }
 
+// @unsafe - forwards. Both table handles are registered before the nodes
+// start, so the crate has no reason to ask; the count shows whether it did.
+uint32_t fx_open(void* context, uint64_t table, MakoShardBytes name, uint32_t asked,
+                 uint32_t proxy, uint32_t kind, uintptr_t* handle) {
+    const uint32_t owner = owner_of(context);
+    counts[owner].opens.fetch_add(1);
+    return real[owner].open(context, table, name, asked, proxy, kind, handle);
+}
+
 // @unsafe - forwards to the wrapped table on the crate's storage thread.
 uint32_t fx_scan_next(void* context, uint64_t table, MakoShardBytes lo, uint32_t has_hi,
                       MakoShardBytes hi, uint32_t has_after, MakoShardBytes after_coordinate,
@@ -534,12 +546,13 @@ uint32_t fx_epoch_drained(void* context, uint64_t cut) {
     return status;
 }
 
-// @safe - the table the crate receives: `table` with every slot but `open`
-// and `peer_call` counted. The crate never gets an unwrapped table.
+// @safe - the table the crate receives: `table` with every slot but
+// `peer_call` counted. The crate never gets an unwrapped table.
 MakoShardHost wrap(const MakoShardHost& table) {
     MakoShardHost wrapped = table;
     wrapped.thread_enter = fx_thread_enter;
     wrapped.thread_leave = fx_thread_leave;
+    wrapped.open = fx_open;
     wrapped.scan_next = fx_scan_next;
     wrapped.put = fx_put;
     wrapped.remove = fx_remove;
@@ -583,6 +596,9 @@ void report_calls() {
                 static_cast<unsigned long long>(seen.drained_ok.load()),
                 static_cast<unsigned long long>(seen.drained_other.load()));
     }
+    for (uint32_t owner = 0; owner < kOwners; ++owner)
+        fprintf(stderr, "rust_sharding_fixture: opens owner=%u open=%llu\n", owner,
+                static_cast<unsigned long long>(counts[owner].opens.load()));
 }
 
 // @unsafe - stdio is not borrow-checked.

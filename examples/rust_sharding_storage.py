@@ -82,6 +82,10 @@ ENTERED_AND_LEFT = [
     r"^rust_sharding_host: left owner=1$",
     r"^rust_sharding_fixture: threads owner=0 enter=1 enter_ok=1 leave=1 attached_after_leave=0$",
     r"^rust_sharding_fixture: threads owner=1 enter=1 enter_ok=1 leave=1 attached_after_leave=0$",
+    # Both table handles are registered before the nodes start, so the crate
+    # never asks the host to open one.
+    r"^rust_sharding_fixture: opens owner=0 open=0$",
+    r"^rust_sharding_fixture: opens owner=1 open=0$",
 ]
 FIRST_USE_COMMITTED = [
     r"^mako_sto_shard_host: first scan_next owner=0 table=1001$",

@@ -76,7 +76,6 @@ uint32_t thread_enter(void* context, uint32_t owner) {
     if (entered_host || owner != host.owner) return MAKO_SHARD_INVALID;
     if (!dynamic_cast<rust_sto_tpcc_wrapper*>(host.db)) return MAKO_SHARD_INVALID;
     bool attached = false;
-    bool registered = false;
     try {
         // open_index, thread_init and every getShardIndex() on this thread
         // answer `owner` from here on.
@@ -94,7 +93,6 @@ uint32_t thread_enter(void* context, uint32_t owner) {
         if (!thread) throw std::runtime_error("no idle engine handle after thread_init");
         if (mako_sto_shard_thread_register(context, owner, thread) != MAKO_SHARD_OK)
             throw std::runtime_error("the Rust verbs refused the thread handle");
-        registered = true;
         entered_host = &host;
         // @unsafe { stdio is not borrow-checked }
         fprintf(stderr, "rust_sharding_host: entered owner=%u slot=%d\n", owner, TThread::id());
@@ -107,14 +105,14 @@ uint32_t thread_enter(void* context, uint32_t owner) {
         // @unsafe { stdio is not borrow-checked }
         fprintf(stderr, "rust_sharding_host: thread_enter failed for owner=%u\n", owner);
     }
-    if (registered) (void)mako_sto_shard_thread_unregister(context);
+    // Only a failure comes here, and it happened before the Rust verbs took
+    // the thread handle: there is nothing to unregister.
     if (attached) {
         try {
             host.db->thread_end();
         } catch (...) {
         }
     }
-    entered_host = nullptr;
     BenchmarkConfig::clearThreadLocalShardIndex();
     SiloRuntime::BindCurrentThread(nullptr);
     MasstreeContext::BindCurrentThread(nullptr);
