@@ -515,6 +515,16 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         TARGET capacity
         EXPECTED_VARIABLE _sto_tpcc_capacity_expected_tests)
 
+    # The sharding storage host on the Rust engine. The cases share one
+    # process and run on parallel threads; each creates its own database.
+    set(_sto_tpcc_shard_host_expected_tests
+        protocol_scan_with_limit_one_cannot_cross_more_tombstones_than_the_item_cap)
+    _mako_run_native_suite(
+        LABEL "Rust STO sharding storage host integration"
+        PACKAGE sto-tpcc-ffi
+        TARGET shard_host
+        EXPECTED_VARIABLE _sto_tpcc_shard_host_expected_tests)
+
     get_filename_component(_sto_tpcc_test_dir
         "${MAKO_STO_TPCC_NATIVE_TEST}" DIRECTORY)
     set(_sto_tpcc_trusted_test "${_sto_tpcc_test_dir}/trusted_ffi.rs")
