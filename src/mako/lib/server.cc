@@ -12,6 +12,7 @@
 // unqualified lock_guard/allocator references ambiguous).
 #include "sto/Transaction.hh"
 #include "storage/mbta_wrapper.hh"
+#include "storage/shard_scan_page.hh"
 #if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
@@ -71,6 +72,7 @@ namespace mako
 
     // @unsafe - only map traversal is locked; indexes have process lifetime.
     abstract_ordered_index* ShardReceiver::table_for(int id) const {
+        if (auto* selected = sharding_received_table(id)) return selected;
         auto tables = tables_.lock().unwrap();
         auto found = tables->find(id);
         return found == tables->end() ? nullptr : found->second;
@@ -95,13 +97,18 @@ namespace mako
         try {
             if (request->length > full_scan_request_capacity)
                 throw abstract_db::abstract_abort_exception();
-            auto* index = dynamic_cast<mbta_ordered_index*>(require_table(request->table_id));
-            if (!index || index->get_is_remote())
-                throw abstract_db::abstract_abort_exception();
+            auto* table = require_table(request->table_id);
             size_t page_length = 0;
-            oi_mbta_full_scan_page(index->mbta, request->sharding,
-                request->payload, request->length, response->payload,
-                sizeof(response->payload), &page_length);
+            if (auto* reader = dynamic_cast<ShardScanPageReader*>(table)) {
+                reader->read_scan_page(request->sharding, request->payload, request->length,
+                    response->payload, sizeof(response->payload), &page_length);
+            } else {
+                auto* index = dynamic_cast<mbta_ordered_index*>(table);
+                if (!index || index->get_is_remote()) throw abstract_db::abstract_abort_exception();
+                oi_mbta_full_scan_page(index->mbta, request->sharding,
+                    request->payload, request->length, response->payload,
+                    sizeof(response->payload), &page_length);
+            }
             response->length = static_cast<uint32_t>(page_length);
             response->status = ErrorCode::SUCCESS;
         } catch (const abstract_db::abstract_abort_exception&) {
@@ -138,7 +145,7 @@ namespace mako
             r->req_nr = number; r->status = status; r->len = 0;
             return offsetof(get_response_t, value);
         }
-        if (kind == validateReqType) {
+        if (kind == validateReqType || kind == getTimestampReqType) {
             auto* r = reinterpret_cast<get_int_response_t*>(output);
             r->req_nr = number; r->status = status; r->result = 0;
             r->shard_index = TThread::get_shard_index();
@@ -165,7 +172,8 @@ namespace mako
             || kind == lockReqType || kind == batchLockReqType || kind == fullScanReqType;
         const bool terminal = kind == abortReqType || kind == installReqType
             || kind == unLockReqType || standalone;
-        if (!(piece || terminal || kind == validateReqType))
+        const bool control = kind == validateReqType || kind == getTimestampReqType;
+        if (!(piece || terminal || control))
             return DispatchRequest(kind, input, output);
 
         // All shard transaction requests share this prefix by construction.
@@ -188,8 +196,7 @@ namespace mako
             // with an unknown INSTALL outcome keeps its frame, and no backend's
             // live participant frame is ever reset here; the forwarded-standalone
             // boundary below obeys the same rule through foreign_frame.
-            if (TThread::mode() == 1 && TThread::txn && !TThread::txn->in_progress()
-                && !participant_unknown && !db->shard_participant_active())
+            if (TThread::mode() == 1 && !participant_unknown && !db->shard_participant_active())
                 db->shard_reset();
             return length;
         }
@@ -212,6 +219,8 @@ namespace mako
             if (peer.terminal || number <= peer.request)
                 return sharding_error_reply(kind, identity, number, ErrorCode::ERROR, output);
         }
+        if (participant_unknown)
+            return sharding_error_reply(kind, identity, number, ErrorCode::UNKNOWN, output);
         if (request.transaction.sequence > peer.sequence && peer.sequence != 0 && !peer.terminal)
             return sharding_error_reply(kind, identity, number, ErrorCode::SERVER_BUSY, output);
         // The term travels in the participant identity; req_nr is a plain sequence.
@@ -236,7 +245,7 @@ namespace mako
         const size_t reply_capacity = kind == fullScanReqType ? sizeof(full_scan_response_t)
             : standalone ? sizeof(client_kv_response_t)
             : (kind == getReqType || kind == scanReqType) ? sizeof(get_response_t)
-            : kind == validateReqType ? sizeof(get_int_response_t)
+            : control ? sizeof(get_int_response_t)
             : sizeof(basic_response_t);
         peer.reply.reserve(reply_capacity);
         if (!sharding_bind_request(request))
@@ -290,12 +299,11 @@ namespace mako
 
         // Engine-aborted pieces are terminal too. No terminal response is retained
         // until all physical unlock/cleanup effects have actually completed.
-        const bool completed = terminal || !TThread::txn || !TThread::txn->in_progress();
-        if (completed) {
-            // An INSTALL whose outcome is unknown keeps its quarantined frame, and
-            // a refused standalone op never ends another attempt's live frame.
-            if (!participant_unknown && !foreign_frame
-                && TThread::txn && TThread::txn->in_progress())
+        const auto completion = mako_sharding_complete_request(
+            terminal, db->shard_participant_active(), participant_unknown, foreign_frame);
+        const bool finish = completion == MAKO_SHARD_FINISH || completion == MAKO_SHARD_ABORT_THEN_FINISH;
+        if (finish) {
+            if (completion == MAKO_SHARD_ABORT_THEN_FINISH)
                 db->shard_abort_txn(nullptr);
             sharding_finish_request();
             // The frame may have ended outside CompleteParticipant (an exception
@@ -305,10 +313,10 @@ namespace mako
         peer.sequence = request.transaction.sequence;
         peer.request = number;
         peer.kind = kind;
-        peer.terminal = completed;
-        peer.aborted = completed && kind != installReqType && !standalone;
+        peer.terminal = completion != MAKO_SHARD_KEEP_OPEN;
+        peer.aborted = peer.terminal && kind != installReqType && !standalone;
         peer.reply.assign(output, length);
-        if (completed && TThread::mode() == 1 && !participant_unknown && !foreign_frame)
+        if (finish && TThread::mode() == 1)
             db->shard_reset();
         return length;
     }
@@ -1207,8 +1215,8 @@ namespace mako
             // The L3 non-txn ops retry OCC aborts internally; anything
             // escaping here is unexpected — surface as an error.
             status = ErrorCode::ERROR;
-            if (TThread::txn && TThread::txn->in_progress())
-                TThread::txn->silent_abort();
+            if (db->shard_participant_active())
+                db->shard_abort_txn(nullptr);
         }
 
         TThread::set_mode(saved_mode);

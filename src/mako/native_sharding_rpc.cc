@@ -10,6 +10,12 @@
 namespace mako {
 namespace {
 constexpr unsigned kNativeShardingPortDelta = 20000;
+// Peer traffic carries the engine on every call, including HELLO and retries.
+// Unmarked peer operations retain the original C++ wire representation.
+constexpr uint32_t kRustPeerOperation = uint32_t{1} << 31;
+bool admin_operation(uint32_t operation) {
+    return operation == 100 || operation == 101 || operation == 102;
+}
 
 // @unsafe - std::string is the generated srpc wire type; bytes remain borrowed.
 MakoShardBytes bytes(const std::string& value) {
@@ -41,9 +47,10 @@ void complete(void* context, uint32_t status, MakoShardBytes reply) {
 
 class NativeService final : public janus::NativeShardingService {
     const uint32_t owner_;
+    const bool rust_storage_;
 public:
     // @safe - immutable actual participant identity, never read from a request.
-    explicit NativeService(uint32_t owner) : owner_(owner) {}
+    NativeService(uint32_t owner, bool rust_storage) : owner_(owner), rust_storage_(rust_storage) {}
 
     // @unsafe - poll-thread work is limited to copying the payload into Rust's
     // queue and moving deferred ownership. No storage or peer RPC runs here.
@@ -51,8 +58,14 @@ public:
                 srpc::DeferredReply deferred) const override {
         auto pending = rusty::make_box<PendingReply>(response, std::move(deferred));
         auto* context = pending.into_raw();
+        const uint32_t operation = request.operation & ~kRustPeerOperation;
+        const bool marked = (request.operation & kRustPeerOperation) != 0;
+        if (admin_operation(operation) ? marked : marked != rust_storage_) {
+            complete(context, MAKO_SHARD_INVALID, {nullptr, 0});
+            return;
+        }
         const uint32_t status = mako_sharding_dispatch(
-            owner_, request.operation, bytes(request.payload), complete, context);
+            owner_, operation, bytes(request.payload), complete, context);
         if (status != MAKO_SHARD_OK) complete(context, status, {nullptr, 0});
     }
 };
@@ -105,7 +118,7 @@ uint32_t NativeShardingHost::start_service() {
         const auto address = native_sharding_address(*config, owner, true);
         server = rusty::Some(rusty::make_box<srpc::Server>(
             srpc::Server::new_(rusty::Some(poll.clone()))));
-        server.as_mut().unwrap()->reg_service_typed(rusty::make_box<NativeService>(owner));
+        server.as_mut().unwrap()->reg_service_typed(rusty::make_box<NativeService>(owner, rust_storage));
         if (server.as_mut().unwrap()->start(reinterpret_cast<const int8_t*>(address.c_str())) != 0)
             return MAKO_SHARD_IO;
         return MAKO_SHARD_OK;
@@ -124,6 +137,7 @@ void NativeShardingHost::stop_accepting() {
 uint32_t native_sharding_peer_call(void* context, uint32_t owner, uint32_t operation,
                                     MakoShardBytes payload, MakoShardReplySink sink,
                                     void* sink_context) {
+    if (operation & kRustPeerOperation) return MAKO_SHARD_INVALID;
     try {
         auto& host = *static_cast<NativeShardingHost*>(context);
         auto client = [&]() -> rusty::Option<rusty::Arc<srpc::Client>> {
@@ -147,7 +161,8 @@ uint32_t native_sharding_peer_call(void* context, uint32_t owner, uint32_t opera
         if (client.is_none()) return MAKO_SHARD_IO;
         janus::NativeShardingProxy proxy(const_cast<srpc::Client*>(client.as_ref().unwrap().get()));
         janus::NativeShardingProxy::RpcInvokeRequest request;
-        request.operation = operation;
+        request.operation = host.rust_storage && !admin_operation(operation)
+            ? operation | kRustPeerOperation : operation;
         if (payload.len) request.payload.assign(reinterpret_cast<const char*>(payload.data), payload.len);
         auto result = proxy.Invoke(request);
         if (result.is_err()) {

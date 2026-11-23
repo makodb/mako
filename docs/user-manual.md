@@ -278,14 +278,18 @@ target. `sto_tpcc_bench` is excluded from the default build; it compiles the
 same `dbtest.cc` with the Rust STO TPC-C adapter (`sto-tpcc-ffi`) and accepts
 `cpp` or `rust`.
 
-The Rust adapter serves TPC-C only. With one local, non-replicated shard it
+With one local, non-replicated shard, the Rust TPC-C adapter
 runs entirely in-process. With more than one shard, or with
 `--is-replicated`, it switches to a participant protocol mode with remote
 proxies, shard-RPC participants and replay tables, so it is no longer limited
-to a single local shard. It does not take part in native sharding: run it
-without `MAKO_CLUSTER_CONFIG`. C++ remains the default engine, and the Rust
-paths are not production-qualified; see
-[Rust STO](architecture/rust-sto.md) for scope and status.
+to a single local shard. Set
+`MAKO_CLUSTER_CONFIG=1` to enable native sharding on non-replicated Rust
+owners. Use the same storage engine on every migration peer. For TPC-C, each
+owner opens the eleven governed tables for every warehouse before loading.
+The per-owner selector limit allows up to 18 warehouses across the cluster.
+Applications that use raw-key tables register each participating owner's
+physical index before bootstrap. C++ remains the default storage engine.
+See [Rust STO](architecture/rust-sto.md) for qualification status.
 
 The original Silo/NDB transaction engine is retired. `SiloRuntime` remains
 allocator, RCU, and Masstree runtime support, for both engines.

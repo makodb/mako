@@ -14,6 +14,8 @@
 
 #include "abstract_db.h"
 #include "resource_exhausted.hh"
+#include "shard_scan_page.hh"
+#include "cluster/full_scan.h"
 #include "benchmarks/tpcc_fixed_batch.h"
 #include "sto_tpcc_ffi.h"
 
@@ -52,6 +54,7 @@ size_t destroyed_table_count_for_testing() noexcept;
 // Native Rust storage with affine participants and a narrow legacy RPC/log
 // bridge. Remote facades carry routing IDs, never independent local rows.
 class rust_sto_tpcc_ordered_index final : public FullOrderedIndex,
+                                          public mako::ShardScanPageReader,
                                           public TxnFixedReadCapability,
                                           public TxnFixedModifyCapability,
                                           public TxnFixedPutCapability {
@@ -108,8 +111,14 @@ public:
   bool shard_scan(const std::string &start_key, const std::string *end_key,
                   oi_scan_callback &callback, str_arena *arena) override;
 
-  // @unsafe - Sharding storage host only: the borrowed native table of an
-  // owner-local index, nullptr for a remote facade. Ownership stays here.
+  void read_scan_page(const mako::ShardingRequest& request, const uint8_t* input,
+                      size_t length, uint8_t* output, size_t capacity,
+                      size_t* output_length) override;
+
+  // The origin-side proxy shares this table's selector ID. Admission supplies
+  // the current owner for each remote operation.
+  rusty::Box<rust_sto_tpcc_ordered_index> make_sharding_proxy() const;
+  // @unsafe - Borrowed native table of an owner-local index.
   sto_tpcc_table *sharding_host_table() const noexcept {
     return is_remote_ ? nullptr : table_;
   }
@@ -117,6 +126,17 @@ public:
 private:
   // @unsafe - Colocated replicated rows still use their owning participant.
   bool routes_remotely() const noexcept;
+  struct ScanDelivery;
+  void scan_protocol_bounds(MakoScanBounds bounds, oi_scan_callback& callback,
+                            bool strip_metadata);
+  struct PointTarget {
+    const rust_sto_tpcc_ordered_index *index;
+    int remote_owner; // -1 for local execution
+  };
+  PointTarget resolve_point(lcdf::Str key) const;
+  void scan_local(bool reverse, const std::string &start_key,
+                  const std::string *end_key, oi_scan_callback &callback,
+                  bool strip_value_metadata);
   rust_sto_tpcc_wrapper *owner_;
   sto_tpcc_table *table_;
   int32_t table_id_;
@@ -140,6 +160,9 @@ public:
   ~rust_sto_tpcc_wrapper() noexcept override;
 
   void init() override;
+  void configure_native_sharding(mako::NativeShardingHost&, MakoShardHost&) override;
+  bool preopen_native_warehouses(uint64_t table, uint32_t owner, uint32_t total) override;
+  void native_sharding_stopped(uint32_t owner) noexcept override;
   void on_load_complete() override;
   // Quiescent snapshots after loading, after workers join, and on failure.
   void report_capacity_usage(const char *phase) const override;
@@ -227,8 +250,11 @@ private:
   rust_sto_tpcc_ordered_index *table_by_id(int32_t table_id) const noexcept;
 
   sto_tpcc_db *db_;
+  void release_sharding_indexes() noexcept;
+  bool sharding_uses_index(abstract_ordered_index*) const;
   std::map<int, int32_t> next_table_ids_;
   bool protocol_mode_ = false;
+  bool uses_protocol() const noexcept;
   bool replicated_ = false;
   // open_index returns borrowed pointers. This wrapper owns every facade until
   // close_index removes it or the wrapper itself is destroyed. Publication is
@@ -249,6 +275,7 @@ private:
 
   static thread_local sto_tpcc_thread *tls_thread_;
   static thread_local bool tls_transaction_active_;
+  static thread_local bool tls_sharding_engine_;
   static thread_local bool tls_benchmark_thread_initialized_;
   static thread_local rust_sto_tpcc_wrapper *tls_owner_;
   static thread_local uint32_t tls_term_;
@@ -263,24 +290,21 @@ private:
                                        sto_tpcc_status status);
   static void require_ok(const char *operation, sto_tpcc_status status);
   static void require_txn_handle(c_void *txn);
+  static void require_fast_txn(c_void *txn);
   static void begin_current_transaction();
+  void abort_one_operation();
   static void abort_current_transaction_noexcept();
+  static void finish_current_transaction();
   // @unsafe - Synchronous legacy transport/replication callbacks never unwind.
   static sto_tpcc_status protocol_callback(
       void *context, sto_tpcc_protocol_request *request) noexcept;
   static void mutate_protocol(const rust_sto_tpcc_ordered_index &index,
                               lcdf::Str key, const std::string &value,
                               uint8_t operation, bool lock_now);
-  static bool remote_get(const rust_sto_tpcc_ordered_index &index,
+  static bool remote_get(const rust_sto_tpcc_ordered_index &index, int remote_owner,
                          lcdf::Str key, std::string &value,
                          size_t max_bytes_read);
 
-  bool get_raw(const sto_tpcc_table *table, lcdf::Str key,
-               std::string &encoded_value,
-               size_t max_bytes_read = std::string::npos);
-  // The *_active_raw variants require the caller to have just validated the
-  // transaction handle. Checked raw entry points remain for standalone and
-  // shard-facing paths.
   bool get_active_raw(const sto_tpcc_table *table, lcdf::Str key,
                       std::string &encoded_value,
                       size_t max_bytes_read = std::string::npos);
@@ -290,9 +314,6 @@ private:
                       const std::string &encoded_value, bool insert_only);
   bool remove_raw(const sto_tpcc_table *table, lcdf::Str key);
   bool remove_active_raw(const sto_tpcc_table *table, lcdf::Str key);
-  void scan_raw(const sto_tpcc_table *table, bool reverse,
-                const std::string &start_key, const std::string *end_key,
-                oi_scan_callback &callback, bool strip_value_metadata);
   void scan_active_raw(const sto_tpcc_table *table, bool reverse,
                        const std::string &start_key,
                        const std::string *end_key,

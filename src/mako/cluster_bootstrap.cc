@@ -46,10 +46,12 @@ void BootstrapClusterConfig(abstract_db* db) {
         runtime = const_cast<SiloRuntime*>(shard->runtime.get());
     }
     auto host = rusty::make_box<mako::NativeShardingHost>(db, owner, nshards, runtime);
-    const auto callbacks = host->callbacks();
+    auto callbacks = host->callbacks();
+    db->configure_native_sharding(*host, callbacks);
     const uint32_t status = mako_sharding_start_node(owner, nshards,
         bench.getIsReplicated() == 0 ? 1 : 0, &callbacks);
     if (status != MAKO_SHARD_OK) {
+        db->native_sharding_stopped(owner);
         srpc::Log_error("Native sharding start rejected owner {} (status {})", owner, status);
         throw abstract_db::abstract_abort_exception();
     }
@@ -57,6 +59,7 @@ void BootstrapClusterConfig(abstract_db* db) {
     if (listening != MAKO_SHARD_OK) {
         host->stop_accepting();
         mako_sharding_stop_node(owner);
+        db->native_sharding_stopped(owner);
         srpc::Log_error("Native sharding service failed for owner {} (status {})", owner, listening);
         throw abstract_db::abstract_abort_exception();
     }
@@ -70,6 +73,7 @@ void ShutdownClusterConfig(uint32_t owner) {
     if (owner >= local->size() || (*local)[owner].is_none()) return;
     (*local)[owner].as_ref().unwrap()->stop_accepting();
     mako_sharding_stop_node(owner);
+    (*local)[owner].as_ref().unwrap()->db->native_sharding_stopped(owner);
     (*local)[owner] = rusty::None;
 }
 
@@ -81,6 +85,8 @@ void ShutdownClusterConfig() {
         if (host.is_some()) host.as_ref().unwrap()->stop_accepting();
     for (auto& host : *local)
         if (host.is_some()) mako_sharding_stop_node(host.as_ref().unwrap()->owner);
+    for (auto& host : *local)
+        if (host.is_some()) host.as_ref().unwrap()->db->native_sharding_stopped(host.as_ref().unwrap()->owner);
     local->clear();
 }
 } // namespace janus

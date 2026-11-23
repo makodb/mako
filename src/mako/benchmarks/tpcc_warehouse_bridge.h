@@ -69,23 +69,28 @@ inline uint32_t tpcc_open_warehouse(void* context, uint64_t table, uint32_t ware
 
 // @unsafe - setup-only FFI and process-lifetime database borrow. The native
 // catalog is configured before load, while participant activation follows load.
-inline void tpcc_initialize_native(abstract_db* db, uint32_t participant,
-                                    size_t warehouses_per_shard, size_t total,
+inline void tpcc_initialize_native(size_t warehouses_per_shard, size_t total,
                                     bool micro) {
     if (!tpcc_native_warehouses_enabled()) return;
     if (warehouses_per_shard > std::numeric_limits<uint32_t>::max()
         || total > std::numeric_limits<uint32_t>::max())
         throw abstract_db::abstract_abort_exception();
     if (mako_sharding_catalog_tpcc(micro ? 1 : 0) != MAKO_SHARD_OK
-        || mako_sharding_warehouse_init(warehouses_per_shard, total) != MAKO_SHARD_OK
-        || mako_sharding_warehouse_opener(participant, db, tpcc_open_warehouse) != MAKO_SHARD_OK)
+        || mako_sharding_warehouse_init(warehouses_per_shard, total) != MAKO_SHARD_OK)
         throw abstract_db::abstract_abort_exception();
 }
 
 // @unsafe - physical local materialization is independent of the published
 // route. The migration data plane uses this same FFI before destination copy.
 inline FullOrderedIndex* tpcc_local_warehouse(uint64_t table, uint32_t warehouse,
-                                              uint32_t owner) {
+                                              uint32_t owner, bool preopened) {
+    if (preopened) {
+        const char be[4] = {static_cast<char>(warehouse >> 24), static_cast<char>(warehouse >> 16),
+                            static_cast<char>(warehouse >> 8), static_cast<char>(warehouse)};
+        auto physical = get_table_registry().native_handle(table, owner, true, {be, sizeof(be)});
+        if (physical.is_none()) throw abstract_db::abstract_abort_exception();
+        return physical.unwrap();
+    }
     uintptr_t handle = 0;
     if (mako_sharding_warehouse_local(table, warehouse, owner, &handle) != MAKO_SHARD_OK
         || !handle) throw abstract_db::abstract_abort_exception();

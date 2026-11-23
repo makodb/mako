@@ -375,6 +375,10 @@ struct oi_mbta_scan_delivery {
   bool stopped = false;
   std::exception_ptr exception;
 
+  void begin_remote(uint32_t) {}
+  void local(mbta_table* source, const mako::ShardingRequest& request,
+             MakoScanBounds bounds, MakoShardRoute route);
+
   // @unsafe - shared epoch/read-set bookkeeping and callback exception boundary.
   uint32_t deliver(MakoShardBytes key, std::string& value) {
     try {
@@ -462,20 +466,28 @@ inline void oi_mbta_scan_direct(mbta_table* table, MakoShardBytes lo,
 inline mbta_table* oi_mbta_scan_local_table(mbta_table* source,
                                            const mako::ShardingRequest& request);
 
-struct oi_mbta_scan_dispatch {
-  mbta_table* table;
+inline void oi_mbta_scan_delivery::local(mbta_table* source,
+    const mako::ShardingRequest& request, MakoScanBounds bounds, MakoShardRoute route) {
+  auto* table = oi_mbta_scan_local_table(source, request);
+  mako::sharding_require_interval(table->get_table_id(), bounds.lo, bounds.has_hi, bounds.hi, route);
+  oi_mbta_scan_direct(table, bounds.lo, bounds.has_hi, bounds.hi, bounds.reverse, *this);
+}
+
+template<typename Index, typename Delivery>
+struct oi_sharded_scan_dispatch {
+  Index* table;
   const std::string& lo;
   const std::string* hi;
   bool reverse;
   bool fixed;
-  oi_mbta_scan_delivery& delivery;
+  Delivery& delivery;
   std::exception_ptr exception;
 
   // @unsafe - one immutable native snapshot calls this bridge for each segment.
   static uint32_t segment(void* opaque, MakoShardBytes segment_lo,
                           uint32_t has_hi, MakoShardBytes segment_hi,
                           MakoShardRoute route) {
-    auto& self = *static_cast<oi_mbta_scan_dispatch*>(opaque);
+    auto& self = *static_cast<oi_sharded_scan_dispatch*>(opaque);
     try {
       const auto low = self.fixed ? oi_mbta_scan_bytes(self.lo) : segment_lo;
       const auto high = self.fixed
@@ -487,16 +499,10 @@ struct oi_mbta_scan_dispatch {
       request.grant = route.grant;
       request.snapshot_version = route.snapshot_version;
       if (route.grant.owner == uint32_t(TThread::get_shard_index())) {
-        mbta_table* local = oi_mbta_scan_local_table(self.table, request);
-        // Local routing is not authorization. Certify the complete captured
-        // scope before touching the engine or invoking any user callback.
-        // Fixed-coordinate bindings admit the warehouse, not its row keys.
-        mako::sharding_require_interval(local->get_table_id(), low,
-                                        bounded != 0, high, route);
-        oi_mbta_scan_direct(local, low, bounded != 0, high,
-                            self.reverse, self.delivery);
+        self.delivery.local(self.table, request, {low, high, {}, bounded, 0, self.reverse}, route);
         return self.delivery.stopped ? 1 : 0;
       }
+      self.delivery.begin_remote(route.grant.owner);
       const auto identity = oi_mbta_scan_identity(request);
       oi_mbta_scan_state state;
       oi_mbta_scan_require(mako_full_scan_new(
@@ -513,7 +519,7 @@ struct oi_mbta_scan_dispatch {
                 != mako::ErrorCode::SUCCESS)
           throw abstract_db::abstract_abort_exception();
         oi_mbta_scan_require(mako_full_scan_consume(state.scan,
-            oi_mbta_scan_bytes(response), oi_mbta_scan_delivery::row,
+            oi_mbta_scan_bytes(response), Delivery::row,
             &self.delivery, &done));
         if (self.delivery.exception) std::rethrow_exception(self.delivery.exception);
       }
@@ -525,10 +531,13 @@ struct oi_mbta_scan_dispatch {
   }
 };
 
+using oi_mbta_scan_dispatch = oi_sharded_scan_dispatch<mbta_table, oi_mbta_scan_delivery>;
+
 // @unsafe - snapshot traversal borrows no native mutex across RPC/user callbacks.
-inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
-                              const std::string* end, oi_scan_callback& callback,
-                              str_arena* arena, bool reverse, bool strip) {
+template<typename Index, typename Delivery>
+inline void oi_sharded_full_scan(Index* table, const std::string& start,
+                                 const std::string* end, bool reverse, Delivery& delivery) {
+  using Dispatch = oi_sharded_scan_dispatch<Index, Delivery>;
   // Engine reverse bounds are (end,start]. The appended NULs normalize bounds
   // only; every page cursor remains the exact last binary key, exclusively.
   std::string lower = reverse ? (end ? *end : std::string()) : start;
@@ -539,16 +548,15 @@ inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
   }
   const bool has_upper = reverse || end != nullptr;
   if (has_upper && lower >= upper) return;
-  oi_mbta_scan_delivery delivery{callback, arena, strip};
   // Genuinely disabled local scans need no native admission. Native-enabled
   // scans below select captured segments and admit each complete local scope.
   // Only remote segments require transport pages.
   if (!mako_sharding_enabled() && !table->get_is_remote()) {
-    oi_mbta_scan_direct(table, oi_mbta_scan_bytes(lower), has_upper,
-                        oi_mbta_scan_bytes(upper), reverse, delivery);
+    delivery.local(table, {}, {oi_mbta_scan_bytes(lower), oi_mbta_scan_bytes(upper),
+                               {}, has_upper, 0, reverse}, {});
     return;
   }
-  oi_mbta_scan_dispatch dispatch{table, lower, has_upper ? &upper : nullptr,
+  Dispatch dispatch{table, lower, has_upper ? &upper : nullptr,
                                 reverse, false, delivery};
   uint32_t status = MAKO_SHARD_OK;
   if (mako::sharding_admission_enabled()) {
@@ -561,11 +569,11 @@ inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
         coordinate_end.push_back('\0');
         status = mako::sharding_scan_segments(binding->table,
             oi_mbta_scan_bytes(coordinate), 1, oi_mbta_scan_bytes(coordinate_end),
-            reverse, oi_mbta_scan_dispatch::segment, &dispatch);
+            reverse, Dispatch::segment, &dispatch);
       } else {
         status = mako::sharding_scan_segments(binding->table,
             oi_mbta_scan_bytes(lower), has_upper, oi_mbta_scan_bytes(upper),
-            reverse, oi_mbta_scan_dispatch::segment, &dispatch);
+            reverse, Dispatch::segment, &dispatch);
       }
       if (dispatch.exception) std::rethrow_exception(dispatch.exception);
       oi_mbta_scan_require(status);
@@ -577,10 +585,17 @@ inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
       ? mako::sharding_scan_request(table->get_table_id(), start, request)
       : TThread::get_shard_index();
   if (owner < 0) throw abstract_db::abstract_abort_exception();
-  status = oi_mbta_scan_dispatch::segment(&dispatch, oi_mbta_scan_bytes(lower),
+  status = Dispatch::segment(&dispatch, oi_mbta_scan_bytes(lower),
       has_upper, oi_mbta_scan_bytes(upper), {{uint32_t(owner), 0}, MAKO_SHARD_NO_SNAPSHOT});
   if (dispatch.exception) std::rethrow_exception(dispatch.exception);
   if (status == 2) throw abstract_db::abstract_abort_exception();
+}
+
+inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
+                              const std::string* end, oi_scan_callback& callback,
+                              str_arena* arena, bool reverse, bool strip) {
+  oi_mbta_scan_delivery delivery{callback, arena, strip};
+  oi_sharded_full_scan(table, start, end, reverse, delivery);
 }
 
 // @unsafe - Sto txn range read; strips EXTRA_BITS from delivered values

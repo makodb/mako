@@ -101,6 +101,7 @@ namespace mako {
 struct NativeShardingHost {
     abstract_db* db;
     const uint32_t owner;
+    bool rust_storage = false;  // Selected before the listener and peer workers start.
     SiloRuntime* runtime;
     rusty::Arc<srpc::PollThread> poll;
     rusty::Option<rusty::Box<srpc::Server>> server;

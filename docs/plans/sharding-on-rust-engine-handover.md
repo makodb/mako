@@ -1,8 +1,51 @@
 # Sharding and migration on the Rust transaction engine: plan and handover
 
-Written 2026-11-23. Work was stopped at the owner's request; this file is everything the next engineer needs to
-continue. Read sections 1 to 5 before touching anything. Paths starting with `notes/`, `tools/` and `prompts/` are
-relative to this folder, `~/mako-archive/handoff-sharding-on-rust-engine-20261123/`.
+Branch `sharding-on-rust-engine`, worktree `/var/tmp/mako-shard-rust`. Sections 1–9 preserve the original handoff at `e8872f308`. Paths beginning with `notes/`, `tools/` or `prompts/` in those sections refer to `~/mako-archive/handoff-sharding-on-rust-engine-20261123/`.
+
+## Resumed implementation
+
+| Milestone | What to check |
+| --- | --- |
+| Register the storage engine | Bootstrap chooses the Rust callbacks, keeps physical tables alive through shutdown, and fences each migration peer message by engine. C++ retains the original wire encoding. |
+| Admit ordinary transactions | Point and range operations use the captured route. Coordinators and helpers keep their epoch until the last commit or abort effect. A second read and a repeated request on one helper must return the correct value. |
+| Move a raw range under load | Hold a real writer across freeze, reject a late write, and compare both physical images after commit and abort. Use the former owner's original index to read, write and scan through the ordinary TCP participant protocol. |
+| Move warehouse tables | Address a row by warehouse **and** physical key. Move two warehouses containing the same key, reconcile stale destination rows, and verify the neighboring warehouse. Exercise benchmark bootstrap and a live move during the workload. |
+
+The Rust benchmark preopens each governed warehouse table on each participating owner before loaders attach. A physical index and its routing proxy share a selector. With eleven governed tables and one item selector, the 200-selector owner window accommodates 18 global warehouses. Replicated Rust migration stays disabled.
+
+The resumed implementation adds an exact-handle unregister operation to the native directory because an unsuccessful cold start leaves its pre-registered raw handle reachable. The receiver's completion decision now runs in the verified Rust admission module. The page reader obtains its row limit from the same Rust codec that writes the response.
+
+### Local verification
+
+Run these commands separately inside the build container.
+
+| Scope | Command |
+| --- | --- |
+| Rust transaction manager | `cmake --build build_docker --target rust_sto_transaction_tests` |
+| Masstree | `cmake --build build_docker --target rust_masstree_tests` |
+| Storage callback decisions, including warehouse cursor bounds | `./scripts/verify_shard_host_core.sh` |
+| Native sharding and receiver completion proofs | `./scripts/verify_native_sharding.sh` |
+| Rust migration, including real transactions over TCP | `cmake --build build_docker --target rust_sharding_storage_fixture && python3 examples/rust_sharding_storage.py` |
+| C++ compatibility | `./ci/ci.sh nativeShardingSmoke` |
+
+Verus checks the status, cursor and receiver decisions used by the running code. The Rust FFI, C++ adapter, actual epoch announcements, and TCP send/receive ordering are exercised by the integration fixture.
+
+For a live TPC-C move, start the two-owner workload in the build container.
+
+```sh
+MAKO_CLUSTER_CONFIG=1 build_docker/sto_tpcc_bench --storage-engine rust \
+    --shard-config src/mako/config/local-shards2-warehouses1.yml --local-shards 0,1 \
+    --paxos-proc-name localhost --num-threads 1 --runtime 60 --slow-exit
+```
+
+After both workers print `TPCC_BENCH_MEASURE_START`, use a second shell in the same container. The bounds below select warehouse 1 in the `warehouse` table. Repeat the poll until it reports a committed outcome.
+
+```sh
+build_docker/mako_admin begin 127.0.0.1:51000 837291 1 warehouse 00000001 00000002 0 1
+build_docker/mako_admin poll 127.0.0.1:51000 837291 1
+```
+
+On 2026-11-23 the component targets passed 406 transaction-manager tests and 32 Masstree tests. The migration driver reported six expected outcomes, including its intentionally failing C++-callback baseline. TPC-C passed with colocated owners and with one process per owner. Holding both workers at the load barrier until the move committed established that the former owner could complete NewOrder and Payment transactions using the new placement. The move also committed during an active TPC-C measurement. A constrained micro load exited with the documented resource-exhaustion status and released its preopened tables.
 
 ## 1. The goal and the owner's instructions
 
@@ -296,7 +339,9 @@ Commands, from the checkout root inside the container:
 |---|---|
 | The Verus gate (about 18 s) | `./scripts/verify_shard_host_core.sh` |
 | The existing sharding proof (about 13 min) | `./ci/ci.sh nativeShardingProof` |
-| Rust tests through the CMake runner | `cmake --build build_docker --target rust_masstree_native_integration -j 16` |
+| Rust transaction manager and in-memory test datatypes | `cmake --build build_docker --target rust_sto_transaction_tests` |
+| Masstree directory, native ABI and Rust wrapper | `cmake --build build_docker --target rust_masstree_tests` |
+| Integration of the transaction manager, Masstree adapter and native host | `cmake --build build_docker --target rust_masstree_native_integration -j 16` |
 | The test program's scenarios | `cmake --build build_docker --target rust_sharding_storage_fixture -j 16`, then `python3 examples/rust_sharding_storage.py` |
 | The C++ sharding smoke (must stay green) | `./ci/ci.sh nativeShardingSmoke` |
 | Rust engine binaries | `./ci/ci.sh rustStoBoundaryBinaries` |

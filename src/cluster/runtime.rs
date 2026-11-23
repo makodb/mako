@@ -208,6 +208,21 @@ impl Runtime {
         raw.insert(key,handle);
         Ok(())
     }
+    // The caller has joined its ordinary workers. Serialize with startup so it
+    // cannot start using a borrowed index while its owner is detaching it.
+    pub fn raw_unregister(&self, table: u64, owner: u32, proxy: bool, handle: usize) -> Result<(),Status> {
+        let _lifecycle = self.lifecycle.lock();
+        if self.nodes.read().get(&owner).is_some_and(|node| !node.stopping.load(Ordering::Acquire)) {
+            return Err(Status::Invalid);
+        }
+        let mut raw = self.raw.lock();
+        let key = (table,owner,proxy);
+        if *raw.get(&key).ok_or(Status::NotFound)? != handle {
+            return Err(Status::Invalid);
+        }
+        raw.remove(&key);
+        Ok(())
+    }
     fn raw_handle(&self, table: u64, owner: u32, proxy: bool, host: Host) -> Result<usize,Status> {
         self.handle_live(owner)?;
         let kind = self.catalog.read().by_id(table).ok_or(Status::NotFound)?.kind as u32;

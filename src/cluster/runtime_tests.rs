@@ -11,6 +11,25 @@ struct Indexes {
     entries: Mutex<Vec<Box<HandleKey>>>,
 }
 
+#[test]
+fn release_before_node_start_forgets_only_the_matching_raw_handle() {
+    let runtime = Runtime::new(true);
+    assert_eq!(runtime.catalog_register(7, b"rows", TableKind::Governed, Coordinates::Raw, 0),
+               Status::Ok);
+    let original = Box::new(1u8);
+    let replacement = Box::new(2u8);
+    let first = (&*original as *const u8) as usize;
+    let second = (&*replacement as *const u8) as usize;
+    runtime.raw_register(7, 0, false, first).unwrap();
+    assert_eq!(runtime.local_table(7, b"", false, 0), Ok(first));
+    assert_eq!(runtime.raw_unregister(7, 0, false, second), Err(Status::Invalid));
+    runtime.raw_unregister(7, 0, false, first).unwrap();
+    assert_eq!(runtime.local_table(7, b"", false, 0), Err(Status::NotFound));
+    runtime.raw_register(7, 0, false, second).unwrap();
+    assert_eq!(runtime.raw_unregister(7, 0, false, first), Err(Status::Invalid));
+    assert_eq!(runtime.local_table(7, b"", false, 0), Ok(second));
+}
+
 // SAFETY: scoped threads borrow the live Indexes; the output belongs to Opener.
 unsafe extern "C" fn open_index(context: *mut c_void, table: u64, warehouse: u32,
     owner: u32, proxy: u32, output: *mut usize) -> u32

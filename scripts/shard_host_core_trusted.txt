@@ -12,4 +12,4 @@
 shard_host.rs:close_and_map      hands map_engine Stage::Closed only after the closing finish answered OK, with the status of the step that failed
 shard_host.rs:certify_read_only  hands map_engine Stage::ReadOnlyFinish with the status and the report of the committing finish
 shard_host.rs:commit_staged      hands map_engine Stage::Commit with the status and the report of sto_tpcc_protocol_commit
-shard_host.rs:scan_next          hands scan_arguments the caller's flags and spans unchanged; answers NOT_FOUND for Exhausted only after table_for and handle_is_idle; turns the two bounds into the engine's one for one
+shard_host.rs:scan_next          passes the received flags and spans to the raw or fixed-coordinate rule after checking the table and thread, then applies the returned bound to its physical scan. Enumeration, registration and native lookup are trusted

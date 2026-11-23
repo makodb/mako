@@ -4,8 +4,8 @@
 //! a table of C callbacks. This module is the engine side of the storage
 //! slots for a database that runs on this crate: the lookahead `scan_next`,
 //! the one-row writes `put` and `remove`, and the registry that leads from
-//! the crate's `(catalog table, owner)` to a native table and from the calling
-//! OS thread to its engine handle.
+//! a catalog table, owner, and optional warehouse to a native table, and from
+//! the calling OS thread to its engine handle.
 //!
 //! The module declares the C types it needs for itself. It neither depends on
 //! nor links the sharding crate; the C++ glue assigns the exports to the
@@ -19,7 +19,7 @@
 //! The decisions that crate holds are made there and only there: what a verb
 //! answers for an engine result (`map_engine`), and which arguments
 //! `scan_next` refuses, when a cursor ends the range and where the engine's
-//! scan begins (`scan_flags_valid`, `scan_arguments`). The module adds no rule
+//! scan begins (`scan_flags_valid`, `scan_arguments`, `fixed_scan`). The module adds no rule
 //! of its own to them; `scripts/verify_shard_host_core.sh` refuses a second
 //! definition of one of the core's names here.
 use super::*;
@@ -28,8 +28,9 @@ use mako_clock::distributed::DistributedTerm;
 #[cfg(test)]
 use shard_host_core::SHARD_RETRY;
 use shard_host_core::{
-    map_engine, scan_arguments, scan_flags_valid, Mapped, ScanLower, ScanRefusal, ScanStart, Stage,
-    ENGINE_FATAL, ENGINE_OK, SHARD_EXHAUSTED, SHARD_INVALID, SHARD_IO, SHARD_NOT_FOUND, SHARD_OK,
+    fixed_scan, map_engine, scan_arguments, scan_flags_valid, FixedScan, Mapped, ScanLower,
+    ScanRefusal, ScanStart, Stage, ENGINE_FATAL, ENGINE_OK, SHARD_EXHAUSTED, SHARD_INVALID,
+    SHARD_IO, SHARD_NOT_FOUND, SHARD_OK,
 };
 use std::{
     ffi::c_void,
@@ -133,8 +134,15 @@ thread_local! {
     static AFTER_WALK: Cell<Option<Box<dyn FnOnce()>>> = const { Cell::new(None) };
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PhysicalCoordinates {
+    Raw,
+    Warehouse { number: u32, total: u32 },
+}
+
 #[derive(Clone, Copy)]
 struct TableEntry {
+    coordinates: PhysicalCoordinates,
     /// The sharding catalog's id of the table.
     catalog_table: u64,
     owner: u32,
@@ -185,78 +193,81 @@ fn shard_status(operation: &str, mapped: Mapped) -> u32 {
     }
 }
 
+/// An attempt opened by this invocation on a previously idle handle.
+struct VerbAttempt {
+    thread: *mut StoTpccThread,
+    operation: &'static str,
+    open: bool,
+}
+
+impl VerbAttempt {
+    /// # Safety
+    /// `thread` is registered, idle and kept alive through the end of the verb.
+    unsafe fn begin(operation: &'static str, thread: *mut StoTpccThread) -> Result<Self, u32> {
+        let attempt = Self {
+            thread,
+            operation,
+            open: true,
+        };
+        // SAFETY: The caller checked that the handle is idle.
+        let begun = unsafe { sto_tpcc_protocol_begin(thread, TERM) };
+        if begun == ENGINE_OK {
+            Ok(attempt)
+        } else {
+            Err(close_and_map(attempt, begun))
+        }
+    }
+
+    fn finish(&mut self, committed: u32, report: &mut StoTpccProtocolReport) -> i32 {
+        // SAFETY: This guard owns this attempt on the calling thread.
+        let status = unsafe { sto_tpcc_protocol_finish(self.thread, committed, report) };
+        self.open = false;
+        status
+    }
+}
+
+impl Drop for VerbAttempt {
+    fn drop(&mut self) {
+        if self.open && self.finish(0, &mut StoTpccProtocolReport::default()) != ENGINE_OK {
+            fail_stop(self.operation);
+        }
+    }
+}
+
 /// Closes the attempt of a failed step and maps that step's engine status.
 /// Closing is a no-op that answers OK when nothing is open.
-///
-/// # Safety
-/// `thread` is the registered handle of the calling thread.
-unsafe fn close_and_map(operation: &str, thread: *mut StoTpccThread, status: i32) -> u32 {
+fn close_and_map(mut attempt: VerbAttempt, status: i32) -> u32 {
     let mut report = StoTpccProtocolReport::default();
-    // SAFETY: Guaranteed by the caller; the report is a live local.
-    if unsafe { sto_tpcc_protocol_finish(thread, 0, &mut report) } != ENGINE_OK {
-        fail_stop(operation);
+    if attempt.finish(0, &mut report) != ENGINE_OK {
+        fail_stop(attempt.operation);
     }
     shard_status(
-        operation,
+        attempt.operation,
         map_engine(Stage::Closed, status, report.disposition),
     )
 }
 
 /// Certifies the reads of the open attempt, which staged no write, and
-/// finishes it committed. OK only when it did; otherwise the status the verb
-/// answers, with the attempt closed.
-///
-/// A validated attempt without writes finishes committed without an install
-/// and without reserving a timestamp.
-///
-/// # Safety
-/// `thread` is the registered handle of the calling thread.
-unsafe fn certify_read_only(operation: &str, thread: *mut StoTpccThread) -> u32 {
-    // SAFETY: Guaranteed by the caller.
-    let validated = unsafe { sto_tpcc_protocol_validate(thread) };
+/// finishes it committed. A validated read-only attempt needs no timestamp.
+fn certify_read_only(mut attempt: VerbAttempt) -> u32 {
+    // SAFETY: The registered handle is live for the duration of the attempt.
+    let validated = unsafe { sto_tpcc_protocol_validate(attempt.thread) };
     if validated != ENGINE_OK {
-        // SAFETY: As above.
-        return unsafe { close_and_map(operation, thread, validated) };
+        return close_and_map(attempt, validated);
     }
     let mut report = StoTpccProtocolReport::default();
-    // SAFETY: As above; the report is a live local.
-    let finished = unsafe { sto_tpcc_protocol_finish(thread, 1, &mut report) };
+    let finished = attempt.finish(1, &mut report);
     shard_status(
-        operation,
+        attempt.operation,
         map_engine(Stage::ReadOnlyFinish, finished, report.disposition),
     )
 }
 
-/// Runs the body of a registration export. A panic there has nothing to close.
-fn contain_registration(operation: &str, body: impl FnOnce() -> u32) -> u32 {
+fn contain_panic(operation: &str, body: impl FnOnce() -> u32) -> u32 {
     catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|_| {
         diagnostic(format_args!("{operation} contained a panic"));
         SHARD_IO
     })
-}
-
-/// Runs the body of a storage verb.
-///
-/// The protocol exports the verbs call contain their own panics, so a panic
-/// that arrives here comes from the glue around them and never from after an
-/// install. The attempt it may have left open is closed as aborted.
-fn contain_verb(operation: &str, body: impl FnOnce() -> u32) -> u32 {
-    match catch_unwind(AssertUnwindSafe(body)) {
-        Ok(status) => status,
-        Err(_) => {
-            diagnostic(format_args!("{operation} contained a panic"));
-            let Some(entered) = ENTERED.get() else {
-                return SHARD_IO;
-            };
-            let mut report = StoTpccProtocolReport::default();
-            // SAFETY: The registration contract keeps this thread's handle
-            // alive until the thread is unregistered.
-            if unsafe { sto_tpcc_protocol_finish(entered.thread, 0, &mut report) } != ENGINE_OK {
-                fail_stop(operation);
-            }
-            SHARD_IO
-        }
-    }
 }
 
 fn log_first_use(bit: u8, verb: &str, owner: u32, catalog_table: u64) {
@@ -291,7 +302,53 @@ pub unsafe extern "C" fn mako_sto_shard_table_register(
     table: *const StoTpccTable,
     table_id: u32,
 ) -> u32 {
-    contain_registration("table_register", || {
+    register_table(
+        catalog_table,
+        owner,
+        PhysicalCoordinates::Raw,
+        table,
+        table_id,
+    )
+}
+
+/// Registers one preopened physical warehouse. Missing warehouses in an intersecting scan
+/// range are errors, including when their registered neighbours have no live rows.
+///
+/// # Safety
+/// As for `mako_sto_shard_table_register`. The caller verifies the catalog coordinate
+/// kind and supplies the configured total warehouse count.
+#[no_mangle]
+pub unsafe extern "C" fn mako_sto_shard_warehouse_register(
+    catalog_table: u64,
+    owner: u32,
+    warehouse: u32,
+    total: u32,
+    table: *const StoTpccTable,
+    table_id: u32,
+) -> u32 {
+    if warehouse == 0 || warehouse > total {
+        return SHARD_INVALID;
+    }
+    register_table(
+        catalog_table,
+        owner,
+        PhysicalCoordinates::Warehouse {
+            number: warehouse,
+            total,
+        },
+        table,
+        table_id,
+    )
+}
+
+fn register_table(
+    catalog_table: u64,
+    owner: u32,
+    coordinates: PhysicalCoordinates,
+    table: *const StoTpccTable,
+    table_id: u32,
+) -> u32 {
+    contain_panic("table_register", || {
         // The address is checked and stored. No reference is formed: the
         // first dereference happens inside a verb on a registered thread.
         if checked_raw_pointer_range(table, 1, "table").is_err() {
@@ -308,12 +365,22 @@ pub unsafe extern "C" fn mako_sto_shard_table_register(
         };
         let mut tables = TABLES.write().unwrap_or_else(PoisonError::into_inner);
         for entry in tables.iter() {
-            let same_key = entry.catalog_table == catalog_table && entry.owner == owner;
+            let same_group = entry.catalog_table == catalog_table && entry.owner == owner;
+            let same_key = same_group && entry.coordinates == coordinates;
+            if same_group && !same_key {
+                match (entry.coordinates, coordinates) {
+                    (
+                        PhysicalCoordinates::Warehouse { total: old, .. },
+                        PhysicalCoordinates::Warehouse { total: new, .. },
+                    ) if old == new => {}
+                    _ => return SHARD_INVALID,
+                }
+            }
             let same_table = ptr::eq(entry.table, table);
             if same_key && same_table && entry.table_id == table_id {
                 return SHARD_OK;
             }
-            if same_key || same_table {
+            if same_key || same_table || (entry.owner == owner && entry.table_id == table_id) {
                 set_last_error(format_args!(
                     "shard host: table {catalog_table} of owner {owner} conflicts with \
                      the registration of table {} of owner {}",
@@ -326,6 +393,7 @@ pub unsafe extern "C" fn mako_sto_shard_table_register(
             return SHARD_EXHAUSTED;
         }
         tables.push(TableEntry {
+            coordinates,
             catalog_table,
             owner,
             table,
@@ -341,12 +409,30 @@ pub unsafe extern "C" fn mako_sto_shard_table_register(
 /// before the table is destroyed.
 #[no_mangle]
 pub extern "C" fn mako_sto_shard_table_unregister(catalog_table: u64, owner: u32) -> u32 {
-    contain_registration("table_unregister", || {
+    unregister_table(catalog_table, owner, None)
+}
+
+/// Removes the borrowed handle of exactly one warehouse after its node stops.
+#[no_mangle]
+pub extern "C" fn mako_sto_shard_warehouse_unregister(
+    catalog_table: u64,
+    owner: u32,
+    warehouse: u32,
+) -> u32 {
+    unregister_table(catalog_table, owner, Some(warehouse))
+}
+
+fn unregister_table(catalog_table: u64, owner: u32, warehouse: Option<u32>) -> u32 {
+    contain_panic("table_unregister", || {
         let mut tables = TABLES.write().unwrap_or_else(PoisonError::into_inner);
-        match tables
-            .iter()
-            .position(|entry| entry.catalog_table == catalog_table && entry.owner == owner)
-        {
+        match tables.iter().position(|entry| {
+            entry.catalog_table == catalog_table
+                && entry.owner == owner
+                && match entry.coordinates {
+                    PhysicalCoordinates::Raw => warehouse.is_none(),
+                    PhysicalCoordinates::Warehouse { number, .. } => warehouse == Some(number),
+                }
+        }) {
             Some(index) => {
                 tables.swap_remove(index);
                 SHARD_OK
@@ -372,7 +458,7 @@ pub unsafe extern "C" fn mako_sto_shard_thread_register(
     owner: u32,
     thread: *mut StoTpccThread,
 ) -> u32 {
-    contain_registration("thread_register", || {
+    contain_panic("thread_register", || {
         if ENTERED.get().is_some() {
             set_last_error(format_args!(
                 "shard host: this thread is already registered"
@@ -411,7 +497,7 @@ pub unsafe extern "C" fn mako_sto_shard_thread_register(
 /// `context` is compared by address and never read.
 #[no_mangle]
 pub unsafe extern "C" fn mako_sto_shard_thread_unregister(context: *mut c_void) -> u32 {
-    contain_registration("thread_unregister", || match ENTERED.get() {
+    contain_panic("thread_unregister", || match ENTERED.get() {
         Some(entered) if entered.context == context.addr() => {
             ENTERED.set(None);
             SHARD_OK
@@ -448,6 +534,21 @@ fn table_for(catalog_table: u64, owner: u32) -> Option<TableEntry> {
         ));
     }
     entry
+}
+
+fn warehouse_for(catalog_table: u64, owner: u32, number: u32) -> Option<TableEntry> {
+    TABLES.read().unwrap_or_else(PoisonError::into_inner).iter().copied().find(|entry|
+        entry.catalog_table == catalog_table && entry.owner == owner &&
+        matches!(entry.coordinates, PhysicalCoordinates::Warehouse { number: actual, .. } if actual == number))
+}
+
+/// The first four bytes of a lexical bound, zero padded. Every smaller warehouse
+/// sorts before that bound. The caller compares the full bound for equality.
+fn warehouse_floor(bytes: &[u8]) -> u32 {
+    let mut prefix = [0; 4];
+    let len = bytes.len().min(4);
+    prefix[..len].copy_from_slice(&bytes[..len]);
+    u32::from_be_bytes(prefix)
 }
 
 /// Whether no transaction is open on the registered handle.
@@ -504,11 +605,7 @@ unsafe fn lookahead(
 ) -> Result<VersionedLookahead, u32> {
     const OPERATION: &str = "scan_next";
     // SAFETY: Guaranteed by the caller.
-    let begun = unsafe { sto_tpcc_protocol_begin(thread, TERM) };
-    if begun != ENGINE_OK {
-        // SAFETY: As above.
-        return Err(unsafe { close_and_map(OPERATION, thread, begun) });
-    }
+    let attempt = unsafe { VerbAttempt::begin(OPERATION, thread) }?;
     let step = {
         // SAFETY: The caller's contract; the exclusive borrow of the handle
         // ends with this block, before the next export takes it again.
@@ -532,13 +629,11 @@ unsafe fn lookahead(
     let found = match step {
         None => {
             set_last_error(format_args!("shard host scan_next: no participant active"));
-            // SAFETY: As above.
-            return Err(unsafe { close_and_map(OPERATION, thread, ENGINE_FATAL) });
+            return Err(close_and_map(attempt, ENGINE_FATAL));
         }
         Some(Err(error)) => {
             let status = status_from_access("shard host scan_next", error);
-            // SAFETY: As above.
-            return Err(unsafe { close_and_map(OPERATION, thread, status.code()) });
+            return Err(close_and_map(attempt, status.code()));
         }
         Some(Ok(found)) => found,
     };
@@ -546,8 +641,7 @@ unsafe fn lookahead(
     if let Some(after_walk) = AFTER_WALK.take() {
         after_walk();
     }
-    // SAFETY: As above.
-    match unsafe { certify_read_only(OPERATION, thread) } {
+    match certify_read_only(attempt) {
         SHARD_OK => Ok(found),
         status => Err(status),
     }
@@ -595,6 +689,61 @@ unsafe fn scan_next(
     let (Some(lo), Some(hi), Some(after_coordinate), Some(after_key)) = spans else {
         return SHARD_INVALID;
     };
+    // Every refusal comes before the answer for an exhausted range: NOT_FOUND
+    // certifies the end of the range and must not stand for an unknown table.
+    let Some(entry) = table_for(catalog_table, entered.owner) else {
+        return SHARD_IO;
+    };
+    // SAFETY: The registration contract keeps the handle alive.
+    if !unsafe { handle_is_idle(entered.thread) } {
+        return SHARD_INVALID;
+    }
+    log_first_use(FIRST_SCAN_NEXT, "scan_next", entered.owner, catalog_table);
+    if let PhysicalCoordinates::Warehouse { total, .. } = entry.coordinates {
+        if has_hi == 1 && lo >= hi {
+            return SHARD_INVALID;
+        }
+        let floor = if has_after == 1 {
+            lo.max(after_coordinate)
+        } else {
+            lo
+        };
+        for number in warehouse_floor(floor).max(1)..=total {
+            let coordinate = number.to_be_bytes();
+            let lower = match fixed_scan(
+                &coordinate,
+                lo,
+                hi,
+                has_hi == 1,
+                after_coordinate,
+                has_after == 1,
+            ) {
+                FixedScan::Skip => continue,
+                FixedScan::Stop => break,
+                FixedScan::AllKeys => ScanLower::Included(&[]),
+                FixedScan::AfterKey => ScanLower::Excluded(after_key),
+            };
+            let Some(physical) = warehouse_for(catalog_table, entered.owner, number) else {
+                return SHARD_IO;
+            };
+            // SAFETY: The registered physical table and the borrowed sink outlive this call.
+            let status = unsafe {
+                scan_physical(
+                    entered,
+                    physical,
+                    Some(&coordinate),
+                    lower,
+                    None,
+                    sink,
+                    sink_context,
+                )
+            };
+            if status != SHARD_NOT_FOUND {
+                return status;
+            }
+        }
+        return SHARD_NOT_FOUND;
+    }
     let start = match scan_arguments(has_hi, has_after, lo, hi, after_coordinate, after_key) {
         Ok(start) => start,
         Err(refusal) => {
@@ -609,23 +758,25 @@ unsafe fn scan_next(
             return SHARD_INVALID;
         }
     };
-    // Every refusal comes before the answer for an exhausted range: NOT_FOUND
-    // certifies the end of the range and must not stand for an unknown table.
-    let Some(entry) = table_for(catalog_table, entered.owner) else {
-        return SHARD_IO;
-    };
-    // SAFETY: The registration contract keeps the handle alive.
-    if !unsafe { handle_is_idle(entered.thread) } {
-        return SHARD_INVALID;
-    }
     // Acted on only here, after the refusals above: the cursor is at or
     // beyond the upper bound.
     let (first, upper) = match start {
         ScanStart::Exhausted => return SHARD_NOT_FOUND,
         ScanStart::Rows { lower, upper } => (lower, upper),
     };
-    log_first_use(FIRST_SCAN_NEXT, "scan_next", entered.owner, catalog_table);
+    // SAFETY: The registration and sink have already been checked.
+    unsafe { scan_physical(entered, entry, None, first, upper, sink, sink_context) }
+}
 
+unsafe fn scan_physical(
+    entered: Entered,
+    entry: TableEntry,
+    coordinate: Option<&[u8]>,
+    first: ScanLower<'_>,
+    upper: Option<&[u8]>,
+    sink: MakoStoShardRowSink,
+    sink_context: *mut c_void,
+) -> u32 {
     let Ok(term) = DistributedTerm::new(TERM) else {
         return SHARD_IO;
     };
@@ -648,7 +799,7 @@ unsafe fn scan_next(
                 unsafe {
                     sink(
                         sink_context,
-                        span(&row.key),
+                        span(coordinate.unwrap_or(&row.key)),
                         span(&row.key),
                         span(row.value.as_ref()),
                     );
@@ -663,11 +814,12 @@ unsafe fn scan_next(
 }
 
 /// Delivers the first live committed row of `table` on the registered owner
-/// whose key lies in `[lo, hi)` (no upper bound when `has_hi` is 0) and, when
-/// `has_after` is 1, is greater than `after_key`.
+/// whose coordinate lies in `[lo, hi)` (unbounded when `has_hi` is 0).
+/// When `has_after` is 1, its (coordinate, key) pair must exceed the cursor.
 ///
-/// OK after exactly one call of `sink` with the key as coordinate and as key
-/// and with the row's logical bytes. NOT_FOUND, without a sink call, only
+/// OK after exactly one call of `sink` with the row's coordinate, key and
+/// logical bytes. A raw coordinate is its row key. A warehouse coordinate
+/// identifies the physical index holding all keys of that warehouse. NOT_FOUND, without a sink call, only
 /// when no live row is left in the range. RETRY for a conflict; the caller
 /// decides whether to call again. INVALID for a thread that is not registered
 /// for `context`, a malformed argument or a handle with an open transaction.
@@ -697,7 +849,7 @@ pub unsafe extern "C" fn mako_sto_shard_scan_next(
     sink: Option<MakoStoShardRowSink>,
     sink_context: *mut c_void,
 ) -> u32 {
-    contain_verb("scan_next", || {
+    contain_panic("scan_next", || {
         // SAFETY: Forwarded from this export's contract.
         unsafe {
             scan_next(
@@ -772,15 +924,19 @@ unsafe fn write_target<'a>(
     let (Some(coordinate), Some(key)) = spans else {
         return Err(SHARD_INVALID);
     };
-    // The coordinate of a raw table's row is its key.
-    if coordinate != key {
-        set_last_error(format_args!(
-            "shard host {verb}: the coordinate differs from the key"
-        ));
-        return Err(SHARD_INVALID);
-    }
-    let Some(entry) = table_for(catalog_table, entered.owner) else {
+    let Some(group) = table_for(catalog_table, entered.owner) else {
         return Err(SHARD_IO);
+    };
+    let entry = match group.coordinates {
+        PhysicalCoordinates::Raw if coordinate == key => group,
+        PhysicalCoordinates::Raw => return Err(SHARD_INVALID),
+        PhysicalCoordinates::Warehouse { total, .. } => {
+            let number = u32::from_be_bytes(coordinate.try_into().map_err(|_| SHARD_INVALID)?);
+            if number == 0 || number > total {
+                return Err(SHARD_INVALID);
+            }
+            warehouse_for(catalog_table, entered.owner, number).ok_or(SHARD_IO)?
+        }
     };
     // SAFETY: The registration contract keeps the handle alive.
     if !unsafe { handle_is_idle(entered.thread) } {
@@ -803,23 +959,21 @@ unsafe fn write_target<'a>(
 /// distributed timestamp, validate, install, hand over the log record,
 /// finish. Anything but "committed" or a failure the engine reports with an
 /// aborted attempt stops the process.
-///
-/// # Safety
-/// `thread` is the registered handle of the calling thread.
-unsafe fn commit_staged(operation: &str, thread: *mut StoTpccThread) -> u32 {
+fn commit_staged(mut attempt: VerbAttempt) -> u32 {
     let mut report = StoTpccProtocolReport::default();
-    // SAFETY: Guaranteed by the caller; the callback reads its request only.
+    // SAFETY: The guard owns the attempt. The callback only reads its request.
     let committed = unsafe {
         sto_tpcc_protocol_commit(
-            thread,
+            attempt.thread,
             0,
             Some(shard_log_callback),
             ptr::null_mut(),
             &mut report,
         )
     };
+    attempt.open = false;
     shard_status(
-        operation,
+        attempt.operation,
         map_engine(Stage::Commit, committed, report.disposition),
     )
 }
@@ -860,10 +1014,10 @@ unsafe fn put(
     // SAFETY: The handle is registered and idle; the table is registered and
     // the engine copies the key and the value before it returns.
     unsafe {
-        let begun = sto_tpcc_protocol_begin(thread, TERM);
-        if begun != ENGINE_OK {
-            return close_and_map(OPERATION, thread, begun);
-        }
+        let attempt = match VerbAttempt::begin(OPERATION, thread) {
+            Ok(attempt) => attempt,
+            Err(status) => return status,
+        };
         // Reads the current version, records the write and stages it.
         let staged = sto_tpcc_protocol_mutate(
             thread,
@@ -877,9 +1031,9 @@ unsafe fn put(
             0,
         );
         if staged != ENGINE_OK {
-            return close_and_map(OPERATION, thread, staged);
+            return close_and_map(attempt, staged);
         }
-        commit_staged(OPERATION, thread)
+        commit_staged(attempt)
     }
 }
 
@@ -910,10 +1064,10 @@ unsafe fn remove(
     let thread = entered.thread;
     // SAFETY: As in `put`.
     unsafe {
-        let begun = sto_tpcc_protocol_begin(thread, TERM);
-        if begun != ENGINE_OK {
-            return close_and_map(OPERATION, thread, begun);
-        }
+        let attempt = match VerbAttempt::begin(OPERATION, thread) {
+            Ok(attempt) => attempt,
+            Err(status) => return status,
+        };
         let staged = sto_tpcc_protocol_mutate(
             thread,
             entry.table,
@@ -926,11 +1080,11 @@ unsafe fn remove(
             0,
         );
         match staged {
-            ENGINE_OK => commit_staged(OPERATION, thread),
+            ENGINE_OK => commit_staged(attempt),
             // The key is absent and nothing was staged. The absence is a
             // read like any other: certify it and finish read-only.
-            ENGINE_MISS => certify_read_only(OPERATION, thread),
-            failed => close_and_map(OPERATION, thread, failed),
+            ENGINE_MISS => certify_read_only(attempt),
+            failed => close_and_map(attempt, failed),
         }
     }
 }
@@ -965,7 +1119,7 @@ pub unsafe extern "C" fn mako_sto_shard_put(
     key: MakoStoShardBytes,
     value: MakoStoShardBytes,
 ) -> u32 {
-    contain_verb("put", || {
+    contain_panic("put", || {
         // SAFETY: Forwarded from this export's contract.
         unsafe { put(context, table, coordinate, key, value) }
     })
@@ -988,7 +1142,7 @@ pub unsafe extern "C" fn mako_sto_shard_remove(
     coordinate: MakoStoShardBytes,
     key: MakoStoShardBytes,
 ) -> u32 {
-    contain_verb("remove", || {
+    contain_panic("remove", || {
         // SAFETY: Forwarded from this export's contract.
         unsafe { remove(context, table, coordinate, key) }
     })
@@ -1410,6 +1564,113 @@ mod tests {
         (key.to_vec(), key.to_vec(), b"value".to_vec())
     }
 
+    /// Two physical indexes share keys, and warehouse three is intentionally missing.
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn fixed_warehouse_rows_use_coordinate_then_physical_key() {
+        const TABLE: u64 = 0x7e57_0000_0000_0010;
+        let mut db = ptr::null_mut();
+        let mut thread = ptr::null_mut();
+        let mut physical = [ptr::null_mut(); 2];
+        let config = StoTpccDbConfig {
+            max_threads: 8,
+            max_key_length: 128,
+            max_items_per_txn: 1024,
+            max_locks_per_txn: 2048,
+            max_registry_bytes: 0,
+        };
+        let one = 1_u32.to_be_bytes();
+        let two = 2_u32.to_be_bytes();
+        let three = 3_u32.to_be_bytes();
+        unsafe {
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), ENGINE_OK);
+            for (i, index) in physical.iter_mut().enumerate() {
+                assert_eq!(sto_tpcc_table_create(db, ptr::null(), index), ENGINE_OK);
+                assert_eq!(
+                    mako_sto_shard_warehouse_register(
+                        TABLE,
+                        OWNER,
+                        i as u32 + 1,
+                        3,
+                        *index,
+                        i as u32 + 220
+                    ),
+                    SHARD_OK
+                );
+            }
+            assert_eq!(
+                mako_sto_shard_warehouse_register(TABLE, OWNER, 3, 3, physical[0], 222),
+                SHARD_INVALID
+            );
+            assert_eq!(sto_tpcc_thread_create(db, &mut thread), ENGINE_OK);
+            let ctx = db.cast();
+            assert_eq!(mako_sto_shard_thread_register(ctx, OWNER, thread), SHARD_OK);
+            let write = |c: &[u8], k: &[u8], v: &[u8]| {
+                mako_sto_shard_put(ctx, TABLE, span(c), span(k), span(v))
+            };
+            let scan = |lo: &[u8], hi: Option<&[u8]>, after: Option<(&[u8], &[u8])>| {
+                let mut rows = Vec::<Row>::new();
+                let (c, k) = after.unwrap_or((&[], &[]));
+                let status = mako_sto_shard_scan_next(
+                    ctx,
+                    TABLE,
+                    span(lo),
+                    u32::from(hi.is_some()),
+                    span(hi.unwrap_or_default()),
+                    u32::from(after.is_some()),
+                    span(c),
+                    span(k),
+                    Some(collect_rows),
+                    (&raw mut rows).cast(),
+                );
+                (status, rows)
+            };
+            let found = |c: &[u8], k: &[u8], v: &[u8]| {
+                (SHARD_OK, vec![(c.to_vec(), k.to_vec(), v.to_vec())])
+            };
+            assert_eq!(write(&one, b"a", b"one-a"), SHARD_OK);
+            assert_eq!(write(&one, b"z", b"one-z"), SHARD_OK);
+            assert_eq!(write(&two, b"a", b"two-a"), SHARD_OK);
+            assert_eq!(write(&three, b"a", b"gap"), SHARD_IO);
+            assert_eq!(write(&[], b"a", b"bad"), SHARD_INVALID);
+            assert_eq!(write(&[0; 4], b"a", b"bad"), SHARD_INVALID);
+            assert_eq!(scan(&[], None, None), found(&one, b"a", b"one-a"));
+            assert_eq!(
+                scan(&[], None, Some((&one, b"a"))),
+                found(&one, b"z", b"one-z")
+            );
+            assert_eq!(
+                scan(&[], None, Some((&one, b"z"))),
+                found(&two, b"a", b"two-a")
+            );
+            assert_eq!(
+                scan(&two, Some(&three), Some((&two, b"a"))),
+                (SHARD_NOT_FOUND, vec![])
+            );
+            assert_eq!(scan(&two, None, Some((&two, b"a"))), (SHARD_IO, vec![]));
+            assert_eq!(
+                scan(&[0, 0, 0, 1, 0], Some(&three), None),
+                found(&two, b"a", b"two-a")
+            );
+            assert_eq!(
+                mako_sto_shard_remove(ctx, TABLE, span(&two), span(b"a")),
+                SHARD_OK
+            );
+            assert_eq!(scan(&two, Some(&three), None), (SHARD_NOT_FOUND, vec![]));
+            assert_eq!(scan(&one, Some(&two), None), found(&one, b"a", b"one-a"));
+            assert_eq!(mako_sto_shard_thread_unregister(ctx), SHARD_OK);
+            assert_eq!(sto_tpcc_thread_destroy(thread), ENGINE_OK);
+            for (i, index) in physical.into_iter().enumerate() {
+                assert_eq!(
+                    mako_sto_shard_warehouse_unregister(TABLE, OWNER, i as u32 + 1),
+                    SHARD_OK
+                );
+                assert_eq!(sto_tpcc_table_destroy(index), ENGINE_OK);
+            }
+            assert_eq!(sto_tpcc_db_destroy(db), ENGINE_OK);
+        }
+    }
+
     /// A lookahead's row is delivered only when its transaction certified.
     ///
     /// On one thread every lookahead certifies trivially, so a `scan_next`
@@ -1463,7 +1724,32 @@ mod tests {
         assert_eq!(engine.scan_next(None), (SHARD_IO, Vec::new()));
         assert!(AFTER_WALK.take().is_none());
         engine.assert_idle();
+        // A nested verb can panic before it owns an attempt. The outer scan
+        // still owns its reads and must be able to certify them.
+        AFTER_WALK.set(Some(Box::new(|| {
+            assert_eq!(
+                contain_panic("put", || panic!("before opening a nested attempt")),
+                SHARD_IO
+            );
+        })));
         assert_eq!(engine.scan_next(None), (SHARD_OK, vec![row(b"m")]));
+        engine.assert_idle();
+
+        // A participant opened by the application survives an early panic on
+        // the same registered thread.
+        let mut report = StoTpccProtocolReport::default();
+        unsafe {
+            assert_eq!(sto_tpcc_protocol_begin(engine.thread, 0), ENGINE_OK);
+            assert_eq!(
+                contain_panic("remove", || panic!("before checking the registered handle")),
+                SHARD_IO
+            );
+            assert!(!handle_is_idle(engine.thread));
+            assert_eq!(
+                sto_tpcc_protocol_finish(engine.thread, 0, &mut report),
+                ENGINE_OK
+            );
+        }
         engine.assert_idle();
     }
 }

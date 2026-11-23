@@ -127,6 +127,8 @@ mod ffi {
         if !page.is_null() { drop(Box::from_raw(page)); }
     }
     #[no_mangle]
+    pub extern "C" fn mako_scan_page_visit_limit() -> usize { checked::PAGE_ROWS + 1 }
+    #[no_mangle]
     pub unsafe extern "C" fn mako_scan_page_bounds(page: *const Page) -> Bounds {
         let r = &(*page).request.bounds;
         Bounds { lo: Bytes::from_slice(&r.lo), hi: Bytes::from_slice(r.hi.as_deref().unwrap_or(&[])),

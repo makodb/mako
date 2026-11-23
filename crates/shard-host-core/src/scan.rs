@@ -144,6 +144,62 @@ pub open spec fn scan_contract(
     }
 }
 
+/// Select physical keys at one fixed warehouse coordinate. Stop ends this
+/// warehouse and every later coordinate in an ascending scan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixedScan {
+    Skip,
+    Stop,
+    AllKeys,
+    AfterKey,
+}
+
+pub open spec fn fixed_row_allowed(
+    coordinate: Seq<u8>, key: Seq<u8>, lo: Seq<u8>, hi: Seq<u8>, bounded: bool,
+    after_coordinate: Seq<u8>, after_key: Seq<u8>, has_after: bool,
+) -> bool {
+    &&& cmp_spec(lo, coordinate) <= 0
+    &&& bounded ==> cmp_spec(coordinate, hi) < 0
+    &&& has_after ==> identity_after(coordinate, key, after_coordinate, after_key)
+}
+
+/// All physical keys, the strict suffix after the cursor key, or no keys.
+/// Bounds and cursors may have arbitrary lengths.
+pub fn fixed_scan(coordinate: &[u8], lo: &[u8], hi: &[u8], bounded: bool,
+                  after_coordinate: &[u8], has_after: bool) -> (decision: FixedScan)
+    ensures
+        (decision == FixedScan::Stop) == (bounded && cmp_spec(coordinate@, hi@) >= 0),
+        forall|key: Seq<u8>, after_key: Seq<u8>|
+            fixed_row_allowed(coordinate@, key, lo@, hi@, bounded,
+                                         after_coordinate@, after_key, has_after)
+                == match decision {
+                    FixedScan::Skip | FixedScan::Stop => false,
+                    FixedScan::AllKeys => true,
+                    FixedScan::AfterKey => cmp_spec(after_key, key) < 0,
+                },
+{
+    proof {
+        cmp_laws(after_coordinate@, coordinate@);
+        cmp_laws(coordinate@, lo@);
+    }
+    if bounded && compare(coordinate, hi) >= 0 {
+        FixedScan::Stop
+    } else if compare(coordinate, lo) < 0 {
+        FixedScan::Skip
+    } else if !has_after {
+        FixedScan::AllKeys
+    } else {
+        let cursor_order = compare(after_coordinate, coordinate);
+        if cursor_order > 0 {
+            FixedScan::Skip
+        } else if cursor_order == 0 {
+            FixedScan::AfterKey
+        } else {
+            FixedScan::AllKeys
+        }
+    }
+}
+
 /// Whether both flags are 0 or 1. The shell asks before it looks at a span.
 pub fn scan_flags_valid(has_hi: u32, has_after: u32) -> (valid: bool)
     ensures

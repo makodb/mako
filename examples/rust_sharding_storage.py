@@ -50,7 +50,7 @@ def epochs(owner, cuts="0", busy="0", ok="0"):
 AT_LEAST_FIVE = r"(?:[5-9]|[1-9]\d+)"
 
 
-def moved(rows):
+def moved(rows, rewritten=0):
     """Storage calls of a committed migration of `rows` source rows.
 
     The destination starts with two stale rows in the range: m0007, which the
@@ -60,14 +60,14 @@ def moved(rows):
     NOT_FOUND (1); the cleanup after the commit does the same and removes each
     row once. Nothing is ever put on the source.
     Destination: precopy puts every row, m0007 among them. The final copy then
-    reads every row it holds, finds each equal to the source's and puts
-    nothing, removes m9999, and ends on NOT_FOUND.
+    compares its copy with the source, writes the rows changed during drain,
+    removes m9999, and ends on NOT_FOUND.
     """
     return [
         calls(0, scan=3 * (rows + 1), scan_ok=3 * rows, scan_last="1",
               remove=rows, remove_ok=rows, remove_last="0"),
         calls(1, scan=rows + 2, scan_ok=rows + 1, scan_last="1",
-              put=rows, put_ok=rows, put_last="0", remove="1", remove_ok="1", remove_last="0"),
+              put=rows + rewritten, put_ok=rows + rewritten, put_last="0", remove="1", remove_ok="1", remove_last="0"),
     ]
 
 
@@ -124,6 +124,19 @@ AFTER_ABORT = ["route-unmoved", "source-intact", "destination-stage-clean", "cal
 #   stderr     patterns that must each match exactly one line of standard error
 #   forbidden  patterns that no line of standard error may match
 SCENARIOS = {
+    "warehouses": {
+        "exit": 0,
+        "summary": "PASS",
+        "ok": ["warehouse-open", "warehouse-committed", "warehouse-bytes"],
+        "failed": {},
+        "skipped": [],
+        "stderr": [
+            r"^mako_sto_shard_host: first scan_next owner=0 table=4$",
+            r"^mako_sto_shard_host: first put owner=1 table=4$",
+            r"^mako_sto_shard_host: first remove owner=0 table=4$",
+        ],
+        "forbidden": NEVER_WHEN_PASSING,
+    },
     # ["", "n") moves from owner 0 to owner 1 on the Rust storage callbacks:
     # 605 rows in two capture pages.
     "migrate": {
@@ -146,11 +159,13 @@ SCENARIOS = {
     "pinned": {
         "exit": 0,
         "summary": "PASS",
-        "ok": BEFORE_MIGRATION + ["pinned-stays-pending", "drain-observed", "outcome-committed"]
+        "ok": BEFORE_MIGRATION + ["receiver-replayed-own-reply", "mixed-peer-refused", "new-owner-read", "former-owner-transaction",
+                                  "pinned-stays-pending", "stale-write-refused",
+                                  "drain-observed", "outcome-committed"]
               + AFTER_COMMIT + ["threads-left"],
         "failed": {},
         "skipped": [],
-        "stderr": ENTERED_AND_LEFT + FIRST_USE_COMMITTED + moved(605) + [
+        "stderr": ENTERED_AND_LEFT + FIRST_USE_COMMITTED + moved(605, rewritten=1) + [
             # While the pin was held the source answered BUSY, at least the
             # five times the fixture waits for; OK came once, after the release.
             epochs(0, cuts="1", busy=AT_LEAST_FIVE, ok="1"),
@@ -184,7 +199,7 @@ SCENARIOS = {
     "aborted": {
         "exit": 0,
         "summary": "PASS",
-        "ok": BEFORE_MIGRATION + ["pinned-stays-pending", "outcome-aborted"] + AFTER_ABORT
+        "ok": BEFORE_MIGRATION + ["pinned-stays-pending", "stale-write-refused", "outcome-aborted"] + AFTER_ABORT
               + ["threads-left"],
         "failed": {},
         "skipped": [],
@@ -240,12 +255,12 @@ SUMMARY_LINE = re.compile(r"RUST_SHARD_STORAGE (PASS|FAIL) (\S+)$")
 
 
 def ports():
-    """A base port whose four derived ports are free, as the C++ smoke picks it."""
+    """A base port with room for both migration listeners and the ordinary shard helper."""
     for _ in range(200):
         base = random.randrange(20000, 29000)
         sockets = []
         try:
-            for offset in (0, 100, 20000, 20100):
+            for offset in (0, 100, 106, 20000, 20100):
                 sock = socket.socket()
                 sockets.append(sock)
                 sock.bind(("127.0.0.1", base + offset))

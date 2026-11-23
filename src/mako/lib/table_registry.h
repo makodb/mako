@@ -145,6 +145,44 @@ public:
         return true;
     }
 
+    // @unsafe - Publish a pre-opened raw index to worker admission. A proxy
+    // uses this physical index's selector ID but never enters the reverse map.
+    bool bind_native_handle(int id, uint64_t table, int owner, uint32_t kind,
+                            FullOrderedIndex* handle, rusty::Option<std::string> coordinate) {
+        auto state = state_.lock().unwrap();
+        auto name = state->id_to_name.find(id);
+        if (!handle || kind > 2 || name == state->id_to_name.end()
+            || state->id_to_owner.at(id) != owner || !state->id_is_physical.at(id))
+            return false;
+        auto existing = state->handles.find(id);
+        if (existing != state->handles.end() && existing->second != handle) return false;
+        auto binding = state->native.find(name->second);
+        const bool fixed = coordinate.is_some();
+        const std::string key = fixed ? coordinate.as_ref().unwrap() : std::string();
+        if (binding != state->native.end() && (binding->second->table != table
+            || binding->second->kind != kind || binding->second->fixed_coordinate.is_some() != fixed
+            || (fixed && binding->second->fixed_coordinate.as_ref().unwrap() != key)))
+            return false;
+        auto& aliases = state->physical[{table, owner, fixed}];
+        auto alias = aliases.find(key);
+        if (alias != aliases.end() && alias->second != id) return false;
+        if (binding == state->native.end())
+            state->native.emplace(name->second, rusty::Arc<NativeTableBinding>::make(
+                NativeTableBinding{table, std::move(coordinate), kind}));
+        aliases.emplace(key, id);
+        state->handles.emplace(id, handle);
+        return true;
+    }
+
+    // @unsafe - workers and the native storage queue have joined. The catalog
+    // identity stays immutable, but the registry must release its engine borrow.
+    void forget_raw_handle(int id, FullOrderedIndex* handle) {
+        auto state = state_.lock().unwrap();
+        auto found = state->handles.find(id);
+        if (found != state->handles.end() && found->second == handle)
+            state->handles.erase(found);
+    }
+
     // @unsafe - immutable owner keeps a coordinate alive after releasing the lock.
     rusty::Option<rusty::Arc<NativeTableBinding>> native_binding(int id) const {
         auto state = state_.lock().unwrap();

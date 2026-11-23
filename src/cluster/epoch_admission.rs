@@ -11,6 +11,25 @@ use crate::routing::Snapshot;
 use crate::types::*;
 
 verus! {
+#[repr(u32)]
+pub enum RequestCompletion { KeepOpen = 0, RetainFrame = 1, Finish = 2, AbortThenFinish = 3 }
+
+/// A live piece keeps its read view. Terminal receipts may outlive their
+/// frames, but an unknown INSTALL or another attempt's frame stays untouched.
+pub fn complete_request(terminal: bool, active: bool, unknown: bool, foreign: bool)
+    -> (decision: RequestCompletion)
+    ensures
+        (decision is KeepOpen) == (!terminal && active),
+        (decision is RetainFrame) == ((terminal || !active) && (unknown || foreign)),
+        (decision is Finish) == (!active && !unknown && !foreign),
+        (decision is AbortThenFinish) == (terminal && active && !unknown && !foreign),
+{
+    if !terminal && active { RequestCompletion::KeepOpen }
+    else if unknown || foreign { RequestCompletion::RetainFrame }
+    else if active { RequestCompletion::AbortThenFinish }
+    else { RequestCompletion::Finish }
+}
+
 pub struct AdmissionSnapshot {
     owner: u32,
     tables: HashMap<u64,MetaTable>,

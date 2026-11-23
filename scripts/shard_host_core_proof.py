@@ -9,7 +9,9 @@ In this order:
    no function the shell calls may have a precondition (the shell is not
    verified, so nothing would check it), the shell may not define one of the
    core's names again, and the shell functions that call the core must be the
-   ones scripts/shard_host_core_trusted.txt lists.
+   ones scripts/shard_host_core_trusted.txt lists. The Cargo library must use
+   this source tree. The audit rejects conditional attributes and tests that
+   rejection before building the core and shell with plain Cargo.
 2. Pins. The crates plain cargo compiles (vstd and the Verus macro crates, the
    archives with the checksums of crates/Cargo.lock) must hold the sources the
    pinned Verus release carries: Verus proves against its own bundled vstd and
@@ -51,7 +53,7 @@ RELEASE_SOURCES = {
 # release keeps the repository's Cargo.toml, the package keeps it as .orig.
 PACKAGING = {"Cargo.lock", "Cargo.toml.orig", ".cargo_vcs_info.json", "README.md"}
 # The functions the shell calls, as module::function.
-ENTRY_POINTS = ["status::map_engine", "scan::scan_flags_valid", "scan::scan_arguments"]
+ENTRY_POINTS = ["status::map_engine", "scan::scan_flags_valid", "scan::scan_arguments", "scan::fixed_scan"]
 
 VERUS = shutil.which(os.environ.get("VERUS_PATH", "verus"))
 if VERUS is None:
@@ -67,12 +69,95 @@ def code_of(path):
     return re.sub(r"/\*.*?\*/|//[^\n]*", "", path.read_text(), flags=re.S)
 
 
+# Preserve Rust tokens around comments. In particular, comment markers inside
+# a string cannot hide the attribute on the next item. Keep lifetimes intact.
+RUST_LITERAL_OR_COMMENT = re.compile(
+    r"""//[^\n]*|/\*|(?:br|cr|r)(?P<hashes>\#*)"(?s:.*?)"(?P=hashes)"""
+    r"""|"(?:\\.|[^"\\])*"|'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^'\\\n])'""",
+    re.S,
+)
+BLOCK_DELIMITER = re.compile(r"/\*|\*/")
+
+
+def core_code(source):
+    parts = []
+    end = 0
+    while match := RUST_LITERAL_OR_COMMENT.search(source, end):
+        parts.append(source[end:match.start()])
+        end = match.end()
+        token = match[0]
+        if token == "/*":
+            depth = 1
+            for delimiter in BLOCK_DELIMITER.finditer(source, end):
+                depth += 1 if delimiter[0] == "/*" else -1
+                if depth == 0:
+                    end = delimiter.end()
+                    break
+            else:
+                raise SystemExit("Unclosed block comment in verified source")
+        parts.append(" " if token.startswith(("//", "/*")) else '""')
+    return "".join(parts) + source[end:]
+
+
+def audit_configuration(crate):
+    manifest = tomllib.loads((crate / "Cargo.toml").read_text())
+    if manifest.get("lib") != {"path": "src/lib.rs"}:
+        raise SystemExit("shard-host-core: Cargo must build the verified library at src/lib.rs")
+    if (crate / "build.rs").exists() or manifest["package"].get("build", False) is not False:
+        raise SystemExit("shard-host-core: build scripts may change the compiled library")
+    if "features" in manifest or "target" in manifest:
+        raise SystemExit("shard-host-core: conditional Cargo features or dependencies")
+    if manifest["dependencies"] != {name: "=" + CRATES_VERSION for name in
+                                    ("vstd", "verus_builtin", "verus_builtin_macros")}:
+        raise SystemExit("shard-host-core: expected only the three pinned Verus dependencies")
+
+
+# These are the attributes used in this verified crate. A new attribute
+# needs review because it can change which implementation cargo compiles.
+DERIVE = r"(?:Clone|Copy|Debug|Eq|PartialEq)"
+CORE_ATTRIBUTE = re.compile(
+    rf"\#\s*\[\s*derive\s*\(\s*{DERIVE}(?:\s*,\s*{DERIVE})*\s*,?\s*\)\s*\]"
+)
+
+
+def audit_core_tokens(name, code):
+    for attr in re.finditer(r"#\s*!?\s*\[", code):
+        if name.name == "lib.rs" and code.startswith("#![forbid(unsafe_code)]", attr.start()):
+            continue
+        if not CORE_ATTRIBUTE.match(code, attr.start()):
+            raise SystemExit(f"{name}: unreviewed attribute in verified source")
+    if re.search(r"\b(?:cfg|include|include_bytes|include_str|macro_rules)\b", code):
+        raise SystemExit(f"{name}: conditional compilation or source inclusion in verified source")
+
+
+def audit_controls():
+    # Apply each attribute to an existing function in memory. These exercise
+    # the same source checks as the baseline without changing the checkout.
+    path = CRATE / "src" / "status.rs"
+    source = path.read_text()
+    site = "pub const fn map_engine("
+    if source.count(site) != 1:
+        raise SystemExit("Configuration audit control site missing or ambiguous")
+    for attr in ("#[cfg(verus_keep_ghost)]", "# [ /* guard */ cfg_attr(test, inline) ]"):
+        variant = source.replace(site, attr + "\n" + site)
+        try:
+            audit_core_tokens(path, core_code(variant))
+        except SystemExit as error:
+            if "unreviewed attribute" not in str(error):
+                raise
+        else:
+            raise SystemExit(f"Configuration audit accepted {attr}")
+    print("PASS: source audit rejects cfg and cfg_attr on map_engine")
+
+
 def audit_sources():
+    audit_configuration(CRATE)
     exported = set()
     files = sorted((CRATE / "src").rglob("*.rs"))
     for path in files:
         name = path.relative_to(ROOT)
-        code = code_of(path)
+        code = core_code(path.read_text())
+        audit_core_tokens(name, code)
         checked = code.replace("#![forbid(unsafe_code)]", "") if path.name == "lib.rs" else code
         for escape in (r"verifier::", r"\bassume\s*\(", r"\badmit\s*\(", r"\bassume_specification\b",
                        r"\bexternal", r"\brlimit\b", r"\bunsafe"):
@@ -153,10 +238,6 @@ def audit_sources():
 
 
 def check_pins():
-    manifest = tomllib.loads((CRATE / "Cargo.toml").read_text())
-    for package in ("vstd", "verus_builtin", "verus_builtin_macros"):
-        if manifest["dependencies"].get(package) != "=" + CRATES_VERSION:
-            raise SystemExit(f"shard-host-core: {package} is not pinned to ={CRATES_VERSION}")
     lock = tomllib.loads((ROOT / "crates" / "Cargo.lock").read_text())
     cargo_home = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
     release = Path(VERUS).resolve().parent
@@ -193,6 +274,20 @@ def check_pins():
 
 # (what the variant does wrong, file, the text, its replacement, (module, function))
 CONTROLS = [
+    (
+        "a fixed warehouse repeats the cursor row when coordinate and cursor coincide",
+        "src/scan.rs",
+        "else if cursor_order == 0 {\n            FixedScan::AfterKey",
+        "else if cursor_order == 0 {\n            FixedScan::AllKeys",
+        ("scan", "fixed_scan"),
+    ),
+    (
+        "a fixed warehouse includes a coordinate equal to the exclusive end",
+        "src/scan.rs",
+        "if bounded && compare(coordinate, hi) >= 0",
+        "if bounded && compare(coordinate, hi) > 0",
+        ("scan", "fixed_scan"),
+    ),
     (
         "a commit whose report is not definite is answered as an error",
         "src/status.rs",
@@ -352,6 +447,13 @@ def controls():
 
 if __name__ == "__main__":
     audit_sources()
+    audit_controls()
+    # Compile the checked Cargo target only after rejecting alternate entry
+    # points and build scripts. This also fetches the archives for check_pins.
+    subprocess.run(["cargo", "build", "--locked", "--manifest-path", "crates/Cargo.toml",
+                    "--target-dir", str(Path(os.environ.get("BUILD_DIR", "build_docker"))
+                                        / "shard-host-core-proof"),
+                    "-p", "shard-host-core", "-p", "sto-tpcc-ffi"], cwd=ROOT, check=True)
     check_pins()
     verify()
     controls()

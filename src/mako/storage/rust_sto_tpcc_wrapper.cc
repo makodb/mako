@@ -17,6 +17,7 @@
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/benchmark_output.h"
 #include "lib/common.h"
+#include "lib/sharding_admission.h"
 #include "rcu.h"
 #include "mbta_wrapper.hh"
 #include "mtree_abi.h"
@@ -789,6 +790,7 @@ size_t rust_sto_tpcc_detail::destroyed_table_count_for_testing() noexcept {
 
 thread_local sto_tpcc_thread *rust_sto_tpcc_wrapper::tls_thread_ = nullptr;
 thread_local bool rust_sto_tpcc_wrapper::tls_transaction_active_ = false;
+thread_local bool rust_sto_tpcc_wrapper::tls_sharding_engine_ = false;
 thread_local bool rust_sto_tpcc_wrapper::tls_benchmark_thread_initialized_ =
     false;
 thread_local rust_sto_tpcc_wrapper *rust_sto_tpcc_wrapper::tls_owner_ = nullptr;
@@ -825,7 +827,7 @@ bool rust_sto_tpcc_ordered_index::get(lcdf::Str key, std::string &value,
         continue;
       return found;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -849,7 +851,7 @@ bool rust_sto_tpcc_ordered_index::put(lcdf::Str key,
       owner_->commit_txn(owner_->tls_thread_);
       return !existed;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -887,7 +889,7 @@ bool rust_sto_tpcc_ordered_index::insert(lcdf::Str key,
       owner_->commit_txn(owner_->tls_thread_);
       return true;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -909,7 +911,7 @@ bool rust_sto_tpcc_ordered_index::remove(lcdf::Str key) {
       owner_->commit_txn(owner_->tls_thread_);
       return existed;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -921,16 +923,14 @@ void rust_sto_tpcc_ordered_index::scan(const std::string &start_key,
                                        const std::string *end_key,
                                        oi_scan_callback &callback,
                                        str_arena *) {
-  if (routes_remotely())
-    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   while (true) {
     owner_->begin_current_transaction();
     try {
-      owner_->scan_raw(table_, false, start_key, end_key, callback, true);
+      scan_local(false, start_key, end_key, callback, true);
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -942,16 +942,14 @@ void rust_sto_tpcc_ordered_index::rscan(const std::string &start_key,
                                         const std::string *end_key,
                                         oi_scan_callback &callback,
                                         str_arena *) {
-  if (routes_remotely())
-    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   while (true) {
     owner_->begin_current_transaction();
     try {
-      owner_->scan_raw(table_, true, start_key, end_key, callback, true);
+      scan_local(true, start_key, end_key, callback, true);
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_txn(owner_->tls_thread_);
+      owner_->abort_one_operation();
     } catch (...) {
       owner_->abort_txn(owner_->tls_thread_);
       throw;
@@ -976,6 +974,26 @@ bool rust_sto_tpcc_ordered_index::routes_remotely() const noexcept {
           TThread::get_shard_index());
 }
 
+// @unsafe - Borrow the selected physical handle under the active sharding view.
+// Raw proxies can represent several owners. Only the captured grant names
+// the participant for this particular key.
+rust_sto_tpcc_ordered_index::PointTarget
+rust_sto_tpcc_ordered_index::resolve_point(lcdf::Str key) const {
+  if (mako::sharding_admission_enabled()) {
+    if (!owner_->tls_sharding_engine_ && !mako::sharding_has_request())
+      throw abstract_db::abstract_abort_exception();
+    const auto point = mako::sharding_resolve_point(table_id_, key.data(), key.length());
+    if (point.governed()) {
+      auto *index = dynamic_cast<rust_sto_tpcc_ordered_index *>(point.handle());
+      const bool remote = point.owner() != TThread::get_shard_index();
+      if (!index || index->is_remote_ != remote || (remote && mako::sharding_has_request()))
+        throw abstract_db::abstract_abort_exception();
+      return {index, remote ? point.owner() : -1};
+    }
+  }
+  return {this, routes_remotely() ? (table_id_ - 1) / mako::NUM_TABLES_PER_SHARD : -1};
+}
+
 // @unsafe - Legacy workload dispatch observes the same routing as the verbs.
 bool rust_sto_tpcc_ordered_index::get_is_remote() { return routes_remotely(); }
 
@@ -984,15 +1002,16 @@ bool rust_sto_tpcc_ordered_index::tx_get(c_void *txn, lcdf::Str key,
                                          std::string &value,
                                          size_t max_bytes_read) {
   owner_->require_txn_handle(txn);
-  if (routes_remotely())
-    return owner_->remote_get(*this, key, value, max_bytes_read);
-  return owner_->get_active_raw(table_, key, value, max_bytes_read);
+  const auto target = resolve_point(key);
+  if (target.remote_owner >= 0)
+    return owner_->remote_get(*target.index, target.remote_owner, key, value, max_bytes_read);
+  return owner_->get_active_raw(target.index->table_, key, value, max_bytes_read);
 }
 
 void rust_sto_tpcc_ordered_index::tx_visit_fixed(
     c_void *txn, const char *keys, size_t key_width, size_t key_count,
     size_t max_bytes_read, oi_fixed_read_callback &callback) {
-  owner_->require_txn_handle(txn);
+  owner_->require_fast_txn(txn);
   fixed_read_bridge bridge{&callback, max_bytes_read, nullptr};
   size_t visited = 0;
   const sto_tpcc_status status = sto_tpcc_visit_fixed(
@@ -1012,7 +1031,7 @@ void rust_sto_tpcc_ordered_index::tx_visit_fixed(
 void rust_sto_tpcc_ordered_index::tx_modify_fixed(
     c_void *txn, const char *keys, size_t key_width, size_t key_count,
     oi_fixed_modify_callback &callback) {
-  owner_->require_txn_handle(txn);
+  owner_->require_fast_txn(txn);
   fixed_modify_bridge bridge{&callback, nullptr};
   size_t visited = 0;
   const sto_tpcc_status status = sto_tpcc_modify_fixed(
@@ -1032,7 +1051,7 @@ void rust_sto_tpcc_ordered_index::tx_modify_fixed(
 oi_fixed_put_result rust_sto_tpcc_ordered_index::tx_put_fixed(
     c_void *txn, const char *keys, size_t key_width, size_t key_count,
     const std::string_view *encoded_values, oi_fixed_put_mode mode) {
-  owner_->require_txn_handle(txn);
+  owner_->require_fast_txn(txn);
   if (key_count != 0 && (keys == nullptr || encoded_values == nullptr))
     throw std::invalid_argument(
         "fixed put requires keys and values for a nonempty batch");
@@ -1094,9 +1113,10 @@ void rust_sto_tpcc_ordered_index::tx_put(c_void *txn, lcdf::Str key,
 void rust_sto_tpcc_ordered_index::tx_insert(c_void *txn, lcdf::Str key,
                                             const std::string &value) {
   owner_->require_txn_handle(txn);
-  if (routes_remotely()) {
+  const auto target = resolve_point(key);
+  if (target.remote_owner >= 0) {
     std::string ignored;
-    if (owner_->remote_get(*this, key, ignored, 0))
+    if (owner_->remote_get(*target.index, target.remote_owner, key, ignored, 0))
       return;
   }
   if (owner_->tls_protocol_)
@@ -1120,9 +1140,7 @@ void rust_sto_tpcc_ordered_index::tx_scan(c_void *txn,
                                           oi_scan_callback &callback,
                                           str_arena *) {
   owner_->require_txn_handle(txn);
-  if (routes_remotely())
-    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
-  owner_->scan_active_raw(table_, false, start_key, end_key, callback, true);
+  scan_local(false, start_key, end_key, callback, true);
 }
 
 void rust_sto_tpcc_ordered_index::tx_rscan(c_void *txn,
@@ -1131,9 +1149,7 @@ void rust_sto_tpcc_ordered_index::tx_rscan(c_void *txn,
                                            oi_scan_callback &callback,
                                            str_arena *) {
   owner_->require_txn_handle(txn);
-  if (routes_remotely())
-    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
-  owner_->scan_active_raw(table_, true, start_key, end_key, callback, true);
+  scan_local(true, start_key, end_key, callback, true);
 }
 
 // @unsafe - Existing remote scan contract returns the lower median payload.
@@ -1141,13 +1157,14 @@ void rust_sto_tpcc_ordered_index::tx_scan_remote_one(
     c_void *txn, const std::string &start_key, const std::string &end_key,
     std::string &value) {
   owner_->require_txn_handle(txn);
-  if (routes_remotely()) {
+  const auto target = resolve_point(lcdf::Str(start_key));
+  if (target.remote_owner >= 0) {
     if (!TThread::sclient)
       throw std::logic_error("Rust STO remote scan has no shard client");
     owner_->require_ok("flush remote scan", sto_tpcc_protocol_flush_remote(
         owner_->tls_thread_, owner_->protocol_callback, owner_));
     const int status = TThread::sclient->remoteScan(
-        table_id_, start_key, end_key, value);
+        target.index->table_id_, start_key, end_key, value);
     if (status != mako::ErrorCode::SUCCESS &&
         status != mako::ErrorCode::NOT_FOUND)
       throw abstract_db::abstract_abort_exception();
@@ -1160,7 +1177,7 @@ void rust_sto_tpcc_ordered_index::tx_scan_remote_one(
       value.clear();
     }
     owner_->require_ok("remote scan dependency", sto_tpcc_protocol_observe_read(
-        owner_->tls_thread_, (table_id_ - 1) / mako::NUM_TABLES_PER_SHARD,
+        owner_->tls_thread_, target.remote_owner,
         time_term));
     return;
   }
@@ -1176,14 +1193,18 @@ void rust_sto_tpcc_ordered_index::tx_scan_remote_one(
   private:
     std::string &target_;
   } callback(value);
-  owner_->scan_active_raw(table_, false, start_key, &end_key, callback, true);
+  scan_local(false, start_key, &end_key, callback, true);
 }
 
 // @unsafe - Materialize metadata captured with the selected native payload.
 bool rust_sto_tpcc_ordered_index::shard_get(lcdf::Str key,
                                             std::string &value,
                                             size_t max_bytes_read) {
-  const bool found = owner_->get_raw(table_, key, value);
+  owner_->require_txn_handle(owner_->tls_thread_);
+  const auto target = resolve_point(key);
+  if (target.index != this || target.remote_owner >= 0)
+    throw abstract_db::abstract_abort_exception();
+  const bool found = owner_->get_active_raw(table_, key, value);
   if (found) {
     append_mako_metadata(value, owner_->tls_last_read_time_term_);
     if (value.size() > max_bytes_read)
@@ -1201,7 +1222,8 @@ const c_char *rust_sto_tpcc_ordered_index::shard_put(
 bool rust_sto_tpcc_ordered_index::shard_scan(
     const std::string &start_key, const std::string *end_key,
     oi_scan_callback &callback, str_arena *) {
-  owner_->scan_raw(table_, false, start_key, end_key, callback, false);
+  owner_->require_txn_handle(owner_->tls_thread_);
+  scan_local(false, start_key, end_key, callback, false);
   return true;
 }
 
@@ -1210,6 +1232,7 @@ rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper()
     : db_(nullptr), tables_by_id_(static_cast<size_t>(kTableIdLimit)) {}
 
 rust_sto_tpcc_wrapper::~rust_sto_tpcc_wrapper() noexcept {
+  release_sharding_indexes();
   tables_by_name_.clear();
   for (const auto &slot : tables_by_id_)
     slot.store(nullptr, rusty::sync::atomic::Ordering::Release);
@@ -1387,10 +1410,11 @@ bool rust_sto_tpcc_wrapper::commit_txn(void *txn) {
       ? sto_tpcc_protocol_commit(tls_thread_, mako::getCurrentTimeMillis(),
                                  protocol_callback, this, &report)
       : mako_sto_tpcc_txn_commit_trusted(tls_thread_);
-  tls_transaction_active_ = false;
   if (tls_protocol_ && status == STO_TPCC_RETRY &&
       report.disposition != STO_TPCC_ABORTED)
     throw_fatal("non-aborted retry disposition", STO_TPCC_UNKNOWN);
+  if (status == STO_TPCC_OK || status == STO_TPCC_RETRY)
+    finish_current_transaction();
   require_ok("txn_commit", status);
   return true;
 }
@@ -1421,14 +1445,27 @@ void rust_sto_tpcc_wrapper::abort_txn(void *txn) {
   abort_current_transaction_noexcept();
 }
 
+void rust_sto_tpcc_wrapper::abort_one_operation() {
+  abort_txn(tls_thread_);
+  // A caller holding a stale routing view must retry the logical operation.
+  // An internal OCC retry with the same view cannot repair ownership.
+  if (mako::sharding_admission_enabled())
+    throw abstract_abort_exception();
+}
+
 // @unsafe - Local abort never sends a remote participant terminal.
 void rust_sto_tpcc_wrapper::abort_txn_local(void *) {
   abort_current_transaction_noexcept();
 }
 
+// Catalog registration can enable sharding after the database is constructed.
+bool rust_sto_tpcc_wrapper::uses_protocol() const noexcept {
+  return protocol_mode_ || mako_sharding_enabled();
+}
+
 TxnFixedReadCapability *rust_sto_tpcc_wrapper::txn_fixed_read_capability(
     abstract_ordered_index *index) noexcept {
-  if (protocol_mode_ || index == nullptr)
+  if (uses_protocol() || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1445,7 +1482,7 @@ TxnFixedReadCapability *rust_sto_tpcc_wrapper::txn_fixed_read_capability(
 
 TxnFixedModifyCapability *rust_sto_tpcc_wrapper::txn_fixed_modify_capability(
     abstract_ordered_index *index) noexcept {
-  if (protocol_mode_ || index == nullptr)
+  if (uses_protocol() || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1459,7 +1496,7 @@ TxnFixedModifyCapability *rust_sto_tpcc_wrapper::txn_fixed_modify_capability(
 
 TxnFixedPutCapability *rust_sto_tpcc_wrapper::txn_fixed_put_capability(
     abstract_ordered_index *index) noexcept {
-  if (protocol_mode_ || index == nullptr)
+  if (uses_protocol() || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1473,37 +1510,37 @@ TxnFixedPutCapability *rust_sto_tpcc_wrapper::txn_fixed_put_capability(
 
 TxnInsertBatchCapability *
 rust_sto_tpcc_wrapper::txn_insert_batch_capability() noexcept {
-  return protocol_mode_ ? nullptr : this;
+  return uses_protocol() ? nullptr : this;
 }
 
 TxnTpccPaymentCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_payment_capability() noexcept {
-  return protocol_mode_ || kDisablePaymentPrefix ? nullptr : this;
+  return uses_protocol() || kDisablePaymentPrefix ? nullptr : this;
 }
 
 TxnTpccNewOrderCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_new_order_capability() noexcept {
-  return protocol_mode_ || kDisableNewOrderFull ? nullptr : this;
+  return uses_protocol() || kDisableNewOrderFull ? nullptr : this;
 }
 
 TxnTpccDeliveryCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_delivery_capability() noexcept {
-  return protocol_mode_ || kDisableDeliveryFull ? nullptr : this;
+  return uses_protocol() || kDisableDeliveryFull ? nullptr : this;
 }
 
 TxnTpccStockLevelCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_stock_level_capability() noexcept {
-  return protocol_mode_ || kDisableStockLevelFull ? nullptr : this;
+  return uses_protocol() || kDisableStockLevelFull ? nullptr : this;
 }
 
 bool rust_sto_tpcc_wrapper::payment_full_enabled() const noexcept {
-  return !protocol_mode_ && !kDisablePaymentFull;
+  return !uses_protocol() && !kDisablePaymentFull;
 }
 
 tpcc_fixed_batch::payment_full_result
 rust_sto_tpcc_wrapper::tx_payment_full(
     const tpcc_fixed_batch::payment_full_request &request) {
-  require_txn_handle(request.txn);
+  require_fast_txn(request.txn);
   if (request.warehouse == nullptr || request.district == nullptr ||
       request.customer == nullptr || request.history == nullptr ||
       request.warehouse_key == nullptr || request.district_key == nullptr ||
@@ -1585,7 +1622,7 @@ rust_sto_tpcc_wrapper::tx_payment_full(
 tpcc_fixed_batch::payment_prefix_result
 rust_sto_tpcc_wrapper::tx_payment_prefix(
     const tpcc_fixed_batch::payment_prefix_request &request) {
-  require_txn_handle(request.txn);
+  require_fast_txn(request.txn);
   if (request.warehouse == nullptr || request.district == nullptr ||
       request.customer == nullptr || request.warehouse_key == nullptr ||
       request.district_key == nullptr ||
@@ -1673,7 +1710,7 @@ rust_sto_tpcc_wrapper::tx_payment_prefix(
 tpcc_fixed_batch::new_order_full_result
 rust_sto_tpcc_wrapper::tx_new_order_full(
     const tpcc_fixed_batch::new_order_full_request &request) {
-  require_txn_handle(request.txn);
+  require_fast_txn(request.txn);
   if (request.warehouse == nullptr || request.district == nullptr ||
       request.customer == nullptr || request.item == nullptr ||
       request.stock == nullptr || request.new_order == nullptr ||
@@ -1751,7 +1788,7 @@ rust_sto_tpcc_wrapper::tx_new_order_full(
 tpcc_fixed_batch::delivery_full_result
 rust_sto_tpcc_wrapper::tx_delivery_full(
     const tpcc_fixed_batch::delivery_full_request &request) {
-  require_txn_handle(request.txn);
+  require_fast_txn(request.txn);
   if (request.new_order == nullptr || request.oorder == nullptr ||
       request.order_line == nullptr || request.customer == nullptr ||
       request.last_no_o_ids == nullptr || request.warehouse_id <= 0 ||
@@ -1820,7 +1857,7 @@ rust_sto_tpcc_wrapper::tx_delivery_full(
 tpcc_fixed_batch::stock_level_full_result
 rust_sto_tpcc_wrapper::tx_stock_level_full(
     const tpcc_fixed_batch::stock_level_full_request &request) {
-  require_txn_handle(request.txn);
+  require_fast_txn(request.txn);
   if (request.order_line == nullptr || request.stock == nullptr ||
       request.warehouse_id <= 0 || request.district_id <= 0 ||
       request.district_id > 10 ||
@@ -1882,7 +1919,7 @@ rust_sto_tpcc_wrapper::tx_stock_level_full(
 oi_fixed_put_result rust_sto_tpcc_wrapper::tx_insert_many(
     c_void *txn, const oi_insert_operation *operations,
     size_t operation_count) {
-  require_txn_handle(txn);
+  require_fast_txn(txn);
   if (operation_count != 0 && operations == nullptr)
     throw std::invalid_argument(
         "insert batch requires operations for a nonempty batch");
@@ -2127,6 +2164,8 @@ void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
     throw std::invalid_argument(
         "Rust STO close_index received an index from another database");
 
+  if (sharding_uses_index(idx))
+    throw std::logic_error("Rust STO index is registered with native sharding");
   auto *table = owned->get();
   tables_by_id_[static_cast<size_t>(table->table_id_)].store(
       nullptr, rusty::sync::atomic::Ordering::Release);
@@ -2170,7 +2209,8 @@ void rust_sto_tpcc_wrapper::shard_serialize_util(uint32_t) {
 void rust_sto_tpcc_wrapper::shard_unlock(bool committed) {
   sto_tpcc_protocol_report report{};
   const auto status = sto_tpcc_protocol_finish(tls_thread_, committed, &report);
-  tls_transaction_active_ = false;
+  if (status == STO_TPCC_OK || status == STO_TPCC_RETRY)
+    finish_current_transaction();
   require_ok("participant finish", status);
 }
 
@@ -2298,7 +2338,7 @@ bool rust_sto_tpcc_wrapper::replay_apply_record(
       if (sto_tpcc_protocol_finish(tls_thread_, 0, &report) != STO_TPCC_OK)
         std::terminate();
     }
-    tls_transaction_active_ = false;
+    finish_current_transaction();
     throw storage_resource_exhausted(message);
   }
   throw std::runtime_error(message);
@@ -2318,13 +2358,19 @@ void rust_sto_tpcc_wrapper::require_txn_handle(c_void *txn) {
     throw std::runtime_error("invalid or inactive Rust STO transaction handle");
 }
 
+void rust_sto_tpcc_wrapper::require_fast_txn(c_void *txn) {
+  require_txn_handle(txn);
+  if (tls_protocol_ || mako_sharding_enabled())
+    throw abstract_abort_exception();
+}
+
 // @unsafe - Begin only Rust state; the inactive C++ transaction is not started.
 void rust_sto_tpcc_wrapper::begin_current_transaction() {
   if (!tls_thread_)
     throw std::runtime_error("Rust STO operation on an unattached thread");
   if (tls_transaction_active_)
     throw std::runtime_error("nested Rust STO transaction");
-  tls_protocol_ = tls_owner_->protocol_mode_ || TThread::mode() == 1;
+  tls_protocol_ = tls_owner_->uses_protocol() || TThread::mode() == 1;
   if (tls_protocol_) {
     if (TThread::mode() == 0) {
       const int term = BenchmarkConfig::getInstance().getIsReplicated()
@@ -2336,19 +2382,39 @@ void rust_sto_tpcc_wrapper::begin_current_transaction() {
         TThread::sclient->beginAttempt(tls_term_);
     }
     require_ok("protocol begin", sto_tpcc_protocol_begin(tls_thread_, tls_term_));
-    const auto history = sync_util::sync_logger::history_snapshot();
-    const uint32_t failure_bound =
-        sync_util::sync_logger::failed_shard_ts.load(std::memory_order_acquire);
-    const bool bounded_failure =
-        BenchmarkConfig::getInstance().getControlMode() == 1 &&
-        failure_bound != std::numeric_limits<uint32_t>::max();
-    require_ok("protocol visibility", sto_tpcc_protocol_visibility(
-        tls_thread_, history.values.data(), history.known_mask,
-        bounded_failure ? failure_bound : 0, bounded_failure));
+    tls_transaction_active_ = true;
+    try {
+      const auto history = sync_util::sync_logger::history_snapshot();
+      const uint32_t failure_bound =
+          sync_util::sync_logger::failed_shard_ts.load(std::memory_order_acquire);
+      const bool bounded_failure =
+          BenchmarkConfig::getInstance().getControlMode() == 1 &&
+          failure_bound != std::numeric_limits<uint32_t>::max();
+      require_ok("protocol visibility", sto_tpcc_protocol_visibility(
+          tls_thread_, history.values.data(), history.known_mask,
+          bounded_failure ? failure_bound : 0, bounded_failure));
+      // A reset helper owns an empty Rust frame. Its first bound RPC takes
+      // the receiver's logical pin; an idle frame must never stall a drain.
+      if (mako::sharding_admission_enabled() &&
+          (TThread::mode() != 1 || mako::sharding_has_request())) {
+        mako::sharding_engine_start();
+        tls_sharding_engine_ = true;
+      }
+    } catch (...) {
+      abort_current_transaction_noexcept();
+      throw;
+    }
   } else {
     require_ok("txn_begin", mako_sto_tpcc_txn_begin_trusted(tls_thread_));
+    tls_transaction_active_ = true;
   }
-  tls_transaction_active_ = true;
+}
+
+// Called after the native terminal and its last unlock/cleanup effect.
+void rust_sto_tpcc_wrapper::finish_current_transaction() {
+  tls_transaction_active_ = false;
+  if (std::exchange(tls_sharding_engine_, false))
+    mako::sharding_engine_complete();
 }
 
 // @unsafe - Consume affine state; uncertain/failed committed cleanup fail-stops.
@@ -2365,15 +2431,7 @@ void rust_sto_tpcc_wrapper::abort_current_transaction_noexcept() {
     if (status == STO_TPCC_UNKNOWN || status == STO_TPCC_COMMITTED_ERROR)
       std::terminate();
   }
-  tls_transaction_active_ = false;
-}
-
-bool rust_sto_tpcc_wrapper::get_raw(const sto_tpcc_table *table,
-                                    lcdf::Str key,
-                                    std::string &encoded_value,
-                                    size_t max_bytes_read) {
-  require_txn_handle(tls_thread_);
-  return get_active_raw(table, key, encoded_value, max_bytes_read);
+  finish_current_transaction();
 }
 
 // @unsafe - Copy one coherent Rust payload/metadata result to legacy storage.
@@ -2508,15 +2566,145 @@ bool rust_sto_tpcc_wrapper::remove_active_raw(const sto_tpcc_table *table,
   return true;
 }
 
-void rust_sto_tpcc_wrapper::scan_raw(const sto_tpcc_table *table,
-                                     bool reverse,
-                                     const std::string &start_key,
-                                     const std::string *end_key,
-                                     oi_scan_callback &callback,
-                                     bool strip_value_metadata) {
-  require_txn_handle(tls_thread_);
-  scan_active_raw(table, reverse, start_key, end_key, callback,
-                  strip_value_metadata);
+// The page contains [lo, hi). A continuation excludes the exact last key
+// in either direction. Rust supports an unbounded upper limit directly.
+void rust_sto_tpcc_ordered_index::scan_protocol_bounds(
+    MakoScanBounds bounds, oi_scan_callback& callback, bool strip_metadata) {
+  owner_->require_txn_handle(owner_->tls_thread_);
+  if (!table_ || is_remote_ || !owner_->tls_protocol_)
+    throw abstract_db::abstract_abort_exception();
+  const bool resume_forward = bounds.has_cursor && !bounds.reverse;
+  const bool resume_reverse = bounds.has_cursor && bounds.reverse;
+  const auto lower = resume_forward ? bounds.cursor : bounds.lo;
+  const auto upper = resume_reverse ? bounds.cursor : bounds.hi;
+  scan_bridge bridge{&callback, !strip_metadata, {}, {}};
+  size_t visited = 0;
+  const auto status = sto_tpcc_protocol_scan(owner_->tls_thread_, table_,
+      bounds.reverse ? STO_TPCC_SCAN_REVERSE : STO_TPCC_SCAN_FORWARD,
+      resume_forward ? STO_TPCC_BOUND_EXCLUDED : STO_TPCC_BOUND_INCLUDED,
+      lower.data, lower.len,
+      resume_reverse || bounds.has_hi ? STO_TPCC_BOUND_EXCLUDED : STO_TPCC_BOUND_UNBOUNDED,
+      upper.data, upper.len, callback.max_records_hint(),
+      invoke_versioned_scan_bridge, &bridge, &visited);
+  if (bridge.failure) std::rethrow_exception(bridge.failure);
+  owner_->require_ok("participant range scan", status);
+}
+
+void rust_sto_tpcc_ordered_index::read_scan_page(
+    const mako::ShardingRequest& request, const uint8_t* input, size_t length,
+    uint8_t* output, size_t capacity, size_t* output_length) {
+  if (mako::sharding_admission_enabled() && !mako::sharding_has_request())
+    throw abstract_db::abstract_abort_exception();
+  oi_mbta_scan_page_state state;
+  oi_mbta_scan_require(mako_scan_page_new({input, length}, &state.page));
+  const auto identity = oi_mbta_scan_identity(request);
+  oi_mbta_scan_require(mako_scan_page_identity_matches(state.page, &identity));
+  const auto bounds = mako_scan_page_bounds(state.page);
+  mako::sharding_require_interval(table_id_, bounds.lo, bounds.has_hi, bounds.hi,
+                                  {request.grant, request.snapshot_version});
+  struct PageRows final : oi_scan_callback {
+    MakoScanPage* page;
+    explicit PageRows(MakoScanPage* page) : page(page) {}
+    size_t max_records_hint() const override { return mako_scan_page_visit_limit(); }
+    bool invoke(const char* key, size_t size, const std::string& value) override {
+      return invoke_bytes(key, size, value.data(), value.size());
+    }
+    bool invoke_bytes(const char* key, size_t size, const char* value, size_t n) override {
+      uint32_t proceed = 0;
+      oi_mbta_scan_require(mako_scan_page_add(page,
+          {reinterpret_cast<const uint8_t*>(key), size},
+          {reinterpret_cast<const uint8_t*>(value), n}, &proceed));
+      return proceed != 0;
+    }
+  } rows(state.page);
+  try {
+    scan_protocol_bounds(bounds, rows, false);
+  } catch (const storage_resource_exhausted&) {
+    // The engine closed this participant. Let the wire dispatcher record its
+    // terminal and tell the coordinator the page failed.
+    throw abstract_db::abstract_abort_exception();
+  }
+  oi_mbta_scan_require(mako_scan_page_finish(state.page, output, capacity, output_length));
+}
+
+// All segments deliver into the same callback budget. A remote page is part
+// of this coordinator's attempt even when its participant returns no rows.
+struct rust_sto_tpcc_ordered_index::ScanDelivery final : oi_scan_callback {
+  oi_scan_callback& callback;
+  bool strip;
+  size_t remaining;
+  uint32_t remote_owner = 0;
+  bool stopped = false;
+  std::exception_ptr exception;
+
+  ScanDelivery(oi_scan_callback& callback, bool strip)
+      : callback(callback), strip(strip), remaining(callback.max_records_hint()) {}
+
+  size_t max_records_hint() const override { return remaining; }
+  bool invoke(const char* key, size_t size, const std::string& value) override {
+    return invoke_bytes(key, size, value.data(), value.size());
+  }
+  bool invoke_bytes(const char* key, size_t size, const char* value, size_t n) override {
+    if (!remaining) return false;
+    --remaining;
+    stopped = !callback.invoke_bytes(key, size, value, n) || !remaining;
+    return !stopped;
+  }
+
+  void local(rust_sto_tpcc_ordered_index*, const mako::ShardingRequest& request,
+             MakoScanBounds bounds, MakoShardRoute route) {
+    auto* index = dynamic_cast<rust_sto_tpcc_ordered_index*>(mako::sharding_physical_handle(request));
+    if (!index || index->is_remote_) throw abstract_db::abstract_abort_exception();
+    mako::sharding_require_interval(index->table_id_, bounds.lo, bounds.has_hi, bounds.hi, route);
+    index->scan_protocol_bounds(bounds, *this, strip);
+  }
+
+  void begin_remote(uint32_t owner) {
+    using Db = rust_sto_tpcc_wrapper;
+    remote_owner = owner;
+    Db::require_ok("flush before remote range", sto_tpcc_protocol_flush_remote(
+        Db::tls_thread_, Db::protocol_callback, Db::tls_owner_));
+    Db::require_ok("remote range participant", sto_tpcc_protocol_observe_read(
+        Db::tls_thread_, owner, 0));
+  }
+
+  static uint32_t row(void* opaque, MakoShardBytes key, MakoShardBytes bytes) {
+    auto& self = *static_cast<ScanDelivery*>(opaque);
+    try {
+      std::string_view encoded(reinterpret_cast<const char*>(bytes.data), bytes.len);
+      const auto payload = canonical_local_mako_payload(encoded);
+      const uint32_t version = mako::load_value_time_term(encoded.data(), encoded.size());
+      using Db = rust_sto_tpcc_wrapper;
+      Db::require_ok("remote range dependency", sto_tpcc_protocol_observe_read(
+          Db::tls_thread_, self.remote_owner, version));
+      return self.invoke_bytes(reinterpret_cast<const char*>(key.data), key.len,
+          encoded.data(), self.strip ? payload.size() : encoded.size());
+    } catch (...) {
+      self.exception = std::current_exception();
+      return 0;
+    }
+  }
+};
+
+void rust_sto_tpcc_ordered_index::scan_local(
+    bool reverse, const std::string &start_key, const std::string *end_key,
+    oi_scan_callback &callback, bool strip_value_metadata) {
+  if (mako::sharding_admission_enabled() && !mako::sharding_has_request()) {
+    if (!owner_->tls_sharding_engine_) throw abstract_db::abstract_abort_exception();
+    ScanDelivery delivery(callback, strip_value_metadata);
+    if (delivery.remaining) oi_sharded_full_scan(this, start_key, end_key, reverse, delivery);
+    return;
+  }
+  const auto target = resolve_point(lcdf::Str(start_key));
+  if (target.remote_owner >= 0) {
+    if (mako::sharding_admission_enabled())
+      throw abstract_db::abstract_abort_exception();
+    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
+  }
+  if (mako::sharding_admission_enabled())
+    mako::sharding_require_scan(target.index->table_id_, start_key, end_key, reverse);
+  owner_->scan_active_raw(target.index->table_, reverse, start_key, end_key,
+                          callback, strip_value_metadata);
 }
 
 // @unsafe - Rust keeps row borrows live for the synchronous callback only.
@@ -2567,17 +2755,20 @@ void rust_sto_tpcc_wrapper::mutate_protocol(
       ? std::string_view{} : canonical_local_mako_payload(value);
   const auto *key_bytes = reinterpret_cast<const uint8_t *>(key.data());
   const auto *value_bytes = reinterpret_cast<const uint8_t *>(payload.data());
-  const bool remote = index.routes_remotely();
+  const auto target = index.resolve_point(key);
+  const bool remote = target.remote_owner >= 0;
+  if (lock_now && (remote || target.index != &index))
+    throw abstract_abort_exception();
   if (!remote && TThread::should_reclaim())
     require_ok("history floor", sto_tpcc_table_history_floor(
-        index.table_, sync_util::sync_logger::retrieveShardW() / 10));
+        target.index->table_, sync_util::sync_logger::retrieveShardW() / 10));
   const auto status = remote
       ? sto_tpcc_protocol_stage_remote(
-            tls_thread_, (index.table_id_ - 1) / mako::NUM_TABLES_PER_SHARD,
-            index.table_id_, operation, key_bytes, key.length(),
+            tls_thread_, target.remote_owner,
+            target.index->table_id_, operation, key_bytes, key.length(),
             value_bytes, payload.size())
       : sto_tpcc_protocol_mutate(
-            tls_thread_, index.table_, index.table_id_, operation,
+            tls_thread_, target.index->table_, target.index->table_id_, operation,
             key_bytes, key.length(), value_bytes, payload.size(), lock_now);
   if ((status == STO_TPCC_DUPLICATE && operation == 1) ||
       (status == STO_TPCC_MISS && operation == 2))
@@ -2590,7 +2781,7 @@ void rust_sto_tpcc_wrapper::mutate_protocol(
 
 // @unsafe - Legacy response bytes are copied before releasing the RPC buffer.
 bool rust_sto_tpcc_wrapper::remote_get(
-    const rust_sto_tpcc_ordered_index &index, lcdf::Str key,
+    const rust_sto_tpcc_ordered_index &index, int remote_owner, lcdf::Str key,
     std::string &value, size_t max_bytes_read) {
   if (!TThread::sclient)
     throw std::logic_error("Rust STO remote read has no shard client");
@@ -2610,7 +2801,7 @@ bool rust_sto_tpcc_wrapper::remote_get(
     value.clear();
   }
   require_ok("remote read dependency", sto_tpcc_protocol_observe_read(
-      tls_thread_, (index.table_id_ - 1) / mako::NUM_TABLES_PER_SHARD, time_term));
+      tls_thread_, remote_owner, time_term));
   return status == mako::ErrorCode::SUCCESS;
 }
 

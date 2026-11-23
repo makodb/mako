@@ -59,12 +59,5 @@ export VERUS_USE_RUSTUP=0
 export VERUS_SYSROOT="$(rustc --print sysroot)"
 export LD_LIBRARY_PATH="$VERUS_SYSROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$VERUS_PATH" --version
-# The code Verus is about to check, with the ghost code erased, and the shell
-# that calls it. This is where the shell's constant assertions are evaluated,
-# and what puts the Verus crates of crates/Cargo.lock into cargo's cache for
-# the pin check.
-cargo build --locked --manifest-path crates/Cargo.toml \
-    --target-dir "${BUILD_DIR:-build_docker}/shard-host-core-proof" \
-    -p shard-host-core -p sto-tpcc-ffi
 python3 scripts/shard_host_core_proof.py
 echo "shard-host-core: proof gate passed"

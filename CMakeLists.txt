@@ -2981,6 +2981,7 @@ if(MAKO_CARGO_EXECUTABLE)
 
     add_executable(sto_tpcc_bench EXCLUDE_FROM_ALL
         src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_include_directories(sto_tpcc_bench PRIVATE
         ${MASSTREE_CONFIG_INCLUDE_DIR}
@@ -2995,6 +2996,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${BENCH_CXXFLAGS})
     mako_force_include_masstree_config(
         src/mako/benchmarks/dbtest.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(sto_tpcc_bench PRIVATE
         CONFIG_H="${CONFIG_H}"
@@ -3018,6 +3020,7 @@ if(MAKO_CARGO_EXECUTABLE)
 
     add_executable(sto_tpcc_cpp_wrapper_smoke EXCLUDE_FROM_ALL
         crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_include_directories(sto_tpcc_cpp_wrapper_smoke PRIVATE
         ${MASSTREE_CONFIG_INCLUDE_DIR}
@@ -3032,6 +3035,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${BENCH_CXXFLAGS})
     mako_force_include_masstree_config(
         crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(sto_tpcc_cpp_wrapper_smoke PRIVATE
         CONFIG_H="${CONFIG_H}"
@@ -3057,6 +3061,7 @@ if(MAKO_CARGO_EXECUTABLE)
 
     add_executable(sto_tpcc_cpp_wrapper_scan_smoke EXCLUDE_FROM_ALL
         crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_include_directories(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
         ${MASSTREE_CONFIG_INCLUDE_DIR}
@@ -3071,6 +3076,7 @@ if(MAKO_CARGO_EXECUTABLE)
         ${BENCH_CXXFLAGS})
     mako_force_include_masstree_config(
         crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc
+        src/mako/storage/rust_sto_sharding_host.cc
         src/mako/storage/rust_sto_tpcc_wrapper.cc)
     target_compile_definitions(sto_tpcc_cpp_wrapper_scan_smoke PRIVATE
         CONFIG_H="${CONFIG_H}"
@@ -3095,9 +3101,6 @@ if(MAKO_CARGO_EXECUTABLE)
 
     # Rust-engine sharding storage fixture: one scenario per process, driven
     # by examples/rust_sharding_storage.py. It is not a CTest.
-    # rust_sto_sharding_host.cc is FFI and thread-registration glue around the
-    # Rust storage verbs; it is compiled only here and is in no borrow_check
-    # list, like rust_sto_tpcc_wrapper.cc.
     add_executable(rust_sharding_storage_fixture EXCLUDE_FROM_ALL
         examples/rust_sharding_storage_fixture.cc
         src/mako/storage/rust_sto_sharding_host.cc

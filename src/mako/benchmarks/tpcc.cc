@@ -539,6 +539,8 @@ protected: \
   tbl_ ## name (unsigned int wid) \
   { \
     INVARIANT(wid >= 1 && wid <= NumWarehouses()); \
+    if (identity_ ## name.kind == 0 && TThread::in_loading_phase && !mako_sharding_active(warehouse_origin_)) \
+      return tbl_ ## name ## _vec[wid - 1]; \
     if (identity_ ## name.kind == 0) \
       return tpcc_resolve_warehouse( \
           routes_ ## name[warehouse_origin_ * NumWarehouses() + wid - 1], warehouse_origin_); \
@@ -1068,11 +1070,9 @@ protected:
 
   // load the micro-benchmark workload (no parallel load)
   void load_micro() {
-    const size_t batchsize = 10000;
-    uint64_t keystart = 0;
-    uint64_t keyend = nkeys;
-
-    const size_t nbatches = nkeys < batchsize ? 1 : (nkeys / batchsize);
+    const auto engine_limit = db->txn_max_batch_size();
+    const size_t batchsize = engine_limit > 0 ? std::min<size_t>(10000, engine_limit) : 10000;
+    const size_t nbatches = nkeys / batchsize + (nkeys % batchsize != 0);
     string obj_buf;
 
     const string i_name = "cccccccc";
@@ -1080,15 +1080,15 @@ protected:
       scoped_str_arena s_arena(arena);
       void * const txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf());
       try {
-        const size_t rend = (batchid + 1 == nbatches) ?
-          keyend : keystart + ((batchid + 1) * batchsize);
-        for (size_t i = batchid * batchsize + keystart; i < rend; i++) {
+        const size_t begin = batchid * batchsize;
+        const size_t rend = begin + std::min<size_t>(batchsize, nkeys - begin);
+        for (size_t i = begin; i < rend; ++i) {
           const item_micro::key k(i);
           item_micro::value v;
           v.i_name.assign(i_name);
           tx_insert(tbl_item(1), txn, EncodeK(k), Encode(obj_buf, v));
         }
-        Notice("[load] micro-benchmark insert: [%d,%d]",batchid * batchsize + keystart, rend);
+        Notice("[load] micro-benchmark insert: [%zu,%zu)", begin, rend);
         if (db->commit_txn(txn))
           batchid++;
         else
@@ -4207,8 +4207,11 @@ private:
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehouses());
     if (identity.kind == 0) {
+      const bool preopened = db->preopen_native_warehouses(identity.table, owner, NumWarehousesTotal());
+      if (!preopened && mako_sharding_warehouse_opener(owner, db, tpcc_open_warehouse) != MAKO_SHARD_OK)
+        throw abstract_db::abstract_abort_exception();
       for (size_t i = 0; i < NumWarehouses(); ++i)
-        ret[i] = tpcc_local_warehouse(identity.table, owner * NumWarehouses() + i + 1, owner);
+        ret[i] = tpcc_local_warehouse(identity.table, owner * NumWarehouses() + i + 1, owner, preopened);
       return ret;
     }
     if (g_enable_separate_tree_per_partition && !is_read_only) {
@@ -4275,27 +4278,30 @@ private:
   }
 
 public:
-  tpcc_bench_runner(abstract_db *db, bool failure=false)
+  tpcc_bench_runner(abstract_db *db, int recovery_mode)
     : bench_runner(db)
   {
-    init_tables(db, failure);
+    init_tables(db, recovery_mode);
   }
 
   // Constructor with shard_index for multi-shard mode
-  tpcc_bench_runner(abstract_db *db, int shard_index, bool failure=false)
+  tpcc_bench_runner(abstract_db *db, int shard_index, int recovery_mode)
     : bench_runner(db, shard_index)
   {
-    init_tables(db, failure);
+    init_tables(db, recovery_mode);
   }
 
 private:
   // @unsafe - single-threaded benchmark setup, before loaders and workers.
-  void init_tables(abstract_db *db, bool failure) {
+  void init_tables(abstract_db *db, int recovery_mode) {
+    if (recovery_mode && tpcc_native_warehouses_enabled() &&
+        BenchmarkConfig::getInstance().getStorageEngine() == "rust")
+      throw std::invalid_argument("Rust native sharding requires a completed data load");
     const int owner = shard_index_ < 0
         ? BenchmarkConfig::getInstance().getShardIndex() : shard_index_;
-    tpcc_initialize_native(db, owner, NumWarehouses(), NumWarehousesTotal(),
+    tpcc_initialize_native(NumWarehouses(), NumWarehousesTotal(),
                            BenchmarkConfig::getInstance().getIsMicro());
-    if (failure && !tpcc_native_warehouses_enabled()) {
+    if (recovery_mode == 1 && !tpcc_native_warehouses_enabled()) {
       printf("reinitializing partitions under failure\n");
         string nCount[12] = {"customer", "customer_name_idx", "district", "history", "new_order", "oorder", 
                              "oorder_c_id_idx", "order_line", "stock", "stock_data", "warehouse", "item"};
@@ -4596,7 +4602,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
   }
 
   tpcc_bench_runner *r = NULL;
-  r = new tpcc_bench_runner(db, f_mode==1);
+  r = new tpcc_bench_runner(db, f_mode);
   // the rpc server and redirect requests to helper threads on the server side
   mako::setup_rpc_server();
   std::map<int, abstract_ordered_index *> open_tables_by_id;
@@ -4704,7 +4710,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   }
 
   // Create bench_runner with shard_index for multi-shard mode
-  tpcc_bench_runner *r = new tpcc_bench_runner(db, shard_index, f_mode==1);
+  tpcc_bench_runner *r = new tpcc_bench_runner(db, shard_index, f_mode);
 
   // @unsafe - Replication keeps one affine helper/transport set per owning shard,
   // and governed same-process peers still execute through SRPC participant

@@ -734,6 +734,12 @@ int sharding_request_table(const ShardingRequest& request, int legacy_table) {
     }
     return context.received_handle->get_table_id();
 }
+FullOrderedIndex* sharding_received_table(int physical_id) {
+    if (context.received && context.received_handle &&
+        context.received_handle->get_table_id() == physical_id)
+        return context.received_handle;
+    return nullptr;
+}
 // @unsafe - terminal dispatcher calls this after the actual engine is complete.
 void sharding_finish_request() {
     if (context.engine) return;

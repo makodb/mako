@@ -58,6 +58,8 @@ uint32_t mako_scan_page_new(MakoShardBytes request, MakoScanPage** output);
 uint32_t mako_scan_page_identity_matches(const MakoScanPage* page,
                                         const MakoScanIdentity* identity);
 void mako_scan_page_free(MakoScanPage* page);
+/* Maximum live rows to read for a page, including the lookahead for EOF. */
+size_t mako_scan_page_visit_limit(void);
 MakoScanBounds mako_scan_page_bounds(const MakoScanPage* page);
 /* Reverse without hi/cursor first observes every key of a forward native scan
  * under the same transaction and full-range admission, then starts reverse at this

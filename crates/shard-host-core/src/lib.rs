@@ -17,7 +17,7 @@ pub mod order;
 pub mod scan;
 pub mod status;
 
-pub use scan::{scan_arguments, scan_flags_valid, ScanLower, ScanRefusal, ScanStart};
+pub use scan::{fixed_scan, FixedScan, scan_arguments, scan_flags_valid, ScanLower, ScanRefusal, ScanStart};
 pub use status::{
     map_engine, Mapped, Stage, ABORTED, COMMITTED, ENGINE_COMMITTED_ERROR, ENGINE_EXHAUSTED,
     ENGINE_FATAL, ENGINE_OK, ENGINE_RETRY, ENGINE_UNKNOWN, SHARD_EXHAUSTED, SHARD_INVALID,

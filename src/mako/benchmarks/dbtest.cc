@@ -624,6 +624,16 @@ main(int argc, char **argv)
   // Rust participants use the same shard RPC and replication topology as C++.
   if (benchConfig.getStorageEngine() == "rust") {
     try {
+      if (mako_sharding_enabled()) {
+        if (benchConfig.getIsReplicated())
+          throw std::invalid_argument("Rust native migration requires non-replicated owners");
+        // Each participating owner preopens eleven governed indexes per global
+        // warehouse. Item uses one more selector. The window is shared by RPC.
+        const size_t max_warehouses = (mako::NUM_TABLES_PER_SHARD - 1) / 11;
+        if (benchConfig.getNshards() == 0 ||
+            benchConfig.getScaleFactor() > max_warehouses / benchConfig.getNshards())
+          throw std::invalid_argument("Rust native warehouse catalog exceeds the per-owner table ID limit");
+      }
       (void)rust_sto_tpcc_detail::db_config_for_worker_count(
           benchConfig.getNthreads());
       rust_sto_tpcc_detail::validate_capacity_environment();

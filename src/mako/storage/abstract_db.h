@@ -14,6 +14,8 @@
 #include "abstract_ordered_index.h"
 #include "../str_arena.h"
 
+struct MakoShardHost;
+namespace mako { struct NativeShardingHost; }
 class mbta_sharded_ordered_index;
 class TxnTpccPaymentCapability;
 class TxnTpccNewOrderCapability;
@@ -298,6 +300,14 @@ public:
   virtual void observe_replay_timestamp(uint32_t) {
     throw std::logic_error("backend has no replay timestamp authority");
   }
+
+  // Bootstrap supplies the native C++ host. An engine with its own storage
+  // callbacks replaces those slots before any node or listener starts.
+  virtual void configure_native_sharding(mako::NativeShardingHost&, MakoShardHost&) {}
+  // Engines that must create tables before worker attachment can provision all
+  // physical destinations for this catalog table during benchmark setup.
+  virtual bool preopen_native_warehouses(uint64_t, uint32_t, uint32_t) { return false; }
+  virtual void native_sharding_stopped(uint32_t) noexcept {}
 };
 
 #endif /* _ABSTRACT_DB_H_ */

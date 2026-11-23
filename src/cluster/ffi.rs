@@ -287,6 +287,14 @@ pub extern "C" fn mako_sharding_raw_register(table: u64, owner: u32, proxy: u32,
     code(flag(proxy).and_then(|proxy|runtime().raw_register(table,owner,proxy,handle)))
 }
 #[no_mangle]
+pub extern "C" fn mako_sharding_raw_unregister(table: u64, owner: u32, proxy: u32, handle: usize) -> u32 {
+    code(flag(proxy).and_then(|proxy|runtime().raw_unregister(table,owner,proxy,handle)))
+}
+#[no_mangle]
+pub extern "C" fn mako_sharding_complete_request(terminal: u32, active: u32, unknown: u32, foreign: u32) -> u32 {
+    crate::epoch_admission::complete_request(terminal != 0, active != 0, unknown != 0, foreign != 0) as u32
+}
+#[no_mangle]
 pub unsafe extern "C" fn mako_sharding_start_node(owner: u32, nodes: u32, allow_migration: u32, abi: *const HostAbi) -> u32 {
     code((|| {if abi.is_null() {return Err(Status::Invalid);}
         let host = unsafe {Host::from_abi(&*abi)?};

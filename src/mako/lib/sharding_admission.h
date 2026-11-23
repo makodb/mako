@@ -128,6 +128,9 @@ bool sharding_bind_request(const ShardingRequest& request);
 void sharding_set_request(const ShardingRequest& request);
 // @unsafe - resolves the receiver's actual physical index, never the sender's ID.
 int sharding_request_table(const ShardingRequest& request, int legacy_table);
+// The receiving helper can address a preopened migration destination omitted
+// from its startup table map only through the current request's exact selector.
+FullOrderedIndex* sharding_received_table(int physical_id);
 void sharding_finish_request();
 
 // @unsafe - replication-log application only. Authorizes an isolated replay

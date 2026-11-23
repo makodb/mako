@@ -661,6 +661,7 @@ bench_runner::run()
     
     if (BenchmarkConfig::getInstance().hasResourceExhaustion()) {
       db->report_capacity_usage("load_failed");
+      db->native_sharding_stopped(BenchmarkConfig::getInstance().getShardIndex());
       stop();
       mako::stop_rpc_server();
       // Every started loader was joined above. Runner destruction releases

@@ -41,9 +41,8 @@
 //   migrate       ["", "n") moves from owner 0 to owner 1 on the Rust storage
 //                 callbacks: 605 rows, two capture pages, one row replaced and
 //                 one removed on the destination.
-//   pinned        As migrate, with an STO epoch older than the cut held by
-//                 another thread: the migration must wait in the drain loop
-//                 until the pin is released.
+//   pinned        An ordinary writer commits after freeze. The final copy waits
+//                 for it, and a read at the new owner sees its committed value.
 //   deleted-keys  ["c", "n") moves; on both owners 5,000 deleted keys lie in
 //                 the range below the first live row.
 //   aborted       As pinned, but the migration is aborted while it waits. The
@@ -69,6 +68,7 @@
 #include "storage/mbta_wrapper.hh"
 #include "storage/rust_sto_tpcc_wrapper.hh"
 #include "storage/rust_sto_sharding_host.hh"
+#include "rust_sharding_receiver_fixture.hh"
 #include <rusty/cell.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
@@ -86,7 +86,7 @@ constexpr uint64_t kDrainAnswersWanted = 5;
 const char kRawName[] = "rs_raw";
 const MakoShardTxn kNonce{0x5253545348415244ULL, 1};
 
-enum class Scenario { red_baseline, migrate, pinned, deleted_keys, aborted };
+enum class Scenario { red_baseline, migrate, pinned, deleted_keys, aborted, warehouses };
 
 // What a scenario does differently from `migrate`.
 struct Shape {
@@ -94,7 +94,7 @@ struct Shape {
     bool rust_callbacks;
     // 5,000 deleted keys below the first live row of the range, on both owners.
     bool tombstones;
-    // Another thread holds an STO epoch older than the cut through the drain loop.
+    // An admitted writer keeps its epoch through the drain loop.
     bool pin;
     // The migration is aborted while the pin holds it; "aborted" is the success.
     bool abort;
@@ -142,7 +142,6 @@ constexpr uint32_t kPinStarting = 0;
 constexpr uint32_t kPinHeld = 1;
 constexpr uint32_t kPinRelease = 2;
 constexpr uint32_t kPinReleased = 3;
-constexpr uint32_t kPinFailed = 4;
 // The thread that holds an STO epoch for `pinned` and `aborted`.
 struct Pin {
     rusty::sync::atomic::AtomicU32 state{kPinStarting};
@@ -190,6 +189,8 @@ Shape shape_of(Scenario scenario) {
             shape.rust_callbacks = false;
             // Its expected result is "not committed".
             shape.wait_seconds = 15;
+            break;
+        case Scenario::warehouses:
             break;
         case Scenario::migrate:
             shape.ordered_scan = true;
@@ -639,27 +640,126 @@ void poll(MakoShardAdminResult& result) {
                    MAKO_SHARD_OK, "admin poll");
 }
 
-// @unsafe - the body of the pin thread. It takes an STO thread slot of its
-// own, announces the current epoch as an ordinary transaction would, and
-// keeps it until the main thread asks for the release. It never attaches to
-// the Rust engine.
-void hold_pin() {
-    Transaction::register_thread();
-    const auto announced = Transaction::epoch_enter();
+// Stage a write while the source is serving. Migration publishes Freeze
+// while this attempt is still open. The adapter owns its epoch announcement.
+constexpr char kWriterValue[] = "committed across freeze";
+void hold_writer(rust_sto_tpcc_wrapper& db, bool commit) {
+    BenchmarkConfig::setThreadLocalShardIndex(0);
+    db.thread_init(true, 0);
+    TThread::in_loading_phase = false;
+    str_arena arena;
+    auto* txn = db.new_txn(0, arena, nullptr);
+    tx_put(raw[0], txn, lcdf::Str(m_key(3)), mako::Encode(kWriterValue));
+    const auto announced = Transaction::tinfo[TThread::id()].epoch.load();
     pin.epoch.store(announced);
-    if (announced == 0) {
-        pin.state.store(kPinFailed);
-        return;
-    }
+    require(announced != 0, "ordinary Rust writer has no epoch announcement");
     pin.state.store(kPinHeld);
     while (pin.state.load() != kPinRelease) usleep(1000);
-    Transaction::epoch_leave();
+    if (commit) require(db.commit_txn(txn), "ordinary write did not commit after freeze");
+    else db.abort_txn(txn);
+    require(Transaction::tinfo[TThread::id()].epoch.load() == 0, "terminal kept its epoch");
+    db.thread_end();
     pin.state.store(kPinReleased);
 }
 
-// @unsafe - starts the pin thread and waits until its epoch is announced.
-void start_pin() {
-    pin.thread = rusty::Some(rusty::thread::spawn([]() { hold_pin(); }));
+void check_remote_scan(rust_sto_tpcc_wrapper& db) {
+    struct Rows final : oi_scan_callback {
+        std::vector<std::pair<std::string, std::string>> values;
+        bool invoke(const char* key, size_t length, const std::string& value) override {
+            values.emplace_back(std::string(key, length), value);
+            return true;
+        }
+    } rows;
+    str_arena arena;
+    const std::string stop = "o";
+    const std::string reverse_stop = m_key(524);
+    const std::string empty_stop = m_key(9000);
+    decltype(rows.values) expected;
+    for (unsigned i = 525; i < 600; ++i) expected.emplace_back(m_key(i), value_of(i));
+    expected.emplace_back(std::string("m\xff", 2), std::string());
+    expected.emplace_back("n", "boundary-unmoved");
+
+    auto* txn = db.new_txn(0, arena, nullptr);
+    try {
+        tx_scan(raw[0], txn, m_key(525), &stop, rows, &arena);
+        require(rows.values == expected, "forward scan lost rows across the owner boundary");
+        rows.values.clear();
+        std::reverse(expected.begin(), expected.end());
+        tx_rscan(raw[0], txn, "n", &reverse_stop, rows, &arena);
+        require(rows.values == expected, "reverse scan lost rows at the page cursor");
+        require(db.commit_txn(txn), "paged range transaction did not certify");
+    } catch (...) {
+        db.abort_txn(txn);
+        throw;
+    }
+    txn = db.new_txn(0, arena, nullptr);
+    try {
+        rows.values.clear();
+        tx_scan(raw[0], txn, m_key(600), &empty_stop, rows, &arena);
+        require(rows.values.empty(), "empty migrated interval returned a row");
+        require(db.commit_txn(txn), "empty range participant did not finish");
+    } catch (...) {
+        db.abort_txn(txn);
+        throw;
+    }
+}
+
+// Keep the coordinator's original index across cutover. Requests sent through
+// the normal shard client must reach owner 1 and finish its real helper frame.
+constexpr char kRemoteWrite[] = "written from the former owner";
+void check_remote_transaction(rust_sto_tpcc_wrapper& db, transport::Configuration& config) {
+    register_sync_util_sc([] { return 0; });
+    register_sync_util_ss([] { return 0; });
+    mako::HelperQueue requests(0, true);
+    mako::HelperQueue responses(0, false);
+    auto address = config.shard(1, 0).host;
+    FastTransport transport(config.configFile, address, "localhost", 1, mako::fullScanReqType,
+                            0, 0, 1, config.warehouses + 5);
+    transport.SetHelperQueues({{0, &requests}});
+    transport.SetHelperQueuesResponse({{0, &responses}});
+    auto io = rusty::thread::spawn([&] { transport.Run(); });
+    auto* runtime = SiloRuntime::Current();
+    auto helper = rusty::thread::spawn([&] {
+        BenchmarkConfig::setThreadLocalShardIndex(1);
+        runtime->BindToCurrentThread();
+        db.thread_init(true, 1);
+        TThread::set_mode(1);
+        TThread::in_loading_phase = false;
+        mako::ShardServer server(config.configFile, 1, 0, 0);
+        // A preopened migration destination can be absent from the helper's
+        // startup catalog. The received canonical route selects it.
+        server.Register(&db, &requests, &responses, {});
+        server.Run();
+        db.thread_end();
+    });
+    std::exception_ptr failure;
+    try {
+        mako::ShardClient client(config.configFile, "localhost", 0, 0, true);
+        TThread::sclient = &client;
+        struct ResetClient {
+            ~ResetClient() { TThread::sclient = nullptr; }
+        } reset;
+        check_remote_scan(db);
+        str_arena arena;
+        auto* txn = db.new_txn(0, arena, nullptr);
+        std::string value;
+        require(tx_get(raw[0], txn, m_key(3), value) && value == kWriterValue,
+                "former owner's remote read missed the committed writer");
+        require(tx_get(raw[0], txn, lcdf::Str("z"), value) && value == "unmoved-right",
+                "same transaction lost its local read");
+        tx_put(raw[0], txn, m_key(4), mako::Encode(kRemoteWrite));
+        require(db.commit_txn(txn), "remote write did not commit");
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    transport.Stop();
+    io.join().unwrap();
+    helper.join().unwrap();
+    if (failure) std::rethrow_exception(failure);
+}
+
+void start_pin(rust_sto_tpcc_wrapper& db, bool commit) {
+    pin.thread = rusty::Some(rusty::thread::spawn([&db, commit]() { hold_writer(db, commit); }));
     for (unsigned attempt = 0; attempt < 5000 && pin.state.load() == kPinStarting; ++attempt)
         usleep(1000);
     require(pin.state.load() == kPinHeld && pin.epoch.load() != 0,
@@ -677,11 +777,36 @@ void release_pin() {
     stage("pin-released");
 }
 
-// @unsafe - one adapter point read on the attached main thread. It reads the
-// table directly; no sharding admission is involved.
+// Diagnostic reads inspect the physical owner, including rows an ordinary
+// transaction can no longer address there after migration.
+sto_tpcc_thread* begin_inspection() {
+    auto* thread = rust_sto_tpcc_wrapper::sharding_host_idle_thread();
+    require_status(sto_tpcc_protocol_begin(thread, 0), STO_TPCC_OK, "inspection begin");
+    return thread;
+}
+void finish_inspection(sto_tpcc_thread* thread) {
+    require_status(sto_tpcc_protocol_validate(thread), STO_TPCC_OK, "inspection validate");
+    sto_tpcc_protocol_report report{};
+    require_status(sto_tpcc_protocol_finish(thread, 1, &report), STO_TPCC_OK, "inspection finish");
+}
+const sto_tpcc_table* physical_table(unsigned owner) {
+    return static_cast<rust_sto_tpcc_ordered_index*>(raw[owner])->sharding_host_table();
+}
+bool read_physical(const sto_tpcc_table* table, const std::string& key, std::string& value) {
+    auto* thread = begin_inspection();
+    size_t length = 0;
+    uint32_t version = 0;
+    value.resize(UINT16_MAX);
+    const auto status = sto_tpcc_protocol_get(thread, table, bytes(key).data,
+        key.size(), reinterpret_cast<uint8_t*>(value.data()), value.size(), &length, &version);
+    if (status != STO_TPCC_MISS) require_status(status, STO_TPCC_OK, "physical read");
+    value.resize(length);
+    finish_inspection(thread);
+    return status == STO_TPCC_OK;
+}
+
 bool read_row(unsigned owner, const std::string& key, std::string& value) {
-    value.clear();
-    return raw[owner]->get(lcdf::Str(key), value, std::string::npos);
+    return read_physical(physical_table(owner), key, value);
 }
 
 // @unsafe - `row` must be on `owner` with exactly its bytes.
@@ -734,42 +859,31 @@ Problems route_problems(const Shape& shape, const rusty::Vec<Row>& source, bool 
     return problems;
 }
 
-// Collects one adapter scan.
-struct Collector final : oi_scan_callback {
-    rusty::Vec<Row> rows;
-    // @safe - the base destructor does not throw, and rusty::Vec's is not
-    // declared so.
-    ~Collector() noexcept override {}
-    // @unsafe - copies the row the adapter lends for this call.
-    bool invoke(const char* key, size_t key_length, const std::string& value) override {
-        rows.push(Row{std::string(key, key_length), value});
-        return true;
-    }
-};
-
-// @unsafe - one adapter scan of `owner`'s whole table must return exactly
-// `expected`, in this order, with these bytes.
 void expect_scan(Problems& problems, unsigned owner, const rusty::Vec<Row>& expected) {
-    Collector seen;
-    raw[owner]->scan(std::string(), nullptr, seen, nullptr);
-    const std::string who = "owner " + std::to_string(owner);
-    if (seen.rows.size() != expected.size())
-        problems.add(who + " scan returned " + std::to_string(seen.rows.size())
-                     + " rows, expected " + std::to_string(expected.size()));
-    const size_t common = seen.rows.size() < expected.size() ? seen.rows.size() : expected.size();
-    for (size_t at = 0; at < common; ++at) {
-        if (seen.rows[at].key != expected[at].key) {
-            problems.add(who + " scan position " + std::to_string(at) + " is "
-                         + printable(seen.rows[at].key) + ", expected "
-                         + printable(expected[at].key));
-            return; // every later position is shifted
-        }
-        if (seen.rows[at].value != expected[at].value)
-            problems.add(who + " scan row " + printable(expected[at].key) + " has "
-                         + std::to_string(seen.rows[at].value.size())
-                         + " bytes that differ from the "
-                         + std::to_string(expected[at].value.size()) + " expected");
-    }
+    struct Comparison {
+        const rusty::Vec<Row>& rows;
+        size_t at = 0;
+        bool match = true;
+    } comparison{expected};
+    auto compare = [](void* context, const uint8_t* key, size_t klen, const uint8_t* value,
+                      size_t vlen, uint32_t) -> int32_t {
+        auto& state = *static_cast<Comparison*>(context);
+        if (state.at >= state.rows.size()) { state.match = false; return 1; }
+        const auto& row = state.rows[state.at++];
+        state.match = row.key.size() == klen && row.value.size() == vlen
+            && (!klen || !memcmp(key, row.key.data(), klen))
+            && (!vlen || !memcmp(value, row.value.data(), vlen));
+        return state.match ? 0 : 1;
+    };
+    auto* thread = begin_inspection();
+    size_t visited = 0;
+    require_status(sto_tpcc_protocol_scan(thread, physical_table(owner), STO_TPCC_SCAN_FORWARD,
+        STO_TPCC_BOUND_UNBOUNDED, nullptr, 0, STO_TPCC_BOUND_UNBOUNDED, nullptr, 0,
+        expected.size() + 1, compare, &comparison, &visited), STO_TPCC_OK, "physical scan");
+    finish_inspection(thread);
+    if (!comparison.match || comparison.at != expected.size())
+        problems.add("physical scan differs on owner " + std::to_string(owner)
+                     + " at row " + std::to_string(comparison.at));
 }
 
 // Asks one adapter scan for its first row only.
@@ -990,7 +1104,13 @@ void open_registered_only(Problems& problems) {
                 problems.add(who + " " + what + ": status " + std::to_string(status)
                              + (handle != 0 ? " with a handle" : "") + ", expected 3");
         };
-        refused("of a proxy", kRawTable, owner, 1, &handle);
+        uintptr_t proxy = 0;
+        status = real[owner].open(context, kRawTable, bytes(name), owner, 1, 0, &proxy);
+        auto* facade = reinterpret_cast<abstract_ordered_index*>(proxy);
+        if (status != MAKO_SHARD_OK || !facade || facade == raw[owner]
+            || !facade->get_is_remote() || facade->get_table_id() != raw[owner]->get_table_id())
+            problems.add(who + " did not return the registered table's origin-side proxy");
+        refused("of an invalid proxy flag", kRawTable, owner, 2, &handle);
         refused("of an unregistered table", kUnknownTable, owner, 0, &handle);
         refused("for another owner", kRawTable, 1 - owner, 0, &handle);
         refused("without a place for the handle", kRawTable, owner, 0, nullptr);
@@ -1072,6 +1192,107 @@ void callbacks_guarded(Problems& guarded, rust_sto_tpcc_wrapper& db) {
     }
 }
 
+// Move warehouses one and two together. Both contain the same physical key.
+// Warehouse three stays outside the range, and warehouse four is absent.
+void migrate_warehouses(rust_sto_tpcc_wrapper& db,
+                        rusty::Option<rusty::Box<mako::NativeShardingHost>>* hosts) {
+    constexpr unsigned count = 3;
+    const std::string name("history");
+    uint64_t table = 0;
+    require_status(mako_sharding_catalog_tpcc(1), MAKO_SHARD_OK, "warehouse catalog");
+    require_status(mako_sharding_warehouse_init(count, kOwners * count), MAKO_SHARD_OK, "dimensions");
+    require_status(mako_sharding_table_id(bytes(name), &table), MAKO_SHARD_OK, "catalog ID");
+    abstract_ordered_index* physical[kOwners][count]{};
+    for (unsigned owner = 0; owner < kOwners; ++owner) {
+        BenchmarkConfig::setThreadLocalShardIndex(owner);
+        TThread::set_shard_index(owner);
+        for (unsigned warehouse = 1; warehouse <= count; ++warehouse) {
+            auto* index = db.open_index("fixture_history_" + std::to_string(owner) + "_"
+                                        + std::to_string(warehouse), static_cast<int>(owner));
+            require(index && !index->get_is_remote(), "physical warehouse open");
+            require_status(mako::rust_sharding_register_warehouse(table, owner, warehouse, index),
+                           MAKO_SHARD_OK, "warehouse registration");
+            physical[owner][warehouse - 1] = index;
+        }
+    }
+    BenchmarkConfig::setThreadLocalShardIndex(0);
+    TThread::set_shard_index(0);
+    db.thread_init(true, 0);
+    for (unsigned i = 0; i < count; ++i) {
+        require(physical[0][i]->put("same", "source" + std::to_string(i)), "load source");
+        require(physical[1][i]->put("stale", "destination" + std::to_string(i)), "load destination");
+    }
+    require(physical[0][0]->put("second", "second-row"), "load a second key");
+    for (unsigned owner = 0; owner < kOwners; ++owner) {
+        hosts[owner] = rusty::Some(rusty::make_box<mako::NativeShardingHost>(
+            &db, owner, kOwners, SiloRuntime::Current()));
+        auto& host = *hosts[owner].as_mut().unwrap();
+        host_of[owner] = &host;
+        auto callbacks = host.callbacks();
+        db.configure_native_sharding(host, callbacks);
+        uintptr_t cold = 0;
+        require_status(mako_sharding_warehouse_local(table, 1, owner, &cold), MAKO_SHARD_INVALID,
+                       "warehouse open before node activation");
+        require_status(mako_sharding_start_node(owner, kOwners, 1, &callbacks), MAKO_SHARD_OK,
+                       "warehouse node start");
+        require_status(host.start_service(), MAKO_SHARD_OK, "warehouse service start");
+    }
+    for (unsigned owner = 0; owner < kOwners; ++owner) {
+        require_status(mako_sharding_wait_ready(owner), MAKO_SHARD_OK, "warehouse data ready");
+        uintptr_t handle = 0;
+        require_status(mako_sharding_warehouse_local(table, 4, owner, &handle), MAKO_SHARD_INVALID,
+                       "missing warehouse open");
+        require_status(mako_sharding_warehouse_local(table, 1, owner, &handle), MAKO_SHARD_OK,
+                       "registered warehouse open");
+        require(handle == reinterpret_cast<uintptr_t>(physical[owner][0]), "wrong warehouse handle");
+    }
+    check_ok("warehouse-open");
+    TThread::in_loading_phase = false;
+    const std::string lo("\0\0\0\1", 4), hi("\0\0\0\3", 4);
+    MakoShardAdminResult result{};
+    require_status(mako_sharding_admin_begin(kNonce, bytes(name), bytes(lo), 1, bytes(hi), 0, 1,
+                                            host_of[0], admin_call, &result), MAKO_SHARD_OK,
+                   "begin warehouse move");
+    for (unsigned i = 0; i < 60 * kPollsPerSecond && !result.outcome; ++i) poll(result);
+    require(result.outcome == 1, "warehouse move did not commit");
+    check_ok("warehouse-committed");
+    auto read = [](abstract_ordered_index* index, const char* key, std::string& value) {
+        return read_physical(static_cast<rust_sto_tpcc_ordered_index*>(index)->sharding_host_table(), key, value);
+    };
+    for (unsigned i = 0; i < count; ++i) {
+        uintptr_t handle = 0;
+        MakoShardGrant grant{};
+        require_status(mako_sharding_warehouse_resolve(table, i + 1, 0, &handle, &grant),
+                       MAKO_SHARD_OK, "published warehouse route");
+        const bool moved = i < 2;
+        require(grant.owner == static_cast<unsigned>(moved), "wrong route after move");
+        auto* selected = reinterpret_cast<abstract_ordered_index*>(handle);
+        require(selected && selected->get_is_remote() == moved &&
+                selected->get_table_id() == physical[0][i]->get_table_id(), "wrong route handle");
+        std::string value;
+        auto* source = physical[0][i];
+        auto* destination = physical[1][i];
+        require(read(source, "same", value) != moved, "source cleanup");
+        if (!moved) require(value == "source2", "outside-range source value");
+        require(read(destination, "same", value) == moved, "copied key");
+        if (moved) require(value == "source" + std::to_string(i), "copied value");
+        require(read(destination, "stale", value) != moved, "destination cleanup");
+    }
+    std::string value;
+    require(read(physical[1][0], "second", value) && value == "second-row",
+            "second physical key was lost");
+    require(!read(physical[0][0], "second", value), "second key cleanup");
+    check_ok("warehouse-bytes");
+    for (unsigned owner = 0; owner < kOwners; ++owner) host_of[owner]->stop_accepting();
+    for (unsigned owner = 0; owner < kOwners; ++owner) mako_sharding_stop_node(owner);
+    db.thread_end();
+    for (unsigned owner = 0; owner < kOwners; ++owner) {
+        db.native_sharding_stopped(owner);
+        host_of[owner] = nullptr;
+        hosts[owner] = rusty::None;
+    }
+}
+
 // @unsafe - one scenario, on the main thread. `db`, `config` and `hosts`
 // belong to main() so that an exception cannot destroy them on its way out.
 // Returns with both nodes stopped, the hosts destroyed and this thread
@@ -1095,6 +1316,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     bench.setPinCpus(0);
     SiloRuntime::Current()->BindToCurrentThread();
     db.init();
+    if (scenario == Scenario::warehouses) return migrate_warehouses(db, hosts);
 
     // Both tables exist before this thread, or any other, attaches to the
     // engine: creating a table attaches a temporary engine worker.
@@ -1129,14 +1351,13 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     }
 
     db.thread_init(true, 0);
-    const auto source = source_rows();
+    auto source = source_rows();
     const auto destination = destination_rows();
     load(source, destination);
     if (shape.tombstones) {
         load_tombstones(0, 'd', source.size());
         load_tombstones(1, 'e', destination.size());
     }
-    TThread::in_loading_phase = false;
     require_loaded(0, source);
     require_loaded(1, destination);
     {
@@ -1171,7 +1392,8 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
             &db, owner, kOwners, SiloRuntime::Current()));
         auto& host = *hosts[owner].as_mut().unwrap();
         host_of[owner] = &host;
-        real[owner] = shape.rust_callbacks ? mako::rust_sharding_callbacks(host) : host.callbacks();
+        real[owner] = host.callbacks();
+        if (shape.rust_callbacks) db.configure_native_sharding(host, real[owner]);
         if (shape.rust_callbacks) {
             // The first table handed out closed the registration.
             const uint32_t late = mako::rust_sharding_register_raw(kRawTable, owner, raw[owner]);
@@ -1194,6 +1416,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         require(ready, "the two owners did not become ready in 10 seconds");
     }
     stage("ready");
+    TThread::in_loading_phase = false;
 
     if (shape.rust_callbacks) {
         conclude("registration-guarded", guarded);
@@ -1207,7 +1430,20 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         check_skipped("unentered-thread-refused");
     }
 
-    if (shape.pin) start_pin();
+    if (scenario == Scenario::pinned) {
+        check_rust_sharding_receiver(db, raw[0], kRawTable, config_path, "a", "n");
+        check_ok("receiver-replayed-own-reply");
+        mako::NativeShardingHost cpp_peer(&db, 0, kOwners, SiloRuntime::Current());
+        uint32_t reply = kNoStatus;
+        const auto receive = [](void* ctx, uint32_t status, MakoShardBytes) {
+            *static_cast<uint32_t*>(ctx) = status;
+        };
+        require_status(mako::native_sharding_peer_call(&cpp_peer, 1, 2, {nullptr, 0}, receive,
+            &reply), MAKO_SHARD_OK, "mixed peer HELLO transport");
+        require_status(reply, MAKO_SHARD_INVALID, "mixed peer HELLO");
+        check_ok("mixed-peer-refused");
+    }
+    if (shape.pin) start_pin(db, !shape.abort);
     MakoShardAdminResult result{};
     require_status(mako_sharding_admin_begin(kNonce, bytes(kRawName), bytes(shape.lo), 1,
                                              bytes(shape.hi), 0, 1, host_of[0], admin_call,
@@ -1254,14 +1490,30 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         }
         conclude("pinned-stays-pending", held);
         stage("held");
+        busy_before_release = counts[0].drained_busy.load();
+        ok_before_release = counts[0].drained_ok.load();
+        if (draining) {
+            str_arena arena;
+            auto* late = db.new_txn(0, arena, nullptr);
+            bool refused = false;
+            try {
+                tx_put(raw[0], late, lcdf::Str(m_key(3)), mako::Encode("late stale write"));
+            } catch (const abstract_db::abstract_abort_exception&) {
+                refused = true;
+            }
+            db.abort_txn(late);
+            require(refused, "post-freeze transaction staged a write on the old owner");
+            check_ok("stale-write-refused");
+        }
         if (shape.abort) {
             require_status(mako_sharding_admin_abort(kNonce, host_of[0], admin_call, &result),
                            MAKO_SHARD_OK, "admin abort");
             stage("abort-requested");
         }
-        busy_before_release = counts[0].drained_busy.load();
-        ok_before_release = counts[0].drained_ok.load();
         release_pin();
+        if (!shape.abort) {
+            for (auto& row : source) if (row.key == m_key(3)) row.value = kWriterValue;
+        }
     }
     for (const unsigned limit = polls + shape.wait_seconds * kPollsPerSecond;
          result.outcome == 0 && polls < limit;) {
@@ -1272,6 +1524,28 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
             outcome_text(result.outcome), static_cast<unsigned long long>(result.generation),
             polls);
     report_calls();
+
+    if (scenario == Scenario::pinned && result.outcome == 1) {
+        // Use a fresh coordinator on the new owner. Its captured route must
+        // select the migrated physical table for an ordinary transaction.
+        auto reader = rusty::thread::spawn([&db]() {
+            BenchmarkConfig::setThreadLocalShardIndex(1);
+            db.thread_init(true, 0);
+            TThread::in_loading_phase = false;
+            str_arena arena;
+            auto* txn = db.new_txn(0, arena, nullptr);
+            std::string value;
+            require(tx_get(raw[1], txn, lcdf::Str(m_key(3)), value) && value == kWriterValue,
+                    "new owner did not serve the pre-freeze writer's value");
+            require(db.commit_txn(txn), "new owner's read did not certify");
+            db.thread_end();
+        });
+        reader.join().unwrap();
+        check_ok("new-owner-read");
+        check_remote_transaction(db, topology);
+        for (auto& row : source) if (row.key == m_key(4)) row.value = kRemoteWrite;
+        check_ok("former-owner-transaction");
+    }
 
     if (scenario == Scenario::pinned) {
         // The source answered BUSY while the pin was held and OK only after
@@ -1342,6 +1616,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
 
 // @safe - the scenario a command-line name selects.
 rusty::Option<Scenario> parse_scenario(const char* name) {
+    if (strcmp(name, "warehouses") == 0) return rusty::Some(Scenario::warehouses);
     if (strcmp(name, "migrate") == 0) return rusty::Some(Scenario::migrate);
     if (strcmp(name, "pinned") == 0) return rusty::Some(Scenario::pinned);
     if (strcmp(name, "deleted-keys") == 0) return rusty::Some(Scenario::deleted_keys);

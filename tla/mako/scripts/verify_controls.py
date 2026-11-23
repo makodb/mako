@@ -26,6 +26,13 @@ REPOSITORY = ROOT.parents[1]
 
 NATIVE_CONTROLS = [
     (
+        "a terminal whose install result is unknown releases its read view",
+        "src/cluster/epoch_admission.rs",
+        "else if unknown || foreign { RequestCompletion::RetainFrame }",
+        "else if foreign { RequestCompletion::RetainFrame }",
+        ("epoch_admission", "complete_request"),
+    ),
+    (
         "canonical byte encoding forgets byte contents",
         "tla/mako/src/sharding_bytes.rs",
         "256 * value_code(value.drop_last()) + value.last() as int",

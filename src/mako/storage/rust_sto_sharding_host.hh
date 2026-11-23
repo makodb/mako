@@ -10,15 +10,10 @@
 // the registration that tells both the Rust verbs and the sharding crate
 // which engine table holds a catalog table on an owner.
 //
-// Limits of this slice: raw tables only, no proxies, no table creation after
-// start-up, non-replicated processes only, and no admission on ordinary
-// transactions (nothing here stops an ordinary Rust-engine transaction from
-// writing a frozen or moved range).
-//
-// Order the caller keeps: open every index, rust_sharding_register_raw for
-// each, rust_sharding_callbacks and mako_sharding_start_node per owner,
-// (migrations), mako_sharding_stop_node per owner, rust_sharding_release, and
-// only then destroy the indexes and the database.
+// Each owner registers its local raw indexes before its node starts. The host
+// supplies a proxy for each registered index and shares the epoch clock with
+// ordinary transaction admission. Storage callbacks run on their own thread.
+// Explicitly preopened warehouse indexes use four-byte big-endian coordinates.
 
 #include <stdint.h>
 #include "native_sharding_host.h"
@@ -28,20 +23,22 @@ namespace mako {
 
 // @unsafe - Storage and thread slots for a Rust-engine database. The context
 // stays `&base`, so peer_call, epoch_cut and epoch_drained are base's own.
-// The first call closes registration. Throws std::logic_error when base.db is
-// not a rust_sto_tpcc_wrapper or the process is replicated.
+// The first call closes registration for this owner and starts the epoch clock.
 MakoShardHost rust_sharding_callbacks(NativeShardingHost& base);
 
-// @unsafe - Startup only, before the first rust_sharding_callbacks(). `index`
-// must be the owner-local Rust index that holds raw catalog table `table` for
-// `owner`. Registers it with the Rust verbs and with the sharding crate, and
-// returns a MakoShardStatus: INVALID when a condition above does not hold or
-// the pair is already registered with another index.
+// @unsafe - Call before activating this owner. The owner-local Rust index was
+// opened with its raw catalog name and must outlive the node. An identical
+// registration is idempotent until the owner starts.
 uint32_t rust_sharding_register_raw(uint64_t table, uint32_t owner,
                                     abstract_ordered_index* index);
 
+// @unsafe - An explicitly preopened growable physical index for a warehouse.
+// The caller supplies its catalog identity and keeps it alive through node shutdown.
+uint32_t rust_sharding_register_warehouse(uint64_t table, uint32_t owner,
+                                         uint32_t warehouse, abstract_ordered_index* index);
+
 // @unsafe - After every local node has stopped and before any registered index
-// or the database is destroyed. Reopens registration.
+// or the database is destroyed. Bootstrap releases each owner when it stops.
 void rust_sharding_release() noexcept;
 
 } // namespace mako

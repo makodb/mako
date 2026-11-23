@@ -84,6 +84,14 @@ typedef struct MakoShardRead MakoShardRead;
 uint32_t mako_sharding_read_begin(uint32_t owner, uint64_t epoch, const MakoShardRead** out);
 // @unsafe - same-thread terminal cleanup only; null is harmless.
 void mako_sharding_read_end(const MakoShardRead* read);
+enum MakoShardCompletion {
+    MAKO_SHARD_KEEP_OPEN = 0,
+    MAKO_SHARD_RETAIN_FRAME = 1,
+    MAKO_SHARD_FINISH = 2,
+    MAKO_SHARD_ABORT_THEN_FINISH = 3
+};
+uint32_t mako_sharding_complete_request(uint32_t terminal, uint32_t active,
+                                        uint32_t unknown, uint32_t foreign_frame);
 // @unsafe - out is writable (cleared on failure); active same-thread read required.
 // Nonzero opaque cache-incarnation ID, stable across transactions/epoch refreshes
 // only while the retained Node and full admission view are unchanged. Distinct
@@ -138,6 +146,9 @@ uint32_t mako_sharding_local_table(uint64_t table, MakoShardBytes coordinate,
 uint32_t mako_sharding_raw_proxy(uint64_t table, uint32_t origin, uintptr_t* handle);
 uint32_t mako_sharding_raw_register(uint64_t table, uint32_t owner,
                                     uint32_t proxy, uintptr_t handle);
+// After workers release the handle, before node startup or after stop has joined it.
+uint32_t mako_sharding_raw_unregister(uint64_t table, uint32_t owner,
+                                      uint32_t proxy, uintptr_t handle);
 
 #ifdef __cplusplus
 }
