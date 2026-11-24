@@ -6,6 +6,26 @@ set(MASSTREE_ROW_TYPE bag CACHE STRING "Masstree row layout")
 option(MASSTREE_ENABLE_SUPERPAGE "Enable native storage superpages" ON)
 option(CHECK_INVARIANTS "Enable native storage invariants" OFF)
 option(DEBUG "Enable native storage assertions" OFF)
+# Keep sanitizer instrumentation scoped to the native storage dependency.
+set(_native_sanitizer "")
+foreach(_kind ASAN UBSAN TSAN)
+    option(MAKO_${_kind} "Instrument native storage with ${_kind}" "$ENV{MAKO_${_kind}}")
+    if(MAKO_${_kind})
+        if(_native_sanitizer)
+            message(FATAL_ERROR "Select one native sanitizer per build")
+        endif()
+        if(_kind STREQUAL "ASAN")
+            set(_native_sanitizer address)
+        elseif(_kind STREQUAL "UBSAN")
+            set(_native_sanitizer undefined)
+        else()
+            set(_native_sanitizer thread)
+        endif()
+    endif()
+endforeach()
+if(MAKO_ASAN OR MAKO_TSAN)
+    set(USE_MALLOC_MODE 0 CACHE STRING "Sanitizers require the system allocator" FORCE)
+endif()
 set(CONFIG_H "${CMAKE_SOURCE_DIR}/src/mako/config/config-perf.h")
 include("${CMAKE_SOURCE_DIR}/src/masstree/ConfigureMasstree.cmake")
 find_package(PkgConfig REQUIRED)
@@ -39,6 +59,11 @@ foreach(_source IN LISTS _native_sources)
         -include "${MASSTREE_GENERATED_CONFIG_H}")
 endforeach()
 target_link_libraries(mako_native_storage PUBLIC mako_allocator numa pthread)
+if(_native_sanitizer)
+    target_compile_options(mako_native_storage PRIVATE -fsanitize=${_native_sanitizer} -fno-omit-frame-pointer)
+    target_link_options(mako_native_storage INTERFACE -fsanitize=${_native_sanitizer})
+    message(STATUS "Native storage sanitizer: ${_native_sanitizer}")
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_custom_target(native_storage_source_audit ALL
@@ -71,15 +96,32 @@ set(MAKO_NATIVE_CARGO_ENV
     "MAKO_MTREE_NATIVE_LIBS=${_native_libraries}")
 set(_cargo_manifest "${CMAKE_SOURCE_DIR}/crates/Cargo.toml")
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_native_profile_default dev)
+else()
+    set(_native_profile_default release)
+endif()
+set(MAKO_NATIVE_CARGO_PROFILE "${_native_profile_default}" CACHE STRING "Rust application profile: dev or release")
+set_property(CACHE MAKO_NATIVE_CARGO_PROFILE PROPERTY STRINGS dev release)
+if(MAKO_NATIVE_CARGO_PROFILE STREQUAL "release")
+    set(_native_profile_flags --release)
+    set(_native_output release)
+elseif(MAKO_NATIVE_CARGO_PROFILE STREQUAL "dev")
+    set(_native_profile_flags)
+    set(_native_output debug)
+else()
+    message(FATAL_ERROR "Unknown MAKO_NATIVE_CARGO_PROFILE: ${MAKO_NATIVE_CARGO_PROFILE}")
+endif()
+
 # Cargo owns all application and network code. Only the audited storage archive
 # crosses the native boundary; SRPC is compiled directly as a Rust dependency.
 foreach(_program mako_node mako_bench mako_transactions mako_redis)
     add_custom_target(${_program} ALL
         COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-            "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+            "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
             -p mako-runtime --features replication --bin ${_program}
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${MAKO_NATIVE_CARGO_TARGET}/debug/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
+            "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         DEPENDS mako_native_storage
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
@@ -88,34 +130,34 @@ endforeach()
 foreach(_program mako_client mako_admin)
     add_custom_target(${_program} ALL
         COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
-            "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+            "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
             -p mako-runtime --bin ${_program}
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${MAKO_NATIVE_CARGO_TARGET}/debug/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
+            "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
 
 # The direct RocksDB service uses native SRPC/Raft without Masstree.
 add_custom_target(rocksdb_raft_tools ALL
     COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
-        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
         -p rocksdb-raft-service --bins
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/rocksdb_raft_server"
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/rocksdb_raft_client"
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/rocksdb_raft_bench"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_server"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_client"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_bench"
         "${CMAKE_BINARY_DIR}/"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 
 # Existing Rust cache and comparison tools use the same storage-only archive.
 add_custom_target(mako_cache_tools ALL
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
         -p mako-cache-bench --bins
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/mako-cache-bench"
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/engine_compare"
-        "${MAKO_NATIVE_CARGO_TARGET}/debug/gc_soak" "${CMAKE_BINARY_DIR}/"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/mako-cache-bench"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/engine_compare"
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/gc_soak" "${CMAKE_BINARY_DIR}/"
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_cache_tests
@@ -177,3 +219,9 @@ add_test(NAME rust_application_adapter
         --package sto-tpcc-ffi)
 set_tests_properties(native_storage_source_audit rust_application_adapter rust_shard_integration PROPERTIES
     LABELS "native-rust" TIMEOUT 900)
+
+foreach(_program mako_node mako_bench mako_transactions mako_redis mako_client mako_admin
+        rocksdb_raft_server rocksdb_raft_client rocksdb_raft_bench
+        mako-cache-bench engine_compare gc_soak)
+    install(PROGRAMS "${CMAKE_BINARY_DIR}/${_program}" DESTINATION bin)
+endforeach()

@@ -165,7 +165,19 @@ impl Context<'_> {
     ) -> Result<()> {
         let target = self.target(table, warehouse, key)?;
         if tx.get(&target, key)?.is_some() {
-            return Err(invalid("duplicate TPC-C insertion"));
+            // NewOrder derives these keys from an optimistic district read.
+            // Another order can commit before this attempt certifies that read,
+            // including between two line insertions. Abort the whole attempt.
+            let code = match table {
+                NEW_ORDER | ORDER | ORDER_INDEX | ORDER_LINE => ErrorCode::Conflict,
+                _ => ErrorCode::Invalid,
+            };
+            return Err(Error::new(
+                code,
+                format!(
+                    "duplicate TPC-C insertion: table={table} warehouse={warehouse} key={key:02x?}"
+                ),
+            ));
         }
         tx.mutate(&target, Mutation::Insert, key, &value.encode()?)
     }

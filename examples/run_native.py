@@ -83,7 +83,12 @@ def main():
     binary = (ROOT / binary).resolve()
     if not binary.is_file():
         parser.error(f"build the native executable first: {binary}")
-    directory = args.data_dir.resolve() if args.data_dir else Path(tempfile.mkdtemp(prefix="mako-native-"))
+    if args.data_dir:
+        directory = args.data_dir.resolve()
+    else:
+        runs = binary.parent / "runs"
+        runs.mkdir(exist_ok=True)
+        directory = Path(tempfile.mkdtemp(prefix="mako-native-", dir=runs))
     directory.mkdir(parents=True, exist_ok=True)
     create = args.create or args.data_dir is None
     reservations = {}
@@ -184,6 +189,9 @@ def main():
             shutil.rmtree(directory)
         else:
             print(f"Native run files: {directory}", flush=True)
+            if not completed:
+                for path in sorted(directory.glob("process-*.log")):
+                    print(f"{path.name}:\n" + "\n".join(path.read_text(errors="replace").splitlines()[-30:]), flush=True)
 
 
 if __name__ == "__main__":

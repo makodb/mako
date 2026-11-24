@@ -183,6 +183,138 @@ fn loader_resumes_committed_batches_and_never_reloads_completed_workloads() {
 }
 
 #[test]
+fn competing_order_after_district_read_aborts_speculative_insertions() {
+    let node = RunningNode::start(Config {
+        workers: 2,
+        ..config(0, 1)
+    })
+    .unwrap();
+    let scale = small();
+    let context = Context {
+        schema: &node.schema,
+        owner: 0,
+        migration: false,
+        scale: &scale,
+    };
+    let mut client = client(&node, BTreeMap::new());
+    let mut worker = node.store.database.worker().unwrap();
+    context
+        .load(&mut client, node.store.clone(), &mut worker, |_| Ok(()))
+        .unwrap();
+    for table in [NEW_ORDER, ORDER, ORDER_INDEX, ORDER_LINE] {
+        let result = client.run(node.store.clone(), &mut worker, |tx| {
+            let district: District = context.read(tx, DISTRICT, 1, &key(&[1, 1]))?;
+            // This write must disappear when the stale order insertion aborts.
+            let mut speculative: District = context.read(tx, DISTRICT, 1, &key(&[1, 2]))?;
+            speculative.next_order += 100;
+            context.put(tx, DISTRICT, 1, &key(&[1, 2]), &speculative)?;
+            let handle = mako_runtime::node::Handle::from(&node);
+            let scale = scale.clone();
+            let committed = std::thread::spawn(move || {
+                let context = Context {
+                    schema: &handle.schema,
+                    owner: 0,
+                    migration: false,
+                    scale: &scale,
+                };
+                let mut client = Client::new(
+                    handle.network.clone(),
+                    BTreeMap::new(),
+                    Stream { node: 0, worker: 1 },
+                    0,
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+                let mut worker = handle.store.database.worker().unwrap();
+                client
+                    .run(handle.store.clone(), &mut worker, |tx| {
+                        context.new_order(
+                            tx,
+                            &NewOrderRequest {
+                                warehouse: 1,
+                                district: 1,
+                                customer: 1,
+                                date: 50,
+                                items: (1..=5)
+                                    .map(|item| OrderItem {
+                                        item,
+                                        supplier: 1,
+                                        quantity: 3,
+                                    })
+                                    .collect(),
+                            },
+                        )
+                    })
+                    .unwrap()
+            })
+            .join()
+            .unwrap();
+            assert_eq!(committed.order, district.next_order as u32);
+            let order = committed.order;
+            match table {
+                NEW_ORDER => {
+                    context.insert(tx, table, 1, &key(&[1, 1, order]), &NewOrder::default())
+                }
+                ORDER => context.insert(
+                    tx,
+                    table,
+                    1,
+                    &key(&[1, 1, order]),
+                    &Order {
+                        customer: 1,
+                        carrier: 0,
+                        lines: 5,
+                        all_local: true,
+                        date: 50,
+                    },
+                ),
+                ORDER_INDEX => context.insert(
+                    tx,
+                    table,
+                    1,
+                    &key(&[1, 1, 1, order]),
+                    &OrderIndex::default(),
+                ),
+                ORDER_LINE => context.insert(
+                    tx,
+                    table,
+                    1,
+                    &key(&[1, 1, order, 5]),
+                    &OrderLine {
+                        item: 5,
+                        delivery: 0,
+                        amount: 0.0,
+                        supply: 1,
+                        quantity: 3,
+                    },
+                ),
+                _ => unreachable!(),
+            }
+        });
+        assert_eq!(result.unwrap_err().code, ErrorCode::Conflict);
+    }
+    client
+        .run(node.store.clone(), &mut worker, |tx| {
+            assert_eq!(
+                context
+                    .read::<District>(tx, DISTRICT, 1, &key(&[1, 1]))?
+                    .next_order,
+                15
+            );
+            assert_eq!(
+                context
+                    .read::<District>(tx, DISTRICT, 1, &key(&[1, 2]))?
+                    .next_order,
+                11
+            );
+            let line: OrderLine = context.read(tx, ORDER_LINE, 1, &key(&[1, 1, 14, 5]))?;
+            assert!(line.amount > 0.0);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
 fn sharded_tpcc_executes_all_five_transactions_and_aborts_remote_stock_changes() {
     let local = RunningNode::start(config(0, 2)).unwrap();
     let remote = RunningNode::start(config(1, 2)).unwrap();

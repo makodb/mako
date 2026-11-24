@@ -448,3 +448,20 @@ these existing components while preserving the current application contracts.
   and separate TPC-C shard processes all passed and joined their workers.
   The first launcher command had a check expecting the native JSON `node` form;
   conversion emits the equally valid `nodes` form. Corrected that check.
+
++ Default build checkpoint: CMake now selects `NATIVE_RUST`, builds optimized
+  Rust executables for Release, and rejects the retired C++ application profile.
+  The old application target definitions have been removed. Debug builds retain
+  Rust's development profile; native sanitizer switches apply to storage only.
++ `/tmp/mako-native-rust-default-release-01.log`: a fresh default configure and
+  all twelve optimized tools built. Colocated Raft transactions and persistent
+  micro passed. Separate-process TPC-C exposed an optimistic read interleaving:
+  another order can commit after the district's next-order read and before a
+  later order-line insert. Generated order-key collisions now abort the attempt
+  with Conflict. Other duplicate insertions remain invalid input.
++ `/tmp/mako-native-rust-tpcc-release-04.log`: the deterministic regression
+  covers all four generated order-key types, preserving the winner's rows and
+  rolling back speculative writes. Clippy, the optimized two-shard/three-worker
+  workload with 500 attempts per worker, and the native source audit passed.
+  Launcher failures now retain artifacts under the build directory and print
+  process log tails. CI/script conversion and replaced-source retirement remain.

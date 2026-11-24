@@ -13,7 +13,6 @@
 #include "silo_runtime.h"
 #include "macros.h"
 #include "util.h"
-#include "thread.h"
 #include "counter.h"
 #include "lockguard.h"
 
