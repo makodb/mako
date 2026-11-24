@@ -11,6 +11,8 @@ pub mod gateway_client;
 #[cfg(feature = "native-storage")]
 pub mod migration;
 #[cfg(feature = "native-storage")]
+pub mod node;
+#[cfg(feature = "native-storage")]
 pub mod receiver;
 pub mod rpc;
 #[cfg(feature = "native-storage")]

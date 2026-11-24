@@ -30,13 +30,15 @@ use std::{
 };
 use sto_tpcc_ffi::native::migration::{MigrationWorker, Registry};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Kind {
     Governed,
     Replicated,
     Static,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TableSpec {
     pub id: u64,
     pub name: String,
@@ -79,7 +81,8 @@ impl Schema {
                 .map_err(|_| Error::new(ErrorCode::Capacity, "physical table log ID exhausted"))?;
             next = next
                 .checked_add(if table.warehouse { total } else { 1 })
-                .filter(|next| *next <= u32::from(u16::MAX) + 1)
+                // The retained log format reserves the high bit for deletes.
+                .filter(|next| *next <= 0x8000)
                 .ok_or_else(|| {
                     Error::new(ErrorCode::Capacity, "physical table log ID exhausted")
                 })?;

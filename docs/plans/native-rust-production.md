@@ -37,8 +37,8 @@ Completion requires:
 | --- | --- | --- | --- |
 | 1 | Delete Paxos protocol, worker, services and selection. Preserve shared Raft state under neutral names. | Raft builds and relevant regression tests; removed protocol rejected; source/symbol audit. | Complete |
 | 2 | Establish a storage-only native build and an idiomatic Rust application API over STO/Masstree. Separate storage runtime from worker/replay policy. | Cargo links against only the explicit Masstree native dependency set; local transaction/application tests pass. | Complete |
-| 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | In progress |
-| 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Pending |
+| 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Complete |
+| 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | In progress |
 | 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | Pending |
 | 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | Pending |
 
@@ -213,3 +213,20 @@ these existing components while preserving the current application contracts.
 + Paged/routed scans are committed as `8a67e366a`. The next stage-3 work is the
   native process entry point and multi-process coverage. This still does not
   switch the production default or complete replication/workload retirement.
++ Stage 3 is complete. The native-storage CMake profile now builds `mako_node`
+  through Cargo. Its JSON configuration validates topology/schema before startup,
+  owns loaders, listeners and migration hosts, reports readiness, and joins workers
+  on SIGTERM/SIGINT or controlled stdin shutdown. The profile remains opt-in.
++ `/tmp/mako-native-rust-node-integration-01.log`: an independent child shard
+  advances its own clock, then participates in a distributed commit with equal
+  local/remote metadata above that dependency. Body-error cleanup releases remote
+  locks. Clippy and the CMake executable target passed.
++ `/tmp/mako-native-rust-node-integration-02.log`: all 22 runtime cases and
+  all-target Clippy passed. Two separate native server processes migrate raw and
+  warehouse data, lazily create destination tables, route subsequent reads/writes
+  through the gateway, and shut down cleanly. Schema log IDs now respect the
+  existing format's delete bit instead of admitting unusable IDs above 32767.
++ Stage 4 starts with the owned replay API and durable application adapter.
+  Reuse the native Raft host and existing RocksDB checkpoint machinery. Local
+  proposals must not replay into their own locked Masstree rows; snapshots must
+  use committed durable state and retain uncertain-outcome fencing.

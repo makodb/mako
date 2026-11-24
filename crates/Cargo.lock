@@ -398,9 +398,11 @@ name = "mako-runtime"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "libc",
  "mako-sharding",
  "parking_lot",
  "serde",
+ "serde_json",
  "srpc",
  "sto-tpcc-ffi",
 ]
