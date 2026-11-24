@@ -553,3 +553,20 @@ these existing components while preserving the current application contracts.
 + `/tmp/mako-native-rust-storage-fuzz-03.log`: the preserved Masstree fuzzer
   compiled and completed 1000 inputs. Its packaged libFuzzer dependency uses
   libstdc++; only that separate test target links the additional runtime.
++ `/tmp/mako-native-rust-final-runtime-audit-02.log`: all 53 runtime/process
+  cases passed in debug and release. All twelve production executables built,
+  and the source/link audit passed for twelve links and 37 Rust archives.
++ `/tmp/mako-native-rust-sanitizer-undefined-03.log`: the full UBSan gate
+  passed at `3549c6d95`, including runtime, cache, leak controls and the
+  single-std audit across 94 target artifacts. TSan's pinned RocksDB 8.9.1
+  build instruments all 335 compilation units; all 53 runtime cases passed
+  with it in `/tmp/mako-native-rust-sanitizer-thread-runtime-04.log`.
+  CI now retains its compilation inventory, configuration and library digest.
++ Fresh ASan and TSan gates reached gateway failover but exposed a test
+  readiness assumption: observing a local leader does not guarantee gateway
+  discovery succeeds immediately. The test now resolves the same client's
+  exact pending intent within a deadline. Terminal aborts still fail; receipt
+  identity, stored values and distributed commit assertions are unchanged.
+  The changed case passed under all three sanitizers in
+  `/tmp/mako-native-rust-gateway-{address,undefined,thread}-04.log`.
+  Fresh full ASan and TSan qualification remains pending.

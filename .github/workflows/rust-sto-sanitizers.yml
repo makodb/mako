@@ -133,3 +133,7 @@ jobs:
           path: |
             build-rust-sto-*/rust-sto-sanitizer-manifest.txt
             build-rust-sto-*/sanitizer-logs/**
+            build-rust-sto-*/tsan-rocksdb/instrumentation.json
+            build-rust-sto-*/tsan-rocksdb/library.sha256
+            build-rust-sto-*/tsan-rocksdb/build/compile_commands.json
+            build-rust-sto-*/tsan-rocksdb/build/CMakeCache.txt

@@ -95,6 +95,30 @@ fn wait(mut condition: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+fn resolve_gateway<T>(mut operation: impl FnMut() -> Result<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match operation() {
+            Ok(value) => return value,
+            Err(error)
+                if matches!(
+                    error.code,
+                    ErrorCode::RouteChanged | ErrorCode::Unknown | ErrorCode::Transport
+                ) =>
+            {
+                // Discovery and forwarding can lag a local leader election.
+                // The caller retains its client and exact intent, so unresolved
+                // requests keep their identity. Terminal aborts still fail.
+                assert!(
+                    Instant::now() < deadline,
+                    "gateway progress deadline: {error:?}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("gateway request failed: {error:?}"),
+        }
+    }
+}
 fn config(root: &Path, id: u16, peers: &[Peer], create: bool) -> Config {
     Config {
         group: 37,
@@ -387,7 +411,6 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         })
     };
     wait(|| leader(&replicas).is_some());
-    let first = leader(&replicas).unwrap();
     let identity = (1 << 63) + 999;
     let sdk = || {
         let mut sdk = GatewayClient::with_identity(
@@ -401,7 +424,11 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         sdk.set_replicas(0, group.clone()).unwrap();
         sdk
     };
-    assert!(sdk().insert(target(), b"receipt", b"original").unwrap());
+    let mut original = sdk();
+    assert!(resolve_gateway(|| original.insert(
+        target(), b"receipt", b"original"
+    )));
+    let first = leader(&replicas).unwrap();
     replicas[first]
         .as_ref()
         .unwrap()
@@ -442,9 +469,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     .unwrap();
     let mut forwarded =
         GatewayClient::connect(proxy.address().to_owned(), Duration::from_secs(5)).unwrap();
-    forwarded
-        .put(target(), b"forwarded", b"before failover")
-        .unwrap();
+    resolve_gateway(|| forwarded.put(target(), b"forwarded", b"before failover"));
     let mut coordinator = Client::new(
         network.clone(),
         BTreeMap::new(),
@@ -489,17 +514,17 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     wait(|| leader(&replicas).is_some());
     let mut resumed = sdk();
     assert_eq!(
-        forwarded.get(target(), b"forwarded").unwrap().as_deref(),
+        resolve_gateway(|| forwarded.get(target(), b"forwarded")).as_deref(),
         Some(b"before failover".as_slice())
     );
-    forwarded
-        .put(target(), b"forwarded", b"after failover")
-        .unwrap();
+    resolve_gateway(|| forwarded.put(target(), b"forwarded", b"after failover"));
     // Retry the original identity after losing its response/connection. A
     // newly elected gateway returns the old INSERT result without repeating it.
-    assert!(resumed.insert(target(), b"receipt", b"original").unwrap());
+    assert!(resolve_gateway(|| resumed.insert(
+        target(), b"receipt", b"original"
+    )));
     assert_eq!(
-        resumed.get(target(), b"receipt").unwrap().as_deref(),
+        resolve_gateway(|| resumed.get(target(), b"receipt")).as_deref(),
         Some(b"new value".as_slice())
     );
     coordinator
