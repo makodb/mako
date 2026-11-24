@@ -30,7 +30,7 @@ ROCKSDB_RAFT_DOCKER_ENV_OPTS=(
     -e ROCKSDB_RAFT_BUILD_DIR=/workspace/build_rocksdb_raft
 )
 # Forward MAKO_ASAN so CMakeLists.txt builds with -fsanitize=address + libc
-# malloc, and the dbtest runtime sees a sane ASAN_OPTIONS for the test run.
+# malloc, and the mako_bench runtime sees a sane ASAN_OPTIONS for the test run.
 if [ -n "${MAKO_ASAN:-}" ]; then
     DOCKER_ENV_OPTS+=(-e "MAKO_ASAN=${MAKO_ASAN}")
     : "${ASAN_OPTIONS:=abort_on_error=0:halt_on_error=0:detect_leaks=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:strict_init_order=1}"
@@ -38,7 +38,7 @@ if [ -n "${MAKO_ASAN:-}" ]; then
 fi
 # Forward MAKO_CLUSTER_CONFIG so a multi-shard CI run can exercise the
 # cluster-config bootstrap (shard-0 config service + per-node watcher).
-# Off by default; the dbtest children inherit it from the outer run.
+# Off by default; the mako_bench children inherit it from the outer run.
 if [ -n "${MAKO_CLUSTER_CONFIG:-}" ]; then
     DOCKER_ENV_OPTS+=(-e "MAKO_CLUSTER_CONFIG=${MAKO_CLUSTER_CONFIG}")
 fi
@@ -86,16 +86,6 @@ DOCKER_SCRIPT_USER_OPTS=()
 if [ "${DOCKER_SCRIPT_USER}" != "root" ]; then
     DOCKER_SCRIPT_USER_OPTS=(--user "${DOCKER_SCRIPT_USER}")
 fi
-
-# Docker CI/build surfaces should prioritize reproducible runtime binaries.
-# Borrow checking is configurable, but defaults OFF to avoid unrelated static
-# analysis failures blocking Docker test matrix execution.
-DOCKER_ENABLE_BORROW_CHECKING="${MAKO_DOCKER_ENABLE_BORROW_CHECKING:-OFF}"
-if [ "${DOCKER_ENABLE_BORROW_CHECKING}" != "ON" ] && [ "${DOCKER_ENABLE_BORROW_CHECKING}" != "OFF" ]; then
-    echo -e "${RED}Error: MAKO_DOCKER_ENABLE_BORROW_CHECKING must be ON or OFF (got '${DOCKER_ENABLE_BORROW_CHECKING}').${NC}"
-    exit 1
-fi
-DOCKER_CMAKE_BORROW_ARG="-DENABLE_BORROW_CHECKING=${DOCKER_ENABLE_BORROW_CHECKING}"
 
 # Disable core dumps in script-driven Docker runs by default to avoid polluting
 # the workspace with large core.* artifacts after transient test crashes.
@@ -157,10 +147,10 @@ is_positive_integer() {
 
 warn_incomplete_build_docker() {
     local required_bins=(
-        "build_docker/dbtest"
-        "build_docker/simpleTransaction"
-        "build_docker/simpleTransactionRep"
-        "build_docker/continuousTransactions"
+        "build_docker/mako_bench"
+        "build_docker/mako_transactions"
+        "build_docker/mako_redis"
+        "build_docker/mako_node"
     )
     local missing_bins=()
     local incompatible_bins=()
@@ -545,73 +535,12 @@ case "$ACTION" in
             exit 1
         fi
         echo -e "${YELLOW}Building Mako in container...${NC}"
-        echo -e "${YELLOW}Docker CMake arg: ${DOCKER_CMAKE_BORROW_ARG}${NC}"
-        # Configure with Ninja, as ci.sh does: the tree sets CXX_MODULE_STD
-        # (`import std;`), which CMake supports only with the Ninja
-        # generators, and the image sets no CMAKE_GENERATOR. A cache written
-        # by the Makefile generator (it fails at generate, after writing the
-        # cache) is discarded below rather than reused.
         ensure_image
         normalize_script_build_ownership
-        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
-            bash -c "${DOCKER_CORE_ULIMIT_CMD}; cd /workspace && \
-                     if [ -f build_docker/CMakeCache.txt ]; then \
-                         CACHE_INCOMPATIBLE=0; \
-                         CACHE_REASON=''; \
-                         if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
-                             CACHE_INCOMPATIBLE=1; \
-                             CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
-                         elif ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' build_docker/CMakeCache.txt; then \
-                             CACHE_INCOMPATIBLE=1; \
-                             CACHE_REASON='not a Ninja build tree'; \
-                         else \
-                             C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
-                             CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
-                             if [ -n \"\$C_COMPILER\" ]; then \
-                                 if [[ \"\$C_COMPILER\" == /* ]]; then \
-                                     if [ ! -x \"\$C_COMPILER\" ]; then \
-                                         CACHE_INCOMPATIBLE=1; \
-                                         CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
-                                     fi; \
-                                 elif ! command -v \"\$C_COMPILER\" >/dev/null 2>&1; then \
-                                     CACHE_INCOMPATIBLE=1; \
-                                     CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
-                                 fi; \
-                             fi; \
-                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ] && [ -n \"\$CXX_COMPILER\" ]; then \
-                                 if [[ \"\$CXX_COMPILER\" == /* ]]; then \
-                                     if [ ! -x \"\$CXX_COMPILER\" ]; then \
-                                         CACHE_INCOMPATIBLE=1; \
-                                         CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
-                                     fi; \
-                                 elif ! command -v \"\$CXX_COMPILER\" >/dev/null 2>&1; then \
-                                     CACHE_INCOMPATIBLE=1; \
-                                     CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
-                                 fi; \
-                             fi; \
-                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ]; then \
-                                 CACHE_BORROW_CHECKING=\$(grep -E '^ENABLE_BORROW_CHECKING:BOOL=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
-                                 if [ -n \"\$CACHE_BORROW_CHECKING\" ] && [ \"\$CACHE_BORROW_CHECKING\" != \"${DOCKER_ENABLE_BORROW_CHECKING}\" ]; then \
-                                     CACHE_INCOMPATIBLE=1; \
-                                     CACHE_REASON=\"ENABLE_BORROW_CHECKING mismatch (cache=\$CACHE_BORROW_CHECKING expected=${DOCKER_ENABLE_BORROW_CHECKING})\"; \
-                                 fi; \
-                             fi; \
-                         fi; \
-                         if [ \"\$CACHE_INCOMPATIBLE\" -eq 1 ]; then \
-                             echo \"Cleaning incompatible build_docker cache (\${CACHE_REASON})\"; \
-                             rm -rf build_docker; \
-                         fi; \
-                     fi && \
-                     if [ ! -f build_docker/CMakeCache.txt ]; then \
-                         echo 'Configuring build_docker'; \
-                         cmake -S . -B build_docker -G Ninja -DCMAKE_BUILD_TYPE=Release ${DOCKER_CMAKE_BORROW_ARG}; \
-                     else \
-                         echo 'Reusing existing build_docker CMake cache'; \
-                     fi && \
-                     cmake --build build_docker --parallel ${JOBS} --target \
-                         dbtest simpleTransaction simpleTransactionRep continuousTransactions \
-                         test_rocksdb_persistence test_callback_demo test_ordered_callbacks \
-                         test_partitioned_queues test_stress_partitioned_queues"
+        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" \
+            -e "CI_MAKE_JOBS=${JOBS}" -e BUILD_DIR=build_docker \
+            -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
+            bash ci/native_rust.sh compile
         echo -e "${GREEN}Build completed successfully!${NC}"
         ;;
 
@@ -716,98 +645,12 @@ case "$ACTION" in
 
     test)
         ensure_no_extra_args "test"
-        echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
+        echo -e "${YELLOW}Building native Rust and running the two-shard smoke test...${NC}"
         ensure_image
-        DOCKER_TEST_MAX_WAIT_SECONDS=180
-        if [ -n "${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS:-}" ]; then
-            if is_positive_integer "${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"; then
-                DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"
-            else
-                echo -e "${YELLOW}Warning: MAKO_DOCKER_TEST_MAX_WAIT_SECONDS='${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}' is invalid.${NC}"
-                if [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
-                    if is_positive_integer "${MAKO_MAX_WAIT_SECONDS}"; then
-                        DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
-                        echo -e "${YELLOW}Using fallback MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}'.${NC}"
-                    else
-                        echo -e "${YELLOW}Warning: MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
-                    fi
-                else
-                    echo -e "${YELLOW}Using default 180.${NC}"
-                fi
-            fi
-        elif [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
-            if is_positive_integer "${MAKO_MAX_WAIT_SECONDS}"; then
-                DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
-            else
-                echo -e "${YELLOW}Warning: MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
-            fi
-        fi
-        echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS or MAKO_MAX_WAIT_SECONDS).${NC}"
         normalize_script_build_ownership
-        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e "MAKO_MAX_WAIT_SECONDS=${DOCKER_TEST_MAX_WAIT_SECONDS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
-                     if [ -x build_docker/dbtest ]; then \
-                         RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
-                         if [[ \":\$RUNPATH:\" == *\":/workspace/build_docker:\"* ]]; then \
-                             NEED_BUILD=0; \
-                             echo 'Reusing existing Docker-compatible build_docker/dbtest'; \
-                         else \
-                             echo \"Rebuilding dbtest (incompatible RUNPATH: \${RUNPATH:-<none>})\"; \
-                         fi; \
-                     fi; \
-                     if [ \"\$NEED_BUILD\" -eq 1 ]; then \
-                         if [ -f build_docker/CMakeCache.txt ]; then \
-                             CACHE_INCOMPATIBLE=0; \
-                             CACHE_REASON=''; \
-                             if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
-                                 CACHE_INCOMPATIBLE=1; \
-                                 CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
-                             elif ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' build_docker/CMakeCache.txt; then \
-                                 CACHE_INCOMPATIBLE=1; \
-                                 CACHE_REASON='not a Ninja build tree'; \
-                             else \
-                                 C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
-                                 CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
-                                 if [ -n \"\$C_COMPILER\" ]; then \
-                                     if [[ \"\$C_COMPILER\" == /* ]]; then \
-                                         if [ ! -x \"\$C_COMPILER\" ]; then \
-                                             CACHE_INCOMPATIBLE=1; \
-                                             CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
-                                         fi; \
-                                     elif ! command -v \"\$C_COMPILER\" >/dev/null 2>&1; then \
-                                         CACHE_INCOMPATIBLE=1; \
-                                         CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
-                                     fi; \
-                                 fi; \
-                                 if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ] && [ -n \"\$CXX_COMPILER\" ]; then \
-                                     if [[ \"\$CXX_COMPILER\" == /* ]]; then \
-                                         if [ ! -x \"\$CXX_COMPILER\" ]; then \
-                                             CACHE_INCOMPATIBLE=1; \
-                                             CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
-                                         fi; \
-                                     elif ! command -v \"\$CXX_COMPILER\" >/dev/null 2>&1; then \
-                                         CACHE_INCOMPATIBLE=1; \
-                                         CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
-                                     fi; \
-                                 fi; \
-                             fi; \
-                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 1 ]; then \
-                                 echo \"Cleaning incompatible build_docker cache (\${CACHE_REASON})\"; \
-                                 rm -rf build_docker; \
-                             fi; \
-                         fi && \
-                         if [ ! -f build_docker/CMakeCache.txt ]; then \
-                             echo 'Configuring build_docker'; \
-                             cmake -S . -B build_docker -G Ninja -DCMAKE_BUILD_TYPE=Release; \
-                         else \
-                             echo 'Reusing existing build_docker CMake cache'; \
-                         fi && \
-                         cmake --build build_docker --parallel ${JOBS} --target dbtest && \
-                         echo 'SUCCESS: dbtest build completed'; \
-                     fi && \
-                     BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication && \
-                     ls -la build_docker/dbtest"
-        echo -e "${GREEN}Test completed successfully!${NC}"
+        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" \
+            -e BUILD_DIR=build_docker -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
+            bash -c 'set -e; bash ci/native_rust.sh compile; bash ci/ci.sh shardNoReplication'
         ;;
 
     ci)
@@ -833,7 +676,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|nativeShardingProof|nativeShardingSmoke|rocksdbRaft|rustStoBoundaryBinaries|makoLocalAbiGates|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|srpcTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|nativeRust|nativeRuntime|rustStorageGates|nativeShardingProof|nativeShardingSmoke|rocksdbRaft|rustStoBoundaryBinaries|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -851,15 +694,15 @@ case "$ACTION" in
                     -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
                     bash ./ci/ci.sh rocksdbRaft
                 ;;
-            compile|all)
+            compile|all|nativeRust)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
-            nativeShardingProof)
+            nativeShardingProof|srpcTests)
                 # Proof needs the pinned verifier/Rust only, not a C++ rebuild.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh nativeShardingProof"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
             cleanup)
                 # cleanup should not force an expensive build first.
@@ -871,7 +714,7 @@ case "$ACTION" in
                 # Makefile was removed by commit 0cf5b9724's CMake migration;
                 # invoking `make` directly no longer works.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh compile && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh compile && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
         esac
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
@@ -904,28 +747,12 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
-        REQUIRED_BINS=("build_docker/dbtest")
-        case "${CI_TEST}" in
-            nativeShardingSmoke)
-                REQUIRED_BINS=("build_docker/native_sharding_smoke" "build_docker/mako_admin"
-                               "build_docker/test_mako_nontxn_distributed" "build_docker/test_sto_epoch_rcu")
-                ;;
-            simpleTransaction)
-                REQUIRED_BINS=("build_docker/simpleTransaction")
-                ;;
-            rocksdbTests)
-                REQUIRED_BINS=(
-                    "build_docker/test_rocksdb_persistence"
-                    "build_docker/test_callback_demo"
-                    "build_docker/test_ordered_callbacks"
-                    "build_docker/test_partitioned_queues"
-                    "build_docker/test_stress_partitioned_queues"
-                )
-                ;;
-            shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|clientServer)
-                REQUIRED_BINS=("build_docker/simpleTransactionRep")
-                ;;
-        esac
+        REQUIRED_BINS=("build_docker/mako_bench" "build_docker/mako_transactions"
+                       "build_docker/mako_node" "build_docker/mako_redis")
+        if ! grep -q '^MAKO_BUILD_PROFILE:STRING=NATIVE_RUST$' build_docker/CMakeCache.txt; then
+            echo 'ci-quick requires a native Rust build. Run docker_build.sh build first.' >&2
+            exit 1
+        fi
 
         missing_bins=()
         non_executable_bins=()
@@ -952,7 +779,7 @@ case "$ACTION" in
             else
                 RUNPATH=$(readelf -d "${required_bin}" 2>/dev/null | awk '/RUNPATH/ {print $5}' | tr -d '[]')
             fi
-            if [[ ":$RUNPATH:" != *":/workspace/build_docker:"* ]]; then
+            if [[ "$RUNPATH" == *"/home/"* || "$RUNPATH" == *"/var/tmp/"* ]]; then
                 incompatible_bins+=("${required_bin} (RUNPATH: ${RUNPATH:-<none>})")
                 continue
             fi
@@ -965,8 +792,7 @@ case "$ACTION" in
             for bin in "${missing_bins[@]}"; do
                 echo -e "${RED}  - ${bin}${NC}"
             done
-            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simpleTransactionRep, continuousTransactions)${NC}"
-            echo -e "${YELLOW}and RocksDB test binaries for ci-quick rocksdbTests.${NC}"
+            echo -e "${YELLOW}'build' compiles the native Rust application, client, cache and RocksDB tools${NC}"
             echo -e "${YELLOW}Use './docker_build.sh build' to rebuild Docker binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
             echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to build and run this suite in one command.${NC}"
             exit 1
@@ -1527,7 +1353,7 @@ case "$ACTION" in
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped unless compose duplicate-avoidance applies)"
-        echo "  test         - Build dbtest and run shardNoReplication smoke test"
+        echo "  test         - Build native Rust and run shardNoReplication smoke test"
         echo "  ci [test] [jobs] - Build and run CI test (default: all, jobs: 32)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
         echo "  clean        - Clean build artifacts"

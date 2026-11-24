@@ -18,7 +18,7 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory"));
     let cc = env::var_os("CC").unwrap_or_else(|| "cc".into());
     let ar = env::var_os("AR").unwrap_or_else(|| "ar".into());
-    // This same reviewed list supplies CMake's production library.
+    // Cargo compiles only these platform kernels; all SRPC policy is Rust.
     println!("cargo:rerun-if-changed=scripts/native-kernel-sources.txt");
     let mut sources = Vec::new();
     for line in include_str!("scripts/native-kernel-sources.txt").lines() {
@@ -72,11 +72,7 @@ fn main() {
     }
     run(Command::new(ar).arg("crs").arg(&archive).args(objects));
     println!("cargo:rustc-link-search=native={}", out.display());
-    // `static:-bundle=` rather than `static=`: link the native archive, but
-    // do not copy its objects into the rlib. Mako compiles this same manifest
-    // into libsrpc.a through CMake, so bundling put a second copy of every
-    // kernel into libraft.a and left the choice to archive order. The final
-    // link still gets them -- from libsrpc.a in Mako's build, and from
-    // OUT_DIR here -- so standalone `cargo test` is unaffected.
+    // Keep the C/assembly archive explicit in the final link rather than
+    // copying its objects into Rust archives. The production audit checks it.
     println!("cargo:rustc-link-lib=static:-bundle=srpc_native");
 }

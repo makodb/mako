@@ -2,7 +2,7 @@
 #
 # Mako Correctness Test Suite - Master Runner
 # =============================================
-# Starts the makoCon server, runs all test suites, stops the server.
+# Starts the mako_redis server, runs all test suites, stops the server.
 #
 # Usage:
 #   ./tests/correctness/run_all.sh          # Run all tests
@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 MAKO_ROOT="$(pwd)"
 TEST_DIR="$MAKO_ROOT/tests/correctness"
-RESULTS_FILE="$TEST_DIR/suite_results.txt"
+RESULTS_FILE="$MAKO_ROOT/${BUILD_DIR:-build}/redis-correctness-results.txt"
 
 echo "============================================================"
 echo " Mako Correctness Test Suite"
@@ -24,8 +24,8 @@ echo " Date: $(date -Iseconds)"
 echo "============================================================"
 
 # Check prerequisites
-if [ ! -f "$MAKO_ROOT/build/makoCon" ]; then
-    echo "ERROR: build/makoCon not found. Run 'make -j32' first."
+if [ ! -f "$MAKO_ROOT/${BUILD_DIR:-build}/mako_redis" ]; then
+    echo "ERROR: build/mako_redis not found. Build the native Rust targets first."
     exit 1
 fi
 
@@ -92,10 +92,7 @@ for task in $TASKS; do
         continue
     fi
 
-    # Kill leftover server between tasks to ensure clean state.
     # Each task calls ensure_server() to start a fresh instance.
-    pkill -f "build/makoCon" 2>/dev/null || true
-    sleep 1
 
     echo ""
     echo "============================================================"
@@ -110,8 +107,6 @@ for task in $TASKS; do
     fi
 done
 
-# Kill any leftover makoCon processes we started
-pkill -f "build/makoCon" 2>/dev/null || true
 
 echo ""
 echo "============================================================"

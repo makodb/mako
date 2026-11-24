@@ -465,3 +465,28 @@ these existing components while preserving the current application contracts.
   workload with 500 attempts per worker, and the native source audit passed.
   Launcher failures now retain artifacts under the build directory and print
   process log tails. CI/script conversion and replaced-source retirement remain.
+
++ Native CI checkpoint: CI now builds native Rust, runs transaction-manager,
+  supporting Rust, tree/ABI, application-adapter and cache gates separately,
+  then runs runtime/process suites in debug and release. The SRPC gate builds
+  a copied Rust/C/Lion tree with CXX disabled. Proof and Miri jobs remain.
+  Docker and scoped example entry points now select native executables.
++ Cargo's tree adapters now use `static:-bundle=mako_native_storage`, leaving
+  one inspectable storage archive in the final links. The expanded audit checks
+  compiler header dependencies, every Cargo native-library declaration,
+  first-party Rust archive members, all twelve executable link maps and retired
+  C++ application symbols. `/tmp/mako-native-rust-ci-gates-02.log` records a pass
+  for all twelve links and 37 Rust archives, followed by component passes:
+  independent transaction tests, supporting crates, cache qualification,
+  302 tree/ABI cases and 84 application-adapter cases.
++ `/tmp/mako-native-rust-ci-runtime-01.log`: all 50 native runtime/process cases
+  passed in both debug and release. A subsequent optimized workload matrix
+  exposed the example counter's optimistic read comparison and cancellation
+  masking the initiating worker error. Cross-shard equality now aborts a
+  speculative read with Conflict; certified initial/final reads still treat
+  inequality as Fatal. Worker joins retain the initiating error.
++ `/tmp/mako-native-rust-ci-workloads-02.log`: the separate and colocated
+  transaction/Raft matrix, persistent micro, separate and replicated TPC-C, and
+  a duration-based throttled workload passed. Native health-runner unit checks
+  and shell/Python syntax checks passed. Source retirement, sanitizer port
+  qualification, documentation and the final fresh-build audit remain.

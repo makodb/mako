@@ -68,6 +68,9 @@ def main():
     parser.add_argument("--persistent", action="store_true", help="local RocksDB persistence without Raft")
     parser.add_argument("--count", type=int, default=100, help="commits per transaction worker, or attempts per benchmark worker")
     parser.add_argument("--seconds", type=int, default=10, help="benchmark duration limit")
+    parser.add_argument("--duration-only", action="store_true", help="run for --seconds instead of a fixed attempt/commit count")
+    parser.add_argument("--cpu-limit", type=float, default=0, help="worker CPU duty percentage; 0 disables throttling")
+    parser.add_argument("--throttle-cycle-ms", type=int, default=100)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--build", type=Path, default=Path(os.environ.get("BUILD_DIR", "build")))
     parser.add_argument("--data-dir", type=Path, help="retain data/config/logs here; reopen unless --create is passed")
@@ -77,6 +80,10 @@ def main():
     if not (1 <= args.shards <= 8 and 1 <= args.workers <= 64 and args.count > 0
             and 1 <= args.seconds <= 86400 and 1 <= args.timeout <= 86400):
         parser.error("invalid topology, count or duration")
+    if not (0 <= args.cpu_limit <= 100 and 1 <= args.throttle_cycle_ms <= 10000):
+        parser.error("invalid CPU limit or throttle cycle")
+    if args.workload == "transactions" and args.cpu_limit:
+        parser.error("CPU throttling is a benchmark option")
     if args.persistent and args.replicas != 1:
         parser.error("choose local persistence or replicated persistence")
     binary = args.build / ("mako_transactions" if args.workload == "transactions" else "mako_bench")
@@ -124,9 +131,14 @@ def main():
             config = {"nodes": nodes}
             if args.workload == "transactions":
                 config["transactions"] = dict(rounds_per_worker=args.count, timeout_seconds=args.timeout)
+                if args.duration_only:
+                    config["transactions"]["seconds"] = args.seconds
             else:
                 config["benchmark"] = dict(scale=dict(districts=2, customers=20, items=50, seed=51),
-                    seconds=args.seconds, transactions_per_worker=args.count, startup_timeout_seconds=args.timeout)
+                    seconds=args.seconds, transactions_per_worker=args.count, startup_timeout_seconds=args.timeout,
+                    cpu_limit_percent=args.cpu_limit, throttle_cycle_ms=args.throttle_cycle_ms)
+                if args.duration_only:
+                    config["benchmark"]["transactions_per_worker"] = None
                 if args.workload == "micro":
                     config["benchmark"]["micro"] = dict(keys=100, operations=4, write_percent=50, remote_percent=50)
             path = directory / f"config-{index}.json"

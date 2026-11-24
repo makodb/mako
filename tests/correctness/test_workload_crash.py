@@ -83,23 +83,8 @@ def report(test_id, name, passed, detail=""):
 
 
 def find_server_pid_fallback():
-    """
-    Fall back to pgrep if get_server_pid() returns None.
-    Searches for any process whose command line contains 'build/makoCon'.
-    Returns an int PID or None.
-    """
-    try:
-        output = subprocess.check_output(
-            ["pgrep", "-f", "build/makoCon"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-        if output:
-            # pgrep may return multiple PIDs (one per line); take the first
-            first = output.splitlines()[0].strip()
-            return int(first)
-    except (subprocess.CalledProcessError, ValueError):
-        pass
-    return None
+    """Only the process owned by this test may be terminated."""
+    return get_server_pid()
 
 
 # ── Main test ─────────────────────────────────────────────────────────────────

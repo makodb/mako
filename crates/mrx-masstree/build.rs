@@ -18,7 +18,9 @@ fn main() {
     let archive = build.join("libmako_native_storage.a");
     println!("cargo:rerun-if-changed={}", archive.display());
     println!("cargo:rustc-link-search=native={}", build.display());
-    println!("cargo:rustc-link-lib=static=mako_native_storage");
+    // Keep one independently audited native archive in the final link. Both
+    // Rust adapters can depend on it without copying C++ objects into rlibs.
+    println!("cargo:rustc-link-lib=static:-bundle=mako_native_storage");
     let cache_path = build.join("CMakeCache.txt");
     let contract_path = build.join(native_allocator::CONTRACT_RELATIVE_PATH);
     println!("cargo:rerun-if-changed={}", cache_path.display());

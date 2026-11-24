@@ -18,7 +18,7 @@ import os
 import uuid
 
 sys.path.insert(0, os.path.dirname(__file__))
-from server_manager import ensure_server, get_client, extract_user_value
+from server_manager import ensure_server, get_client, extract_user_value, MAKO_HOST, MAKO_PORT
 
 RUN_ID = uuid.uuid4().hex[:8]
 RESULTS = []
@@ -125,7 +125,7 @@ def test_2_3_partial_failure():
     # This transaction should fail: SET then GET same key in MULTI
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(("127.0.0.1", 6380))
+    sock.connect((MAKO_HOST, MAKO_PORT))
     sock.settimeout(5)
 
     def send_cmd(sock, *args):
@@ -235,7 +235,7 @@ def test_2_6_empty_transaction():
 
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(("127.0.0.1", 6380))
+    sock.connect((MAKO_HOST, MAKO_PORT))
     sock.settimeout(5)
 
     def send_cmd(sock, *args):

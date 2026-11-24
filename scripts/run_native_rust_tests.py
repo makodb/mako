@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--package", action="append", required=True)
     parser.add_argument("--features")
+    parser.add_argument("--release", action="store_true")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     command = [args.cargo, "test", "--locked", "--manifest-path", args.manifest,
@@ -28,6 +29,8 @@ def main():
         command.extend(["-p", package])
     if args.features:
         command.extend(["--features", args.features])
+    if args.release:
+        command.append("--release")
     built = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)
     executables = set()
     for line in built.stdout.splitlines():

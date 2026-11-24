@@ -192,8 +192,8 @@ fn target(host: &Handle, owner: u32, key: &[u8]) -> Result<Target> {
         host.store.migration,
     )
 }
-fn counter(tx: &mut Transaction<'_, '_>, host: &Handle, nodes: u32) -> Result<u64> {
-    let mut first = None;
+fn counter_values(tx: &mut Transaction<'_, '_>, host: &Handle, nodes: u32) -> Result<Vec<u64>> {
+    let mut values = Vec::new();
     for owner in 0..nodes {
         let value = tx.get(
             &target(host, owner, b"example/counter")?,
@@ -208,13 +208,21 @@ fn counter(tx: &mut Transaction<'_, '_>, host: &Handle, nodes: u32) -> Result<u6
                     .map_err(|_| Error::new(ErrorCode::Fatal, "invalid example counter"))?,
             ),
         };
-        ensure(
-            first.is_none_or(|first| first == value),
-            "cross-shard counter differs",
-        )?;
-        first = Some(value);
+        values.push(value);
     }
-    Ok(first.unwrap_or(0))
+    Ok(values)
+}
+fn checked_counter(values: &[u64], code: ErrorCode) -> Result<u64> {
+    let first = values.first().copied().unwrap_or(0);
+    if values.iter().any(|value| *value != first) {
+        return Err(Error::new(code, "cross-shard counter differs"));
+    }
+    Ok(first)
+}
+fn counter(tx: &mut Transaction<'_, '_>, host: &Handle, nodes: u32) -> Result<u64> {
+    // Reads are optimistic until certification. A concurrent increment can
+    // appear between shard reads, so discard that attempt without writing.
+    checked_counter(&counter_values(tx, host, nodes)?, ErrorCode::Conflict)
 }
 fn wait_for_peers(
     host: &Handle,
@@ -411,7 +419,9 @@ pub fn run(
     let initial = {
         let mut session = session(host, config, settings, 0, &stop)?;
         crud(host, config, &mut session)?;
-        session.run(|tx| counter(tx, host, config.nodes))?.0
+        let values = session.run(|tx| counter_values(tx, host, config.nodes))?.0;
+        // Once the read transaction commits, inequality is an invariant error.
+        checked_counter(&values, ErrorCode::Fatal)?
     };
     let end = settings
         .seconds
@@ -452,7 +462,7 @@ pub fn run(
                 work
             }));
         }
-        let (mut committed, mut aborted, mut failure) = (0, 0, None);
+        let (mut committed, mut aborted, mut failure): (_, _, Option<Error>) = (0, 0, None);
         for thread in threads {
             match thread
                 .join()
@@ -463,7 +473,14 @@ pub fn run(
                     aborted += a;
                 }
                 Err(error) => {
-                    failure.get_or_insert(error);
+                    // Joining in worker order must not let cancellation hide
+                    // the original error that stopped the other workers.
+                    if failure
+                        .as_ref()
+                        .is_none_or(|old| old.code == ErrorCode::Closed)
+                    {
+                        failure = Some(error);
+                    }
                 }
             }
         }
@@ -473,9 +490,10 @@ pub fn run(
             Ok((committed, aborted))
         }
     })?;
-    let final_counter = session(host, config, settings, 0, &stop)?
-        .run(|tx| counter(tx, host, config.nodes))?
+    let values = session(host, config, settings, 0, &stop)?
+        .run(|tx| counter_values(tx, host, config.nodes))?
         .0;
+    let final_counter = checked_counter(&values, ErrorCode::Fatal)?;
     ensure(
         initial.checked_add(committed) == Some(final_counter),
         "concurrent committed total differs from counter",

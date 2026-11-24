@@ -81,7 +81,7 @@ set(_native_library_dirs "${CMAKE_BINARY_DIR}")
 if(EXISTS "${MAKO_CLANG_ROOT}/lib/libc++.so")
     string(APPEND _native_library_dirs ":${MAKO_CLANG_ROOT}/lib")
 endif()
-set(_native_libraries "static=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread")
+set(_native_libraries "static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread")
 if(MAKO_ALLOCATOR_LINK_NAME)
     string(APPEND _native_libraries ",dylib=${MAKO_ALLOCATOR_LINK_NAME}")
     get_filename_component(_allocator_dir "${MAKO_ALLOCATOR_LIBRARY}" DIRECTORY)
@@ -175,11 +175,19 @@ add_custom_target(rust_sto_transaction_tests
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
         -p sto-core -p sto-test-datatypes
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_custom_target(rust_support_tests
+    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
+        "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
+        -p mako-clock -p mako-history -p mako-engine-api -p mako-differential
+        -p mrx-core -p shard-host-core
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_masstree_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
         --package masstree --package sto-masstree
+        --package mrx --package mrx-ffi --package mrx-masstree
+        --package mtree-sys --package mtx-sys
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_application_adapter_tests
@@ -208,6 +216,20 @@ add_test(NAME rust_shard_integration
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
         --package mako-runtime --features replication)
+add_custom_target(rust_runtime_release_tests
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
+        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
+        --package mako-runtime --features replication --release
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_custom_target(rust_native_dependency_audit
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/audit_native_dependencies.py"
+        --build "${CMAKE_BINARY_DIR}" --cargo "${MAKO_NATIVE_CARGO}"
+        --nm "${CMAKE_NM}"
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_native_rust_build.py"
         --build "${CMAKE_BINARY_DIR}" --archive "$<TARGET_FILE:mako_native_storage>"
