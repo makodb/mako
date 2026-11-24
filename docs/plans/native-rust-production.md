@@ -351,3 +351,15 @@ these existing components while preserving the current application contracts.
   micro workload/rollback case, interrupted-loader regression, and persistent
   executable restart regression passed. Configuration/CLI ports, remaining
   examples and the production default switch are still outstanding.
++ Native configuration now accepts typed JSON and YAML, including anchors,
+  through the Rust `serde-saphyr` parser with only its deserialize feature.
+  Configuration files are bounded to 4 MiB. A benchmark file can select one
+  node or several colocated shards; validation rejects ambiguous selection,
+  duplicate owners/listeners/directories and incompatible local topologies.
+  The supervisor starts, monitors and joins each shard's workload separately.
+  Complete unreplicated local clusters can exit after all their workers finish.
++ `/tmp/mako-native-rust-yaml-colocated-01.log`: all-target Clippy passed,
+  as did YAML anchor/invalid-configuration checks, two colocated shards running
+  the micro workload, the two-shard/three-replica TPC-C executable case, and
+  persistent executable restart. Legacy CLI/configuration translation and
+  remaining application examples are next; no default switch is claimed.

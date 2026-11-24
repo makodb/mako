@@ -1,8 +1,8 @@
 use mako_runtime::{
     benchmark,
-    node::{Config, RunningNode},
+    configuration::{self, BenchmarkFile},
+    node::RunningNode,
 };
-use serde::Deserialize;
 use std::{
     io::{BufRead, Write},
     sync::{
@@ -12,13 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileConfig {
-    node: Config,
-    #[serde(default)]
-    benchmark: benchmark::Config,
-}
 static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
@@ -44,7 +37,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--exit-after-run" => exit_after_run = true,
             "--exit-on-stdin-close" => stdin_close = true,
             "--help" | "-h" => {
-                println!("Usage: mako_bench --config FILE [--load-only | --serve-only] [--exit-after-run] [--exit-on-stdin-close]\nRuns native TPC-C workers on each shard leader; replicas remain available.\nAfter the run, keeps serving until SIGINT, SIGTERM or controlled stdin shutdown.\n--exit-after-run is restricted to a single unreplicated shard.");
+                println!("Usage: mako_bench --config FILE [--load-only | --serve-only] [--exit-after-run] [--exit-on-stdin-close]\nRuns native TPC-C or micro workers on each shard leader; replicas remain available.\nAfter the run, keeps serving until SIGINT, SIGTERM or controlled stdin shutdown.\n--config accepts JSON or YAML with one node or a nodes list.\n--exit-after-run requires all unreplicated shards in this process.");
                 return Ok(());
             }
             _ => return Err(format!("unknown argument: {argument}").into()),
@@ -56,11 +49,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if serve_only && exit_after_run {
         return Err("--serve-only has no run to exit after".into());
     }
-    let config: FileConfig =
-        serde_json::from_reader(std::fs::File::open(path.ok_or("--config is required")?)?)?;
-    config.benchmark.validate(&config.node)?;
-    if exit_after_run && (config.node.nodes != 1 || config.node.replication.is_some()) {
-        return Err("--exit-after-run requires one unreplicated shard; stop distributed servers after all clients finish".into());
+    let config: BenchmarkFile = configuration::read(path.ok_or("--config is required")?)?;
+    let (configs, settings) = config.into_parts()?;
+    if exit_after_run
+        && (configs.len() != configs[0].nodes as usize
+            || configs.iter().any(|node| node.replication.is_some()))
+    {
+        return Err("--exit-after-run requires all unreplicated shards in this process; stop remote replicas after all clients finish".into());
     }
     // SAFETY: callback only writes a lock-free atomic at a static address.
     unsafe {
@@ -83,67 +78,84 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = send_input.send(());
         });
     }
-    let mut node = RunningNode::start(config.node.clone())?;
-    println!("MAKO_LISTEN {}", node.address());
+    let mut nodes = Vec::new();
+    for config in &configs {
+        let node = RunningNode::start(config.clone())?;
+        println!("MAKO_LISTEN {}", node.address());
+        nodes.push(node);
+    }
     std::io::stdout().flush()?;
-    let host = benchmark::Host::from(&node);
-    let deadline = Instant::now() + Duration::from_secs(config.benchmark.startup_timeout_seconds);
+    let hosts: Vec<_> = nodes.iter().map(benchmark::Host::from).collect();
+    let deadline = Instant::now() + Duration::from_secs(settings.startup_timeout_seconds);
     let result = std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
         let (completed, completion) = mpsc::channel();
-        let mut launched = false;
-        let mut announced = false;
-        let mut task_handle = None;
+        let mut launched = vec![false; nodes.len()];
+        let mut announced = vec![false; nodes.len()];
+        let mut tasks = Vec::new();
+        let mut finished = 0;
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 if STOP.load(Ordering::Relaxed) || (stdin_close && input.try_recv().is_ok()) {
                     break;
                 }
-                node.health()?;
-                if !announced && node.ready() {
-                    println!("MAKO_READY {}", node.address());
-                    std::io::stdout().flush()?;
-                    announced = true;
-                }
-                if !announced && Instant::now() >= deadline {
-                    return Err("shard readiness deadline elapsed".into());
-                }
-                let status = node.store.log.replica_status(config.node.owner);
-                if announced && status.leader && status.healthy && !serve_only && !launched {
-                    launched = true;
-                    let host = &host;
-                    let config = &config;
-                    let cancelled = cancelled.clone();
-                    let completed = completed.clone();
-                    task_handle = Some(scope.spawn(move || {
-                        let task: mako_runtime::wire::Result<Option<benchmark::Stats>> = (|| {
-                            let mut printed = 0;
-                            let loaded = benchmark::prepare(
-                                host,
-                                &config.node,
-                                &config.benchmark,
-                                &cancelled,
-                                |progress| {
-                                    if progress.rows >= printed + 100_000 || progress.complete {
-                                        println!(
-                                            "MAKO_LOAD_PROGRESS {} {}",
-                                            progress.rows, progress.complete
-                                        );
-                                        printed = progress.rows;
+                for (index, node) in nodes.iter().enumerate() {
+                    node.health()?;
+                    if !announced[index] && node.ready() {
+                        println!("MAKO_READY {}", node.address());
+                        std::io::stdout().flush()?;
+                        announced[index] = true;
+                    }
+                    if !announced[index] && Instant::now() >= deadline {
+                        return Err("shard readiness deadline elapsed".into());
+                    }
+                    let status = node.store.log.replica_status(configs[index].owner);
+                    if announced[index]
+                        && status.leader
+                        && status.healthy
+                        && !serve_only
+                        && !launched[index]
+                    {
+                        launched[index] = true;
+                        let host = &hosts[index];
+                        let config = &configs[index];
+                        let settings = &settings;
+                        let cancelled = cancelled.clone();
+                        let completed = completed.clone();
+                        tasks.push(Some(scope.spawn(move || {
+                            let task: mako_runtime::wire::Result<Option<benchmark::Stats>> =
+                                (|| {
+                                    let mut printed = 0;
+                                    let loaded = benchmark::prepare(
+                                        host,
+                                        config,
+                                        settings,
+                                        &cancelled,
+                                        |progress| {
+                                            if progress.rows >= printed + 100_000
+                                                || progress.complete
+                                            {
+                                                println!(
+                                                    "MAKO_LOAD_PROGRESS {} {} {}",
+                                                    config.owner, progress.rows, progress.complete
+                                                );
+                                                printed = progress.rows;
+                                            }
+                                            Ok(())
+                                        },
+                                    )?;
+                                    println!(
+                                        "MAKO_LOADED {} {} {}",
+                                        config.owner, loaded.rows, loaded.already_loaded
+                                    );
+                                    if load_only {
+                                        Ok(None)
+                                    } else {
+                                        benchmark::run(host, config, settings, cancelled).map(Some)
                                     }
-                                    Ok(())
-                                },
-                            )?;
-                            println!("MAKO_LOADED {} {}", loaded.rows, loaded.already_loaded);
-                            if load_only {
-                                Ok(None)
-                            } else {
-                                benchmark::run(host, &config.node, &config.benchmark, cancelled)
-                                    .map(Some)
-                            }
-                        })(
-                        );
-                        let _ = completed.send(task);
-                    }));
+                                })();
+                            let _ = completed.send(task);
+                        })));
+                    }
                 }
                 match completion.try_recv() {
                     Ok(result) => {
@@ -153,7 +165,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         println!("MAKO_BENCH_DONE");
                         std::io::stdout().flush()?;
-                        if exit_after_run {
+                        finished += 1;
+                        if exit_after_run && finished == nodes.len() {
                             break;
                         }
                     }
@@ -162,23 +175,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         return Err("benchmark completion channel closed".into())
                     }
                 }
-                if task_handle.as_ref().is_some_and(|task| task.is_finished()) {
-                    task_handle
-                        .take()
-                        .unwrap()
-                        .join()
-                        .map_err(|_| "benchmark task panicked")?;
+                for task in &mut tasks {
+                    if task.as_ref().is_some_and(|task| task.is_finished()) {
+                        task.take()
+                            .unwrap()
+                            .join()
+                            .map_err(|_| "benchmark task panicked")?;
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
             Ok(())
         })();
         cancelled.store(true, Ordering::Relaxed);
-        if let Some(task) = task_handle {
-            task.join().map_err(|_| "benchmark task panicked")?;
+        let mut failed = false;
+        for task in tasks.into_iter().flatten() {
+            if task.join().is_err() {
+                failed = true;
+            }
+        }
+        if failed {
+            return Err("benchmark task panicked".into());
         }
         result
     });
-    node.shutdown();
+    for node in &mut nodes {
+        node.shutdown();
+    }
     result
 }

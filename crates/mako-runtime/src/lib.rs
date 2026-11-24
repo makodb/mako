@@ -6,6 +6,8 @@ pub mod admission;
 pub mod benchmark;
 #[cfg(feature = "native-storage")]
 pub mod client;
+#[cfg(feature = "native-storage")]
+pub mod configuration;
 #[cfg(feature = "durable-storage")]
 pub mod durable;
 pub mod epoch;

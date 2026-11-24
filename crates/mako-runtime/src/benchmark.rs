@@ -217,6 +217,8 @@ pub fn prepare(
 pub struct Stats {
     #[serde(default)]
     pub workload: String,
+    #[serde(default)]
+    pub owner: u32,
     pub committed: [u64; 5],
     pub aborted: [u64; 5],
     pub elapsed_seconds: f64,
@@ -256,6 +258,7 @@ pub fn run(
             }));
         }
         let mut total = Stats {
+            owner: config.owner,
             workload: if settings.micro.is_some() {
                 "micro"
             } else {

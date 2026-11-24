@@ -33,8 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {argument}").into()),
         }
     }
-    let config: Config =
-        serde_json::from_reader(std::fs::File::open(config.ok_or("--config is required")?)?)?;
+    let config: Config = mako_runtime::configuration::read(config.ok_or("--config is required")?)?;
     // SAFETY: the signal callback only writes a lock-free atomic flag. Its
     // static address remains valid throughout this standalone process.
     unsafe {
