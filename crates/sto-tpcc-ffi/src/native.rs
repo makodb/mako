@@ -10,6 +10,13 @@ use std::{marker::PhantomData, ops::Bound, rc::Rc};
 
 pub use super::{StoTpccDbConfig as DatabaseConfig, StoTpccTableConfig as TableConfig};
 
+pub mod migration;
+mod participant;
+pub use participant::{
+    Coordinator, Mutation, Participant, ParticipantReport, ProtocolCallbacks, VersionedRow,
+    VersionedScan, VersionedValue,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
     Conflict,
@@ -101,6 +108,10 @@ pub struct Table {
 }
 
 impl Table {
+    pub fn belongs_to(&self, database: &Database) -> bool {
+        Arc::ptr_eq(&self.database.inner, &database.inner)
+    }
+
     pub fn len(&self) -> u64 {
         self.inner.state.logical_rows.load(Ordering::Acquire)
     }
@@ -126,6 +137,10 @@ pub struct Worker {
 }
 
 impl Worker {
+    pub fn belongs_to(&self, database: &Database) -> bool {
+        Arc::ptr_eq(&self.database.inner, &database.inner)
+    }
+
     pub fn create_table(&mut self, config: TableConfig) -> Result<Table> {
         if self.raw.active.is_some() || self.raw.protocol.is_uncertain() {
             return Err(invalid("cannot create a table during a transaction"));
@@ -162,7 +177,13 @@ impl Worker {
     /// transaction guard. An uncertain distributed outcome is never called an
     /// abort; the underlying protocol returns its corresponding error.
     pub fn abort(&mut self) -> Result<()> {
-        let result = checked(unsafe { sto_tpcc_txn_abort(&mut *self.raw) });
+        let result = if self.raw.sto_worker.has_participant() {
+            checked(boundary("native participant abandon", || {
+                protocol::abandon(&mut self.raw)
+            }))
+        } else {
+            checked(unsafe { sto_tpcc_txn_abort(&mut *self.raw) })
+        };
         if self.raw.active.is_none() {
             self.pinned.clear();
         }

@@ -132,3 +132,36 @@ these existing components while preserving the current application contracts.
   Rust test targets. Stage 3 starts the production application port; the default
   C++ application is not yet switched or deleted. Paxos removal is committed as
   `195ceb8a0`.
+
++ Stage 3 checkpoint: native Rust SRPC now carries retained STO participant
+  requests. `crates/mako-runtime` owns bounded affine worker lanes, exact request
+  identity checks, terminal reply retention, coordinator callbacks, table
+  ownership, shutdown and migration admission epochs. The existing STO scalar
+  coordinator still chooses timestamps and drives certification/installation.
+  No transaction or migration algorithm was replaced with a second engine.
++ The owned STO API now supports versioned reads/scans, remote dependency
+  observations, retained participant phases and typed coordinator callbacks.
+  Body errors release remote sessions. Dropping an installed participant fences
+  its worker rather than reporting a successful abort. Uncertain receiver and
+  coordinator outcomes retain their migration epoch pins.
++ `/tmp/mako-native-rust-participant-tests-02.log`: 81 adapter cases passed.
+  `/tmp/mako-native-rust-runtime-unit-03.log`: eight admission, epoch and native
+  SRPC cases passed without the native-storage feature. The participant and
+  coordinator integration suite in
+  `/tmp/mako-native-rust-runtime-integration-02.log` passed 13 cases in fresh
+  processes, including real two-shard transactions, body-error cleanup,
+  retained log failure, duplicate INSTALL receipts and stale ABORT rejection.
+  All-target Clippy passed for the new runtime with its storage feature.
++ This checkpoint is a library/runtime port, not the completed production
+  switch. Stage 3 still needs migration host/bootstrap, route and scan orchestration,
+  gateway behavior and multi-process coverage. Stages 4 through 6 remain pending.
+  CMake now exposes separate `rust_runtime_tests` and `rust_shard_integration_tests`
+  targets alongside the existing transaction-manager and Masstree targets.
++ The migration storage adapter now has an owned Rust registry and affine
+  worker. It calls the existing `shard-host-core` storage verbs and retains
+  table handles until every registered worker stops. Raw/warehouse scans,
+  copying/deletion, registry lifetime and foreign-database rejection passed in
+  `/tmp/mako-native-rust-migration-api-01.log`: 83 adapter cases and Clippy.
+  `/tmp/mako-native-rust-runtime-cmake-01.log` also confirms the new CMake
+  integration target and adapter target pass. Native sharding Host callbacks
+  and process bootstrap are the next step, not yet connected by this checkpoint.

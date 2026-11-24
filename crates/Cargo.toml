@@ -20,6 +20,7 @@ members = [
     "mako-engine-api",
     "mako-engine-sto",
     "mako-history",
+    "mako-runtime",
     "masstree",
     "mrx",
     "mrx-ffi",

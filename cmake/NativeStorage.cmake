@@ -92,6 +92,23 @@ add_custom_target(rust_application_adapter_tests
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 
 enable_testing()
+add_custom_target(rust_runtime_tests
+    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
+        "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
+        -p mako-runtime --lib
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_custom_target(rust_shard_integration_tests
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
+        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
+        --package mako-runtime --features native-storage
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_test(NAME rust_shard_integration
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
+        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
+        --package mako-runtime --features native-storage)
 add_test(NAME native_storage_source_audit
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_native_rust_build.py"
         --build "${CMAKE_BINARY_DIR}" --archive "$<TARGET_FILE:mako_native_storage>"
@@ -101,5 +118,5 @@ add_test(NAME rust_application_adapter
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
         --package sto-tpcc-ffi)
-set_tests_properties(native_storage_source_audit rust_application_adapter PROPERTIES
+set_tests_properties(native_storage_source_audit rust_application_adapter rust_shard_integration PROPERTIES
     LABELS "native-rust" TIMEOUT 900)

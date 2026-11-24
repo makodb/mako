@@ -394,9 +394,22 @@ name = "mako-history"
 version = "0.1.0"
 
 [[package]]
+name = "mako-runtime"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "mako-sharding",
+ "parking_lot",
+ "serde",
+ "srpc",
+ "sto-tpcc-ffi",
+]
+
+[[package]]
 name = "mako-sharding"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "vstd",
 ]
 

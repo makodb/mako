@@ -478,7 +478,10 @@ impl Node {
         self.metadata_gate()?;
         checked(wire::status(self.data_ready.load(Ordering::Acquire)))
     }
-    pub(crate) fn admission_view(&self) -> Result<Arc<AdmissionSnapshot>,Status> {
+    /// Capture after entering the host admission epoch. The host retains that
+    /// epoch through every engine effect and cleanup performed under this view.
+    /// Migration freezes this view before taking its host epoch cut.
+    pub fn admission_view(&self) -> Result<Arc<AdmissionSnapshot>,Status> {
         self.admission_ready()?;
         let view = Arc::clone(&self.admission.read());
         self.admission_ready()?;

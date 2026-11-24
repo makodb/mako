@@ -102,6 +102,10 @@ impl Default for ProtocolState {
 }
 
 impl ProtocolState {
+    pub(super) fn term(&self) -> u32 {
+        u32::from(self.term.get())
+    }
+
     pub(super) fn is_uncertain(&self) -> bool {
         self.report.disposition == 3
     }
@@ -441,6 +445,16 @@ pub(super) fn finish(handle: &mut StoTpccThread, committed: bool) -> FfiResult<S
         return Err(Status::Unknown);
     }
     Ok(status)
+}
+
+/// An application guard vanished without a terminal decision. Installed data
+/// cannot be rolled back, and its remote/log outcome may be unknown. Keep that
+/// worker fenced even after releasing its local locks and RCU scope.
+pub(super) fn abandon(handle: &mut StoTpccThread) -> FfiResult<Status> {
+    if handle.protocol.report.phase == 3 {
+        handle.protocol.report.disposition = 3;
+    }
+    finish(handle, false)
 }
 
 unsafe fn checked_handle<'a>(handle: *mut StoTpccThread) -> FfiResult<&'a mut StoTpccThread> {
