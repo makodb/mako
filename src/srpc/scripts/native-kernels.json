@@ -14,14 +14,6 @@
       "role": "os-leaf",
       "sha256": "5ad51be942a2bf95d099a5e6e0e5e7cca31be93a9771585337b2c31eec973345"
     },
-    "misc/serializable_adapters.hpp": {
-      "role": "trait-dispatch",
-      "sha256": "461dbc058ce8ffa03a51550c297c5a00917a4633e9b8f6e12cfa858fc31b4d4f"
-    },
-    "misc/serializable_support.hpp": {
-      "role": "trait-dispatch",
-      "sha256": "1e52ecdf4fc1607283b8141cd66e6143d3dbe1041bc4ba289f3cca3a15fd24cd"
-    },
     "misc/srpc_io.c": {
       "role": "os-leaf",
       "sha256": "ea2bd87c06a353cbb268fc62f013717df7c3d513be7e8c78820a27c597af049c"
@@ -85,14 +77,6 @@
     "rpc/srpc_server.h": {
       "role": "c-declarations",
       "sha256": "e6b6e214211dc030251567cba58c6e77178e201aef96dba02dab3310504dbda3"
-    },
-    "srpc.hpp": {
-      "role": "import-shim",
-      "sha256": "31fc5c7f5d0b4e74fd6db23f9b0d42d1ad54a4b45db5df51ac34fc0ca0de230e"
-    },
-    "std_compat.hpp": {
-      "role": "import-shim",
-      "sha256": "5de0052835664070590156a194625781daba902f1751d5bb43e076fa34018891"
     }
   },
   "sources": {
@@ -109,7 +93,6 @@
     "rpc/srpc_server.c": "all"
   },
   "consumers": {
-    "build.rs": "3ae3b9d30b814957ec619276558ac89b32504ca95cefe81a6424f009efeca3c9",
-    "CMakeLists.txt:native-manifest": "04b3201bdab26052c7483295287e0902c4804c4419b7f16c7e3d594ca368e29c"
+    "build.rs": "49c2424ff1d97d1d7dc65b44363a203fcdd2de9b30a949bfec89963e3198f9cc"
   }
 }

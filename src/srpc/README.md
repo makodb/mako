@@ -25,7 +25,7 @@ C++ toolchain. See the book for
 [setup and dependencies](docs/srpc-book.md#building-and-testing-srpc) and
 [focused checks](docs/srpc-book.md#use-the-cargo-checks).
 The [test coverage inventory](docs/test-coverage.md) maps historical C++ tests to
-canonical Rust coverage and records which generated C++ suites run under CTest.
+native Rust coverage. Its C++ references describe retired tests.
 
 ## Using sRPC
 
@@ -35,7 +35,5 @@ canonical Rust coverage and records which generated C++ suites run under CTest.
 - [Performance and benchmarks](docs/srpc-book.md#13-performance-tuning)
 - [Verus verification](docs/srpc-book.md#checking-rust-contracts)
 
-sRPC also generates a C++23 library from the same Rust sources. The
-**[C++ companion](docs/srpc-cpp-book.md)** covers translation, CMake builds,
-`.rpc` service generation and C++ APIs, including a complete
-[service and client walkthrough](docs/srpc-cpp-book.md#3-c-service-and-client-walkthrough).
+The C++ companion book is historical documentation. This checkout builds SRPC
+only through Cargo; it contains no C++ provider or Rust-to-C++ build path.

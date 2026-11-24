@@ -1,3 +1,4 @@
+#include "test_std.h"
 // Tier 4 of docs/masstree-test-plan.md — memory & resource correctness.
 //
 // These tests exercise allocation paths and RCU reclamation patterns
@@ -20,14 +21,13 @@
 
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 volatile mrcu_epoch_type globalepoch = 1;
 
@@ -116,10 +116,10 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   rusty::sync::atomic::Atomic<uint64_t> reader_failures{0};
   rusty::sync::atomic::Atomic<uint64_t> reader_ops{0};
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
+  auto threads = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(
       kWriters + kReaders);
   for (int w = 0; w < kWriters; ++w) {
-    threads.push(rusty::thread::spawn([&, w]() {
+    threads.push_back(rusty::thread::spawn([&, w]() {
       const uint64_t base = kChurnBase + static_cast<uint64_t>(w) * kChurnPerWriter;
       while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
         for (uint64_t i = 0; i < kChurnPerWriter; ++i) {
@@ -132,7 +132,7 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
     }));
   }
   for (int r = 0; r < kReaders; ++r) {
-    threads.push(rusty::thread::spawn([&]() {
+    threads.push_back(rusty::thread::spawn([&]() {
       while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
         for (uint64_t k = 0; k < kStable; ++k) {
           TestTree::value_type out = nullptr;

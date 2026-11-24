@@ -62,8 +62,7 @@ jobs:
         with:
           submodules: recursive
 
-      # Every lane builds `mako`, whose srpc source gate runs ripgrep; the
-      # pinned image predates apt_packages.sh installing it.
+      # The pinned image predates the source-audit ripgrep dependency.
       - name: Container prerequisites
         shell: bash
         run: |
@@ -80,7 +79,7 @@ jobs:
           rg --version | head -1
 
       # Stable must be the release mainline's native sharding crate requires
-      # (src/cluster/Cargo.toml rust-version = 1.97.1); `mako` links it.
+      # (src/cluster/Cargo.toml rust-version = 1.97.1).
       - name: Install Rust workspace toolchain
         if: matrix.sanitizer == 'undefined'
         shell: bash
@@ -109,17 +108,8 @@ jobs:
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component clippy --component rustfmt \
             --component rust-src
-          # The Raft and native-sharding archives that reach dbtest are built
-          # with the selected sanitizer toolchain, against the one
-          # instrumented std the gate builds from its rust-src, like every
-          # other Cargo archive and test executable of the job
-          # (MAKO_CARGO_EXECUTABLE, MAKO_RUST_STO_RUSTUP_TOOLCHAIN and
-          # MAKO_RUST_STO_SYSROOT in CMakeLists.txt). Mainline's
-          # other Cargo edges, SRPC's crate mode and the source gates, go
-          # through the rustup proxy and so use the workspace-default
-          # toolchain (rust-toolchain.toml). Install that one once here so
-          # parallel build edges cannot race to auto-install it in the shared
-          # RUSTUP_HOME.
+          # All target crates, including Raft and native SRPC, use one
+          # instrumented std. Install the workspace pin for host-side tooling.
           workspace_toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           test -n "${workspace_toolchain}"
           "${CARGO_HOME}/bin/rustup" toolchain install "${workspace_toolchain}" \

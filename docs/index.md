@@ -1,3 +1,10 @@
+# Current native Rust implementation
+
+Start with the [repository README](../README.md), [development guide](developer/development.md)
+and [source retirement mapping](developer/native-rust-retirement.md). Older entries below
+include historical architecture and experiment reports; their C++ build instructions
+do not describe the current production path.
+
 # Mako Documentation
 
 Welcome to the Mako documentation.

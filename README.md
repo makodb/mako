@@ -1,214 +1,103 @@
 # Mako
 
-<div align="center">
+Mako runs its transaction manager, sharding and migration, replication host,
+RPC services, workloads and command-line programs as native Rust. SRPC builds
+through Cargo. Paxos and the C++ application backend have been removed.
 
-![CI](https://github.com/makodb/mako/actions/workflows/ci.yml/badge.svg)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![OSDI'25](https://img.shields.io/badge/OSDI'25-Mako-orange.svg)](#what-is-mako)
+C++ remains in Masstree, RocksDB and the storage ABI/runtime required by those
+engines. SRPC also has reviewed C platform bindings and context-switch assembly.
+The production build audits this boundary, including executable link maps.
 
-**High-Performance Distributed Transactional Key-Value Store with Geo-Replication**
+## Build and run
 
-[What is Mako?](#what-is-mako) | [Quick Start](#quick-start) | [Performance](#performance) | [Documentation](#documentation)
+Use the build container. The supported native SRPC platform is Linux on x86_64
+or aarch64. The workspace pins Rust 1.97.1; the storage build uses Clang/libc++.
 
-</div>
-
----
-
-## What is Mako?
-
-**Mako** is a high-performance distributed transactional key-value store system with geo-replication support, built on cutting-edge systems research.
-Mako's core design-level innovation is **decoupling transaction execution from replication** using a novel speculative 2PC protocol. Unlike traditional systems where transactions must wait for replication and persistence before committing, Mako allows distributed transactions to execute speculatively without blocking on cross-datacenter consensus. Transactions run at full speed locally while replication happens asynchronously in the background, achieving fault-tolerance without sacrificing performance. The system employs novel mechanisms to prevent unbounded cascading aborts when shards fail during replication, ensuring both high throughput (processing **3.66M TPC-C transactions per second** with 10 shards replicated across the continent) and strong consistency guarantees. More details can be found in our [OSDI'25 paper](https://www.usenix.org/conference/osdi25/presentation/shen-weihai).
-
----
-
-## Quick Start
-
-**Prerequisites:** Debian 12 / Ubuntu 24.04 (Linux) or macOS (Apple Silicon)
-
-```bash
-# Clone with submodules
-git clone --recursive https://github.com/makodb/mako.git
-cd mako
-
-# Install dependencies (choose ONE based on your OS)
-# Linux (Debian/Ubuntu):
-bash apt_packages.sh
-
-# macOS (Homebrew):
-bash brew_packages.sh
-
-# Installs official Rust 1.97.1 (with rust-src, clippy and rustfmt) into
-# ~/.local-rust from static tarballs; no rustup.
-source install_rustc.sh
-bash src/mako/update_config.sh
-
-# Build
-make -j32
-
-# Run tests
-./docker_build.sh ci all
+```sh
+git submodule update --init --recursive
+./docker_build.sh build
+./docker_build.sh ci nativeRust
 ```
 
-Notes:
+Inside the container, the equivalent default build is:
 
-Native Rust sharding has separate reproducible Docker gates:
-
-```bash
-# Pinned Verus production modules/refinement, independent model and controls,
-# then locked native Rust tests. No C++ rebuild is needed for this gate.
-./docker_build.sh ci nativeShardingProof
-
-# Build and exercise real MBTA/STO storage with native Rust and loopback srpc.
-./docker_build.sh ci nativeShardingSmoke
-# Reuse an existing Docker build:
-./docker_build.sh ci-quick nativeShardingSmoke
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 4
+BUILD_DIR=build bash ci/native_rust.sh all
 ```
 
-The native epoch smoke exercises two fixed shard processes and then
-two participants in one process, with raw-range and warehouse handoff/return, values and absence
-(including destination-only stale rows), post-handoff writes/deletes,
-paginated forward/reverse scans (including unbounded warehouse scans with
-empty and binary maximum keys), increasing ownership versions, rejection of
-old grants, retained nonce outcomes and a retained-epoch abort. Logs are retained
-under `build_docker/native-sharding-smoke/`. Its dedicated fixture uses the
-same production engine, native host and control RPC as dbtest; its point/scan
-assertions execute on the current owner's actual index. A fixture-only wrapper
-forwards the actual source Commit through srpc, then drops its first successful
-reply at the native callback boundary (returns I/O failure without calling the
-Rust sink). The test requires a real retransmission and the identical retained
-cleanup receipt. It records actually issued Start/Final/Commit/Abort payloads
-and replays those unchanged through the original RPC callback after owner return
-or a later committed generation, checking epochs, values and absence again.
-This is callback-boundary transport-loss injection, not a physical TCP packet
-drop, and is distinct from duplicate admin begin/poll tests. The fixture does
-not replace the separate dbtest/FastTransport distributed transaction tests.
-Live migration is supported only for nonreplicated fixed live processes;
-ordinary replicated workloads remain supported with migration disabled.
+`NATIVE_RUST` is the default CMake profile. `ROCKSDB_RAFT` builds the direct
+RocksDB service without Masstree. The retired `MAKO` profile is rejected.
 
-The native cutover contract uses epoch-cached immutable admission via
-`src/mako/lib/sharding_admission.{h,cc}` and `sharding_admission_enabled`.
-After STO sample/announce/recheck, `mako_sharding_read_begin(owner, epoch, out)`
-reuses a TLS read view on an owner/integer-epoch cache hit; route/point/range/live
-read APIs replace per-access production leases and hints. Full metadata
-certification occurs at publication; worker refresh takes an Arc to that view
-without recopying its maps. Read end follows actual engine and terminal RPC cleanup.
-The fixed epoch/lifetime work is nonzero;
-ordinary STO synchronization remains, without epoch-at-commit equality.
+Run a two-shard transaction example or a TPC-C workload inside the container:
 
-Migration privately pre-copies while the source serves, publishes Frozen before
-cutting that same STO clock, and drains the oldest retained worker pins through
-effects and cleanup. It joins/fences pre-copy by generation/round before a full
-exact final scan, including destination-only deletes; this is not a dirty-only
-delta. Volatile pins are not crash recovery. Metadata reopen remains
-inspection-only, and the conditional durable lease/recovery library retains its
-separate stronger assumptions.
+```sh
+python3 examples/run_native.py transactions --build build --shards 2 --workers 3 --count 50
+python3 examples/run_native.py tpcc --build build --shards 2 --workers 3 --count 500
+python3 examples/run_native.py transactions --build build --shards 2 --replicas 3 --colocated
+```
 
-Fresh Docker smoke passed for the epoch cutover: timer-spanning commits,
-retained epochs across OCC retry/cleanup, idle helpers, colocated owners,
-post-Frozen first access through an older complete view, private pre-copy
-followed by source inserts/updates/deletes, exact final absence, delayed-job
-rejection, and four metadata SIGKILL/reopen fencing cases. Engine/RCU regressions
-also exercise nested guards and reclamation behind a newer reader. Native memory
-ordering and distributed OCC remain foreign proof boundaries. See the
-[checked results](tla/mako/README.md#checked-results) and
-[matched performance comparison](docs/architecture/sharding-migration.md#engine-epoch-comparison-2026-10-21);
-neither the proofs nor these smoke cases claim zero overhead.
+The launcher assigns ports, writes configuration under `build/runs`, owns its
+child processes and retains diagnostics on failure. Add `--persistent` for
+local disk persistence, or `--replicas 3` for Raft replication. Use `--help` for
+configuration, duration and CPU-throttling options. The familiar
+`examples/test_*.sh` workload entry points use this launcher.
 
-`src/cluster/Cargo.lock` pins the standard Rust staticlib dependencies. This
-crate is not transpiled and does not change SRPC/rusty-cpp pins. The proof gate
-attests the Verus `0.2026.08.02.b677dd5` release archive by SHA-256, uses Rust
-`1.97.1`, and verifies `src/cluster/lib.rs` without module filters or verifier
-resource overrides. Native transport/thread/lifetime/engine boundary code
-outside Verus is not claimed as verified handler logic; the source-coverage
-audit is not itself a proof.
-Native source histories construct the independent **placement** refinement from
-actor and engine effects; they also establish canonical byte-value and ordered
-scan correspondence. Separate sharding protocols prove recovery, configured-owner
-lifecycle, conditional progress and administrative retention against explicit
-transaction/Raft/storage interfaces. Those interfaces do not make the current
-live-only native adapter crash-safe or reclaim its participant journals.
-See [the proof scopes, contracts and checked results](tla/mako/README.md)
-for the exact guarantees and trusted boundaries.
+## Programs
 
-The native build uses ordinary `cargo`/`rustc` from `PATH` (minimum Rust
-`1.97.1`), including the Docker image's official `/opt/rust` tarball installation;
-rustup is not required. Verification requires exactly `1.97.1` and uses the
-pinned launcher's supported `VERUS_USE_RUSTUP=0` mode with that compiler's real
-sysroot and driver library. An older image must be rebuilt before running the
-proof gate.
+| Program | Purpose |
+| --- | --- |
+| `mako_node` | Native shard server, optionally colocating shards |
+| `mako_bench` | TPC-C and micro workloads and resumable loaders |
+| `mako_transactions` | Distributed transaction example and invariant checks |
+| `mako_redis` | Redis-compatible server, including transactional MULTI/EXEC |
+| `mako_client`, `mako_admin` | Gateway operations and sharding administration |
+| `mako-cache-bench`, `engine_compare`, `gc_soak` | Storage/cache measurements |
+| `rocksdb_raft_server`, `rocksdb_raft_client`, `rocksdb_raft_bench` | Direct RocksDB/Raft service and measurements |
 
----
+Each program documents its arguments with `--help`. Runtime configuration and
+CLI compatibility live in `crates/mako-runtime/src/configuration.rs` and `configuration/cli.rs`.
 
-## Performance
+## Tests and proofs
 
-Results from OSDI'25 evaluation (TPC-C benchmark on Azure):
+Transaction-manager tests use synthetic datatypes and do not link Masstree.
+Masstree component tests, application adapters and runtime integration run as
+separate gates. Tests that poison process-wide native state run in fresh
+processes.
 
-| Configuration | Throughput |
-|--------------|------------|
-| Single Shard (24 threads) | **960K TPS** |
-| 10 Shards Geo-Replicated | **3.66M TPS** |
+```sh
+# Inside the container, after building:
+BUILD_DIR=build bash ci/native_rust.sh components
+BUILD_DIR=build bash ci/native_rust.sh storage
+BUILD_DIR=build bash ci/native_rust.sh runtime
+BUILD_DIR=build bash ci/native_rust.sh workloads
+BUILD_DIR=build bash ci/native_rust.sh audit
+bash ci/native_rust.sh srpc
+bash ci/native_rust.sh proofs
+bash ci/rocksdb_raft.sh
+```
 
----
+The sanitizer workflow runs ASan, UBSan and TSan separately. ASan/TSan use a
+pinned nightly and an instrumented standard library. UBSan instruments the
+native code; stable Rust has no UBSan compiler mode. See
+[sanitizer instructions](scripts/ci/rust_sto_cache_sanitizers.md).
 
-## Key Features
+## Current behavior and limits
 
-- **Serializable Transactions** - Full ACID with strongest isolation
-- **Geo-Replication** - Multi-datacenter with configurable consistency
-- **Replication by Consensus** - Raft is the supported, tested engine and the default; Paxos is deprecated (still built, no longer tested, runs only when selected explicitly)
-- **High-Performance Storage** - Masstree in-memory index, RocksDB persistence
-- **Horizontal Scalability** - Automatic sharding across nodes
-- **Advanced Networking** - DPDK/RDMA support for ultra-low latency
+- Raft is the supported replication protocol. Unknown installed outcomes fence
+  the affected runtime rather than report a successful abort.
+- Live migration supports volatile, unreplicated shards. Replicated or locally
+  persistent migration is rejected. Reopening migration metadata alone does
+  not recover row data.
+- The gateway's operation API commits each operation. Its session grouping does
+  not undo already committed operations. Redis MULTI/EXEC uses a distributed
+  transaction.
+- Native durable formats are not compatible with the retired C++ WAL. This
+  migration does not add a durable distributed coordinator recovery protocol.
 
----
-
-## Use Cases
-
-### Distributed RocksDB Alternative
-
-Mako provides a familiar key-value API with distributed transactions, geo-replication, and fault tolerance. Perfect for applications that need:
-- **Horizontal scalability** across multiple nodes
-- **ACID transactions** spanning multiple keys or partitions
-- **Geographic replication** for disaster recovery
-
-### Redis Alternative with Transactions
-
-Mako includes a Redis-compatible layer for:
-- **Strong consistency** with serializable transactions
-- **Multi-key atomic operations** with full ACID guarantees
-- **Geographic distribution** with automatic failover
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Full Documentation](docs/index.md) | Complete documentation index |
-| [Developer Guide](docs/developer/development.md) | Build system, testing, architecture |
-| [Transport Backends](docs/developer/transport-backends.md) | RPC and networking options |
-| [Porting C++ to an Inline-Rust DSL](docs/porting-cpp-to-rust-dsl.md) | How new code is authored: the rusty-cpp DSL field guide |
-| [CLAUDE.md](CLAUDE.md) | Codebase guidelines for AI assistants |
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make changes with tests
-4. Ensure tests pass (`./docker_build.sh ci all`)
-5. Submit a pull request
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-## Acknowledgments
-
-- **Research Team**: Mako research and development team
-- **Historical lineage**: Mako was derived from the original Janus codebase; the standalone Janus protocol implementation is retired
-- **Dependencies**: Masstree, RocksDB, eRPC, and other open-source projects
+See [development](docs/developer/development.md),
+[native source retirement and test mapping](docs/developer/native-rust-retirement.md),
+and the [implementation plan and evidence](docs/plans/native-rust-production.md).
+Historical experiment reports describe their recorded revisions; their
+performance figures do not measure the current native Rust application.

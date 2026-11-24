@@ -26,36 +26,20 @@ Environment:
   CMAKE_GENERATOR=Ninja         This gate audits Ninja's generated commands.
 
 Coverage contract:
-  * First-party C and C++ boundary and workload code compiled by the selected
-    CMake targets receives the selected sanitizer's compiler instrumentation.
-  * rust_sto_integration runs the Rust transaction workspace, instrumented
-    native Masstree tests, and Rust adapter/cache model replay. Transaction
-    algorithms use in-memory datatypes independently of the native tree.
-  * Every registered CTest carrying the exact "rust" label runs. This picks
-    up the Rust TPC-C slow-exit and workload smoke tests when CMake registers
-    them, without maintaining a second test-name list here.
-  * ASan and TSan compiler-instrument first-party Rust code and a Rust
-    standard library that the gate rebuilds once with the pinned nightly into
-    a private sysroot. Every Cargo command of the job compiles against that
-    sysroot, the Rust staticlibs libmako.a links included, so each executable
-    carries exactly one std; the symbol audit checks the archives and the
-    mixed-language executables. Rust test binaries and native executables use
-    the external Clang sanitizer runtime so each mixed-language process has
-    one runtime.
-  * Linux links explicitly select the GNU unwinder through a retained Clang
-    configuration; this does not replace the external Clang sanitizer runtime.
-  * ASan leak detection remains enabled for the workspace sweep, native runner,
-    and every Rust-labeled CTest. Exact intentional-quarantine tests are skipped
-    in the sweep and rerun one-by-one with only leak reporting disabled. The
-    native facades use Rust with leak detection enabled. Exact Rust TPC-C lifecycle
-    tests use one checked-in LSan
-    constructor suppression for native Masstree roots retained until exit.
-  * The UBSan job compiler-instruments native C and C++ code. Stable Rust 1.97
-    has no UBSan compiler mode, so Rust-owned test executables only link the
-    same Clang UBSan runtime to exercise calls into instrumented native code.
-  * ASan, UBSan, and TSan use the checked-in, sanitizer-specific Masstree
-    suppressions described above. Findings matched by those files qualify the
-    affected result and are audited by this gate.
+  * Production Masstree storage and SRPC's C/assembly platform code receive
+    the selected compiler instrumentation. Rust applications use native SRPC.
+  * Transaction-manager tests have no native linkage. Tree, adapter, runtime
+    and executable-process tests run separately, one test per fresh process.
+  * ASan/TSan instrument Rust and one pinned, rebuilt standard library in a
+    private sysroot. Final binaries use the external Clang sanitizer runtime;
+    the gate audits native/Rust hooks and the single std identity.
+  * UBSan instruments native C/C++; stable Rust has no UBSan compiler mode.
+  * ASan retains leak detection. Only exact inventoried intentional-quarantine
+    cases disable leak reporting; all remain compiler-instrumented and execute.
+  * The cache gate retains its allocation-root suppressions, leak tripwire,
+    exact quarantine inventories and separately executed Loom models.
+  * Native Masstree TSan/UBSan suppressions remain explicit and recorded.
+    Cache tests remove them and use their own narrower qualification.
 
 EOF
 }
@@ -416,177 +400,8 @@ run_logged() {
     "$@" 2>&1 | tee "${build_dir}/sanitizer-logs/${log_name}.log"
 }
 
-run_asan_quarantine_tests() {
-    local asan_quarantine_options
-    local quarantine_case
-    local quarantine_name
-    local quarantine_package
-    local quarantine_suite
-    local -a quarantine_target
-
-    asan_quarantine_options="${ASAN_OPTIONS/detect_leaks=1/detect_leaks=0}"
-    if [[ "${asan_quarantine_options}" == "${ASAN_OPTIONS}" ]]; then
-        echo "ASAN_OPTIONS must contain detect_leaks=1 before quarantine reruns" >&2
-        return 1
-    fi
-    for quarantine_case in "${asan_quarantine_cases[@]}"; do
-        IFS='|' read -r quarantine_package quarantine_suite quarantine_name \
-            <<<"${quarantine_case}"
-        quarantine_target=(--test "${quarantine_suite}")
-        if [[ "${quarantine_suite}" == "lib" ]]; then
-            quarantine_target=(--lib)
-        fi
-        printf 'Running leak-qualified ASan test %s::%s::%s\n' \
-            "${quarantine_package}" "${quarantine_suite}" "${quarantine_name}"
-        if ! env "${rust_command_environment[@]}" \
-            "${workspace_native_environment[@]}" \
-            ASAN_OPTIONS="${asan_quarantine_options}" \
-            CARGO_TARGET_DIR="${build_dir}/rust-workspace-target" \
-                "${selected_cargo}" test \
-                --manifest-path "${repo_root}/crates/Cargo.toml" \
-                --locked \
-                --target "${rust_target}" \
-                --package "${quarantine_package}" \
-                "${quarantine_target[@]}" \
-                --all-features \
-                "${quarantine_name}" \
-                -- \
-                --exact \
-                --include-ignored \
-                --test-threads=1; then
-            echo "leak-qualified ASan test failed: ${quarantine_suite}::${quarantine_name}" >&2
-            return 1
-        fi
-    done
-}
-
-audit_asan_quarantine_skips() {
-    local global_list_log="${build_dir}/sanitizer-logs/asan-workspace-test-list.log"
-    local quarantine_case
-    local quarantine_package
-    local quarantine_suite
-    local quarantine_name
-    local suite_key
-    local suite_log
-    local -a suite_cases
-    local -a quarantine_target
-    declare -A suites_seen=()
-
-    run_logged asan-workspace-test-list \
-        env "${rust_command_environment[@]}" \
-            "${workspace_native_environment[@]}" \
-            ASAN_OPTIONS="${ASAN_OPTIONS}" \
-            CARGO_TARGET_DIR="${build_dir}/rust-workspace-target" \
-            "${selected_cargo}" test \
-            --manifest-path "${repo_root}/crates/Cargo.toml" \
-            --workspace \
-            --exclude sto-tpcc-ffi \
-            --exclude mako-engine --exclude mako-engine-sto \
-            --exclude mako-cache --exclude mako-cache-bench \
-            --exclude sto-rocksdb --exclude raft-host \
-            --exclude rocksdb-raft-service \
-            --all-targets \
-            --all-features \
-            --locked \
-            --target "${rust_target}" \
-            -- \
-            --list \
-            --format terse
-
-    python3 - "${global_list_log}" "${asan_quarantine_cases[@]}" <<'PY'
-import pathlib
-import sys
-
-listed = []
-for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    if line.endswith(": test"):
-        listed.append(line.removesuffix(": test"))
-
-if not listed:
-    raise SystemExit("ASan workspace listing returned no tests")
-for identity in sys.argv[2:]:
-    package, suite, expected = identity.split("|", 2)
-    matches = [name for name in listed if expected in name]
-    if matches != [expected]:
-        raise SystemExit(
-            f"ASan --skip {expected!r} from {package}|{suite} matched "
-            f"{matches!r}, expected exactly [{expected!r}]"
-        )
-print(f"verified {len(sys.argv) - 2} ASan workspace quarantine skip matches")
-PY
-
-    for quarantine_case in "${asan_quarantine_cases[@]}"; do
-        IFS='|' read -r quarantine_package quarantine_suite quarantine_name \
-            <<<"${quarantine_case}"
-        suite_key="${quarantine_package}|${quarantine_suite}"
-        if [[ -n "${suites_seen[${suite_key}]:-}" ]]; then
-            continue
-        fi
-        suites_seen["${suite_key}"]=1
-        quarantine_target=(--test "${quarantine_suite}")
-        if [[ "${quarantine_suite}" == "lib" ]]; then
-            quarantine_target=(--lib)
-        fi
-        suite_log="${build_dir}/sanitizer-logs/asan-suite-list-${quarantine_package}-${quarantine_suite}.log"
-        run_logged "asan-suite-list-${quarantine_package}-${quarantine_suite}" \
-            env "${rust_command_environment[@]}" \
-                "${workspace_native_environment[@]}" \
-                ASAN_OPTIONS="${ASAN_OPTIONS}" \
-                CARGO_TARGET_DIR="${build_dir}/rust-workspace-target" \
-                "${selected_cargo}" test \
-                --manifest-path "${repo_root}/crates/Cargo.toml" \
-                --locked \
-                --target "${rust_target}" \
-                --package "${quarantine_package}" \
-                "${quarantine_target[@]}" \
-                --all-features \
-                -- \
-                --list \
-                --format terse
-        suite_cases=()
-        for quarantine_case in "${asan_quarantine_cases[@]}"; do
-            if [[ "${quarantine_case}" == "${suite_key}|"* ]]; then
-                suite_cases+=("${quarantine_case}")
-            fi
-        done
-        python3 - "${suite_log}" "${suite_cases[@]}" <<'PY'
-import pathlib
-import sys
-
-listed = [
-    line.removesuffix(": test")
-    for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
-    if line.endswith(": test")
-]
-for identity in sys.argv[2:]:
-    package, suite, expected = identity.split("|", 2)
-    exact = [name for name in listed if name == expected]
-    if exact != [expected]:
-        raise SystemExit(
-            f"ASan exact rerun target {identity!r} appears {len(exact)} times "
-            "in its declared suite"
-        )
-print(f"verified {len(sys.argv) - 2} exact ASan rerun targets")
-PY
-    done
-}
-
-# An executable can hold only one Rust std, and libmako.a brings two Cargo
-# staticlibs (native sharding, the Raft runtime) into every native executable
-# and into the native Rust test executables. -Zbuild-std rebuilds std inside
-# each Cargo invocation with a crate hash taken from that invocation's profile,
-# so the release archives (sto-tpcc-ffi, native sharding, Raft, rust-lib) and
-# the dev-profile test executables would each carry a different std and fail
-# to link ("multiple definition of `rust_eh_personality'"). Build std once
-# instead, instrumented, into a sysroot that every Cargo command of this gate
-# selects with --sysroot (in RUSTFLAGS, beside an explicit --target, so build
-# scripts and proc-macros keep the toolchain's std). The profile keeps what
-# the former per-invocation stds checked: release optimization and line
-# tables (the sto-tpcc-ffi archive's std), debug assertions and overflow
-# checks (the dev-profile test std), panic = "unwind". The panic_abort runtime
-# is compiled with -C panic=abort, as rustc's bootstrap does for the shipped
-# std, so the panic = "abort" Raft and sharding archives link against the same
-# std as the unwinding test executables.
+# Rebuild one instrumented standard library for every Cargo invocation in the
+# gate. Build scripts and proc-macros still use the host toolchain's library.
 build_rust_sanitizer_sysroot() {
     local seed="${build_dir}/rust-sanitizer-sysroot-seed"
     local wrapper="${build_dir}/rust-sanitizer-sysroot-rustc"
@@ -690,18 +505,6 @@ if [[ -n "${rust_std_sysroot}" ]]; then
     run_logged rust-sanitizer-sysroot build_rust_sanitizer_sysroot
 fi
 
-# An executable can hold one Rust std. Check it on the artifacts instead of
-# trusting the commands: every Rust archive and Rust executable of this job,
-# and every native executable that links Rust, must define symbols of exactly
-# the job's std (the sanitizer sysroot's, or the toolchain's prebuilt std for
-# UBSan) and, when linked, exactly one rust_eh_personality. v0 symbol names
-# spell std's crate disambiguator, so a second std, or any std other than the
-# job's (the toolchain's prebuilt std, a per-profile -Zbuild-std std), is
-# visible here. The crate hash does not cover RUSTFLAGS, so the sysroot's
-# instrumentation is checked separately. --must FILE: must carry the std.
-# --tree DIR: every ELF executable below DIR that carries Rust (a Rust
-# executable always defines std symbols), and at least one must. --may-dir
-# DIR: the executables directly in DIR, which may also carry no Rust.
 audit_one_rust_std() {
     local label="$1"
     shift
@@ -808,67 +611,15 @@ PY
 }
 
 run_logged configure \
-    cmake -S "${repo_root}" -B "${build_dir}" -G "${generator}" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    cmake -S "${repo_root}" -B "${build_dir}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DUSE_MALLOC_MODE=0 \
         "${native_unwind_cmake_arguments[@]}" \
-        "-DMAKO_ASAN:BOOL=${cmake_asan}" \
-        "-DMAKO_UBSAN:BOOL=${cmake_ubsan}" \
+        "-DMAKO_ASAN:BOOL=${cmake_asan}" "-DMAKO_UBSAN:BOOL=${cmake_ubsan}" \
         "-DMAKO_TSAN:BOOL=${cmake_tsan}" \
-        "-DMAKO_FUZZER:BOOL=OFF" \
-        "-DMAKO_CARGO_EXECUTABLE:FILEPATH=${selected_cargo}" \
-        "-DMAKO_RUST_STO_TARGET_TRIPLE:STRING=${rust_target}" \
-        "-DMAKO_RUST_STO_SYSROOT:PATH=${rust_std_sysroot}" \
-        "-DMAKO_RUST_STO_WORKSPACE_NATIVE_LINK:BOOL=${workspace_native_link}" \
-        "-DMAKO_RUST_STO_SANITIZER_RUSTFLAGS:STRING=${rustflags}" \
-        "-DMAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS:STRING=${rustdocflags}" \
-        "-DMAKO_RUST_STO_RUSTUP_TOOLCHAIN:STRING=${selected_rustup_toolchain}" \
-        "-DMAKO_RUST_STO_CARGO_LINKER_ENV:STRING=${rust_linker_environment}" \
-        "-DMAKO_RUST_STO_ASAN_QUARANTINE_TESTS:STRING=${asan_quarantine_cmake}" \
-        "-DMAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS:STRING=${asan_native_quarantine_cmake}" \
-        "-DMAKO_RUST_STO_ASAN_OPTIONS:STRING=${ASAN_OPTIONS:-}" \
-        "-DSTO_TPCC_RUST_EXTRA_RUSTFLAGS:STRING=${sto_tpcc_rustflags}"
-
-if ! grep -Fq "${configure_confirmation}" "${build_dir}/sanitizer-logs/configure.log"; then
-    echo "CMake did not confirm the requested ${sanitizer} instrumentation" >&2
-    exit 1
-fi
-
-# CMake may regenerate build files from Ninja after source-list changes. Prove
-# the native selector survives without the legacy environment toggle, while
-# the cached Rust sanitizer configuration remains in the same build tree.
-run_logged configure-regeneration \
-    env -u MAKO_ASAN -u MAKO_UBSAN -u MAKO_TSAN -u MAKO_FUZZER \
-        cmake -S "${repo_root}" -B "${build_dir}"
-if ! grep -Fq "${configure_confirmation}" \
-        "${build_dir}/sanitizer-logs/configure-regeneration.log"; then
-    echo "CMake regeneration lost the requested ${sanitizer} instrumentation" >&2
-    exit 1
-fi
-for selector_expectation in \
-        "MAKO_ASAN:${cmake_asan}" \
-        "MAKO_UBSAN:${cmake_ubsan}" \
-        "MAKO_TSAN:${cmake_tsan}" \
-        "MAKO_FUZZER:OFF"; do
-    IFS=: read -r selector expected_selector_value \
-        <<<"${selector_expectation}"
-    configured_selector_value="$(sed -n \
-        "s/^${selector}:BOOL=//p" "${build_dir}/CMakeCache.txt" | head -n 1)"
-    if [[ "${configured_selector_value}" != "${expected_selector_value}" ]]; then
-        echo "${selector} is ${configured_selector_value:-unset} after regeneration; expected ${expected_selector_value}" >&2
-        exit 1
-    fi
-done
-
-configured_workspace_native_link="$(sed -n \
-    's/^MAKO_RUST_STO_WORKSPACE_NATIVE_LINK:BOOL=//p' \
-    "${build_dir}/CMakeCache.txt" | head -n 1)"
-if [[ "${configured_workspace_native_link}" != "${workspace_native_link}" ]]; then
-    echo "CMake workspace native-link mode is ${configured_workspace_native_link:-unset}, expected ${workspace_native_link}" >&2
-    exit 1
-fi
-
+        "-DMAKO_NATIVE_CARGO:FILEPATH=${selected_cargo}"
+grep -Fq "Native storage sanitizer: ${sanitizer}" "${build_dir}/sanitizer-logs/configure.log"
+run_logged regenerate cmake -S "${repo_root}" -B "${build_dir}"
+grep -Fq "Native storage sanitizer: ${sanitizer}" "${build_dir}/sanitizer-logs/regenerate.log"
 rust_linker="$(sed -n 's/^CMAKE_C_COMPILER:[^=]*=//p' "${build_dir}/CMakeCache.txt" | head -n 1)"
 cxx_compiler="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' "${build_dir}/CMakeCache.txt" | head -n 1)"
 if [[ -z "${rust_linker}" || ! -x "${rust_linker}" ]]; then
@@ -951,1189 +702,134 @@ if [[ -n "${selected_rustup_toolchain}" ]]; then
     rust_command_environment+=("RUSTUP_TOOLCHAIN=${selected_rustup_toolchain}")
 fi
 
-# The legacy rust-lib archive is a dependency of dbtest. Audit its generated
-# command before starting the expensive build: every Cargo invocation must use
-# the already-selected executable, and nightly sanitizer jobs must pin the same
-# rustup toolchain. This prevents parallel build edges from racing to install
-# the workspace-default toolchain in the shared RUSTUP_HOME. The native
-# sharding and Raft staticlibs that libmako.a links follow the same rules, and
-# instrumented jobs build all three against the gate's sysroot: the job's
-# RUSTFLAGS (with --sysroot), an explicit --target, and a copy from
-# <triple>/release to the path CMake imports.
-rust_lib_command_log="${build_dir}/sanitizer-logs/rust-lib-build-command.txt"
-rust_staticlib_command_log="${build_dir}/sanitizer-logs/rust-staticlib-build-commands.txt"
-rust_lib_target_base="${repo_root}/rust-lib/target"
-if [[ -v CARGO_TARGET_DIR ]]; then
-    rust_lib_target_base="${CARGO_TARGET_DIR}"
-    if [[ "${rust_lib_target_base}" != /* ]]; then
-        rust_lib_target_base="${repo_root}/rust-lib/${rust_lib_target_base}"
-    fi
-fi
-rust_staticlib_rustflags=""
-if [[ -n "${rust_std_sysroot}" ]]; then
-    rust_staticlib_rustflags="${rustflags}"
-fi
-ninja -C "${build_dir}" -t commands rust_build >"${rust_lib_command_log}"
-ninja -C "${build_dir}" -t commands mako_sharding_rust_build raft_rust_build \
-    >"${rust_staticlib_command_log}"
-python3 - "${rust_lib_command_log}" "${rust_staticlib_command_log}" \
-    "${repo_root}" "${selected_cargo}" "${selected_rustup_toolchain}" \
-    "${rust_lib_target_base}" "${rust_staticlib_rustflags}" "${rust_target}" \
-    "${build_dir}" <<'PY'
-import pathlib
+# Cargo owns the Rust graph. CMake builds only the native storage dependency.
+run_logged native-build cmake --build "${build_dir}" --parallel "${jobs}" --target native_storage_source_audit
+python3 - "${build_dir}" "${sanitizer}" <<'PY'
+import json
+from pathlib import Path
 import shlex
 import sys
-
-(rust_lib_log, staticlib_log, repo_root, cargo, toolchain, rust_lib_target,
- rustflags, triple, build_dir) = sys.argv[1:]
-repo_root = pathlib.Path(repo_root).resolve()
-build_dir = pathlib.Path(build_dir).resolve()
-expected_cargo = pathlib.Path(cargo).resolve()
-expected_target_directory = pathlib.Path(rust_lib_target).resolve()
-toolchain_entries = [f"RUSTUP_TOOLCHAIN={toolchain}"] if toolchain else []
-sysroot_entries = [f"RUSTFLAGS={rustflags}"] if rustflags else []
-target_arguments = ["--target", triple] if rustflags else []
-
-
-def segments(line):
-    parts = [[]]
-    for token in shlex.split(line):
-        if token == "&&":
-            parts.append([])
-        else:
-            parts[-1].append(token)
-    return parts
-
-
-def split_cargo(label, segment):
-    if len(segment) < 4 or segment[1:3] != ["-E", "env"]:
-        raise SystemExit(f"{label} build does not use a scoped CMake environment")
-    cargo_indexes = [
-        index
-        for index, token in enumerate(segment)
-        if "=" not in token and pathlib.Path(token).name == "cargo"
-    ]
-    if len(cargo_indexes) != 1:
-        raise SystemExit(
-            f"{label} build must contain one Cargo executable, found {len(cargo_indexes)}"
-        )
-    index = cargo_indexes[0]
-    actual_cargo = pathlib.Path(segment[index]).resolve()
-    if actual_cargo != expected_cargo:
-        raise SystemExit(
-            f"{label} build selects {actual_cargo}, expected {expected_cargo}"
-        )
-    return segment[3:index], segment[index + 1 :]
-
-
-def check_copy(label, segment, source, destination):
-    if (
-        len(segment) != 5
-        or segment[1:3] != ["-E", "copy"]
-        or pathlib.Path(segment[3]).resolve() != source.resolve()
-        or pathlib.Path(segment[4]).resolve() != destination.resolve()
-    ):
-        raise SystemExit(
-            f"{label} must copy {source} to {destination}; found {segment!r}"
-        )
-
-
-commands = [
-    line for line in pathlib.Path(rust_lib_log).read_text(encoding="utf-8").splitlines() if line
-]
-if len(commands) != 1:
-    raise SystemExit(
-        f"expected one rust-lib build command, found {len(commands)}"
-    )
-parts = segments(commands[0])
-if len(parts) != (3 if rustflags else 2):
-    raise SystemExit(f"rust-lib build has unexpected commands: {parts!r}")
-working_directory_tokens = parts[0]
-expected_working_directory = (repo_root / "rust-lib").resolve()
-if (
-    len(working_directory_tokens) != 2
-    or working_directory_tokens[0] != "cd"
-    or pathlib.Path(working_directory_tokens[1]).resolve()
-    != expected_working_directory
-):
-    raise SystemExit(
-        f"rust-lib build directory is {working_directory_tokens!r}, "
-        f"expected {str(expected_working_directory)!r}"
-    )
-environment, arguments = split_cargo("rust-lib", parts[1])
-if arguments != ["build", "--release", "--locked", *target_arguments]:
-    raise SystemExit(
-        "rust-lib build must be an exact locked release build"
-        + (f" for --target {triple}" if rustflags else "")
-        + f"; found {arguments!r}"
-    )
-target_directory_entries = [
-    entry for entry in environment if entry.startswith("CARGO_TARGET_DIR=")
-]
-if len(target_directory_entries) != 1:
-    raise SystemExit(
-        "rust-lib build must select exactly one CARGO_TARGET_DIR; "
-        f"found {target_directory_entries!r}"
-    )
-actual_target_directory = pathlib.Path(
-    target_directory_entries[0].split("=", 1)[1]
-).resolve()
-if actual_target_directory != expected_target_directory:
-    raise SystemExit(
-        f"rust-lib target directory is {actual_target_directory}, "
-        f"expected {expected_target_directory}"
-    )
-other_entries = [
-    entry for entry in environment if not entry.startswith("CARGO_TARGET_DIR=")
-]
-if sorted(other_entries) != sorted(toolchain_entries + sysroot_entries):
-    raise SystemExit(f"rust-lib build has unexpected environment: {environment!r}")
-if rustflags:
-    check_copy(
-        "rust-lib",
-        parts[2],
-        expected_target_directory / triple / "release/librust_redis.a",
-        expected_target_directory / "release/librust_redis.a",
-    )
-print("verified pinned rust-lib Cargo command")
-
-staticlibs = {
-    "native sharding": (
-        repo_root / "src/cluster/Cargo.toml",
-        build_dir / "native-sharding",
-        "libmako_sharding.a",
-    ),
-    "Raft runtime": (
-        repo_root / "src/deptran/raft/rt/Cargo.toml",
-        build_dir / "raft-cargo",
-        "libraft_rt.a",
-    ),
-}
-staticlib_lines = [
-    line
-    for line in pathlib.Path(staticlib_log).read_text(encoding="utf-8").splitlines()
-    if "--manifest-path" in line
-]
-for label, (manifest, target_directory, archive) in staticlibs.items():
-    matches = [
-        line
-        for line in staticlib_lines
-        if any(
-            token.startswith("/") and pathlib.Path(token).resolve() == manifest
-            for token in shlex.split(line)
-        )
-    ]
-    if len(matches) != 1:
-        raise SystemExit(f"expected one {label} Cargo command, found {len(matches)}")
-    parts = segments(matches[0])
-    if parts[0][:1] == ["cd"]:
-        parts = parts[1:]
-    if len(parts) != (2 if rustflags else 1):
-        raise SystemExit(f"{label} build has unexpected commands: {parts!r}")
-    environment, arguments = split_cargo(label, parts[0])
-    environment = [
-        entry for entry in environment if not entry.startswith(("CC=", "AR="))
-    ]
-    if sorted(environment) != sorted(toolchain_entries + sysroot_entries):
-        raise SystemExit(f"{label} build has unexpected environment: {environment!r}")
-    if (
-        arguments[:1] != ["build"]
-        or "--release" not in arguments
-        or "--locked" not in arguments
-        or "--profile" in arguments
-        or any(argument.startswith("-Zbuild-std") for argument in arguments)
-    ):
-        raise SystemExit(f"{label} must be a locked release build: {arguments!r}")
-    targets = [
-        arguments[index + 1]
-        for index, argument in enumerate(arguments[:-1])
-        if argument == "--target"
-    ]
-    if targets != target_arguments[1:]:
-        raise SystemExit(f"{label} builds for {targets!r}, expected {target_arguments[1:]!r}")
-    directories = [
-        pathlib.Path(arguments[index + 1]).resolve()
-        for index, argument in enumerate(arguments[:-1])
-        if argument == "--target-dir"
-    ]
-    if directories != [target_directory]:
-        raise SystemExit(f"{label} target directory is {directories!r}, expected {target_directory}")
-    if rustflags:
-        check_copy(
-            label,
-            parts[1],
-            target_directory / triple / "release" / archive,
-            target_directory / "release" / archive,
-        )
-print("verified native sharding and Raft runtime Cargo commands")
+build, sanitizer = Path(sys.argv[1]), sys.argv[2]
+root = Path.cwd()
+required = {line for line in (root / 'cmake/native-storage-sources.txt').read_text().splitlines() if line and not line.startswith('#')}
+seen = set()
+for entry in json.loads((build / 'compile_commands.json').read_text()):
+    source = Path(entry['file']).resolve()
+    if not source.is_relative_to(root):
+        continue
+    name = source.relative_to(root).as_posix()
+    if name not in required:
+        raise SystemExit(f'unexpected native compiler input: {name}')
+    args = entry.get('arguments') or shlex.split(entry['command'])
+    if f'-fsanitize={sanitizer}' not in args or any(arg.startswith('-fno-sanitize') for arg in args):
+        raise SystemExit(f'native source lacks complete instrumentation: {name}')
+    seen.add(name)
+if seen != required:
+    raise SystemExit(f'missing native instrumentation: {required - seen}')
+print(f'verified all {len(seen)} native storage compilation commands')
 PY
 
-workspace_native_environment=()
-workspace_native_lib_dirs=""
-workspace_native_libs=""
-workspace_loader_environment=""
-workspace_loader_value=""
-if [[ "${workspace_native_link}" == "ON" ]]; then
-    cxx_compiler_root="$(cd "$(dirname "${cxx_compiler}")/.." && pwd)"
-    workspace_native_lib_dirs="${build_dir}:${build_dir}/src/masstree:${cxx_compiler_root}/lib"
-    workspace_native_libs="$(sed -n \
-        's/^MAKO_MTREE_RUST_NATIVE_LIBS:STRING=//p' \
-        "${build_dir}/CMakeCache.txt" | head -n 1)"
-    if [[ -z "${workspace_native_libs}" ]]; then
-        echo "could not resolve the CMake native library closure" >&2
-        exit 1
-    fi
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        workspace_loader_environment="DYLD_LIBRARY_PATH"
-    else
-        workspace_loader_environment="LD_LIBRARY_PATH"
-    fi
-    workspace_loader_value="${cxx_compiler_root}/lib"
-    if [[ -n "${!workspace_loader_environment:-}" ]]; then
-        workspace_loader_value+=":${!workspace_loader_environment}"
-    fi
-    workspace_native_environment=(
-        "MAKO_MTREE_NATIVE_INTEGRATION=1"
-        "MAKO_MTREE_NATIVE_LIB_DIRS=${workspace_native_lib_dirs}"
-        "MAKO_MTREE_NATIVE_LIBS=${workspace_native_libs}"
-        "${workspace_loader_environment}=${workspace_loader_value}"
-    )
-fi
-
+# Use the same Clang runtime for SRPC's C kernels and for the Rust executables.
+# This wrapper is retained with the evidence, so the platform code is not an
+# uninstrumented hole in the application tests.
+native_cc="${build_dir}/sanitizer-cc"
+printf '#!/usr/bin/env bash\nexec %q -fsanitize=%q -fno-omit-frame-pointer "$@"\n' \
+    "${rust_linker}" "${sanitizer}" >"${native_cc}"
+chmod +x "${native_cc}"
+libcxx_dir="$(dirname "$(dirname "$(readlink -f "${cxx_compiler}")")")/lib"
+export CC="${native_cc}" CXX="${cxx_compiler}"
+export MAKO_BUILD_DIR="${build_dir}" LIBCXX_DIR="${libcxx_dir}"
+export MAKO_MTREE_NATIVE_INTEGRATION=1
+export MAKO_MTREE_NATIVE_LIB_DIRS="${build_dir}:${libcxx_dir}"
+export MAKO_MTREE_NATIVE_LIBS="static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+export CARGO_TARGET_DIR="${build_dir}/rust-workspace-target"
+export CARGO_BUILD_JOBS="${jobs}"
+# Explicit --target keeps the private sysroot and instrumentation off host
+# proc-macros/build scripts, even when host and target triples are identical.
+rust_target="${rust_target:-${rust_sanitizer_target}}"
+export CARGO_BUILD_TARGET="${rust_target}"
+for setting in "${rust_command_environment[@]}"; do export "${setting}"; done
 manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
 {
     echo "commit=${head_sha}"
-    if [[ -n "${tree_status}" ]]; then
-        echo "worktree=dirty-local-diagnostic"
-    else
-        echo "worktree=clean"
-    fi
     echo "sanitizer=${sanitizer}"
-    echo "cmake_toggle=${cmake_toggle}=1"
-    echo "cmake_generator=${generator}"
-    echo "cmake_build_type=Release"
-    echo "transaction_backend=rust"
-    echo "tmpdir=${TMPDIR}"
-    echo "rustc=$("${selected_rustc}" --version)"
-    echo "cargo=$("${selected_cargo}" --version)"
-    echo "rust_compiler_instrumentation=${rust_instrumentation}"
-    echo "rust_target=${rust_target:-host-default}"
-    echo "rust_std=${rust_std_source}"
-    echo "rust_sysroot=${rust_std_sysroot:-toolchain}"
-    if [[ -n "${rust_std_sysroot}" ]]; then
-        echo "rust_sysroot_profile=release;opt-level=3;debug=1;debug-assertions=on;overflow-checks=on;codegen-units=1;lto=off;panic=unwind;panic_abort=abort"
-        echo "rust_sysroot_rustflags=${rust_std_rustflags}"
-    fi
-    echo "rust_workspace_native_link=${workspace_native_link}"
-    echo "rustup_toolchain=${selected_rustup_toolchain:-workspace-pinned-stable}"
+    echo "native_scope=Masstree-storage-and-SRPC-platform-kernels"
+    echo "rust_instrumentation=${rust_instrumentation}"
+    echo "rust_std_source=${rust_std_source}"
+    echo "rust_std_sysroot=${rust_std_sysroot}"
     echo "rust_runtime=${rust_runtime}"
-    echo "rust_linker=${rust_linker}"
-    echo "rust_linker_version=${rust_linker_version}"
-    echo "unwind_backend=${unwind_backend}"
-    echo "unwind_config=${unwind_config}"
-    echo "unwind_config_sha256=${unwind_config_sha256}"
-    echo "c_compiler=${rust_linker}"
-    echo "c_compiler_id=${c_compiler_id}"
-    echo "c_compiler_version=${c_compiler_version}"
-    echo "cxx_compiler=${cxx_compiler}"
-    echo "cxx_compiler_id=${cxx_compiler_id}"
-    echo "cxx_compiler_version=${cxx_compiler_version}"
-    echo "cxx_compiler_banner=${cxx_compiler_banner}"
     echo "rustflags=${rustflags}"
-    echo "rustdocflags=${rustdocflags}"
-    echo "sto_tpcc_rust_extra_rustflags=${sto_tpcc_rustflags}"
-    if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
-        echo "ctest_selection=none-focused-cargo-tests"
-    else
-        echo "ctest_selection=exact-masstree-c11-header;exact-silo-runtime-concurrency-lifecycle;exact-native-process-lifetime-lifecycle;exact-label-rust"
-    fi
-    if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
-        if [[ "${sanitizer}" == "address" ]]; then
-            echo "result_qualification=two-exact-process-lifetime-worker-allocation-roots;exact-poison-cases-leak-qualified;lost-payload-negative-control-required"
-            echo "suppression_file=${repo_root}/scripts/ci/rust_sto_cache_lsan.supp"
-        else
-            echo "result_qualification=no-sanitizer-suppressions"
-            echo "suppression_files=none"
-        fi
-    elif [[ "${sanitizer}" == "undefined" ]]; then
-        echo "result_qualification=checked-in-ubsan-suppressions-active"
-        echo "suppression_file=${ubsan_suppressions}"
-        echo "suppression_sha256=$(sha256sum "${ubsan_suppressions}" | awk '{print $1}')"
-    elif [[ "${sanitizer}" == "thread" ]]; then
-        echo "result_qualification=checked-in-tsan-suppressions-active"
-        echo "suppression_file=${tsan_suppressions}"
-        echo "suppression_sha256=$(sha256sum "${tsan_suppressions}" | awk '{print $1}')"
-    else
-        echo "result_qualification=checked-in-lsan-root-suppression-for-six-exact-tests;listed-intentional-quarantine-tests-leak-qualified;native-masstree-constructor-roots"
-        echo "suppression_file=${lsan_suppressions}"
-        echo "suppression_sha256=${lsan_suppression_sha256}"
-        echo "lsan_suppression_rule=leak:mt_tree::mt_tree"
-        echo "lsan_suppression_scope=test_sto_tpcc_default_slow_exit;test_sto_tpcc_default_multishard_slow_exit;test_sto_tpcc_rust_slow_exit;test_sto_tpcc_rust_concurrent;test_sto_tpcc_rust_run_resource_exhausted;test_sto_tpcc_rust_concurrent_resource_exhausted"
-        echo "lsan_options=${lsan_options}"
-        echo "lsan_expected_test_sto_tpcc_rust_slow_exit=allocations:4,bytes:1280"
-        echo "lsan_expected_test_sto_tpcc_rust_concurrent=allocations:16,bytes:5120"
-        echo "lsan_expected_test_sto_tpcc_rust_run_resource_exhausted=allocations:4,bytes:1280"
-        echo "lsan_expected_test_sto_tpcc_rust_concurrent_resource_exhausted=allocations:16,bytes:5120"
-        echo "lsan_expected_test_sto_tpcc_default_slow_exit=allocations:4,bytes:1280"
-        echo "lsan_expected_test_sto_tpcc_default_multishard_slow_exit=allocations:8,bytes:2560"
-        echo "lsan_expected_total=allocations:52,bytes:16640"
-        echo "asan_quarantine_test_count=${#asan_quarantine_cases[@]}"
-        echo "asan_quarantine_tests=${asan_quarantine_cmake}"
-        echo "asan_quarantine_allowlist=${quarantine_allowlist}"
-        echo "asan_quarantine_allowlist_sha256=$(sha256sum "${quarantine_allowlist}" | awk '{print $1}')"
-        echo "asan_native_quarantine_test_count=${#asan_native_quarantine_cases[@]}"
-        echo "asan_native_quarantine_tests=${asan_native_quarantine_cmake}"
-        echo "asan_native_non_quarantine_leak_detection=enabled"
-        echo "asan_native_exact_quarantine_leak_detection=disabled"
-        echo "asan_workspace_non_quarantine_leak_detection=enabled"
-        echo "asan_exact_quarantine_leak_detection=disabled"
-        echo "asan_ctest_rust_label_leak_detection=enabled"
-        echo "asan_ctest_remaining_rust_label_suppressions=none"
-    fi
-} | tee "${manifest}"
+    echo "target=${rust_target}"
+    echo "unwind_backend=${unwind_backend}"
+    echo "unwind_config_sha256=${unwind_config_sha256}"
+    echo "asan_options=${ASAN_OPTIONS:-}"
+    echo "ubsan_options=${UBSAN_OPTIONS:-}"
+    echo "tsan_options=${TSAN_OPTIONS:-}"
+    echo "gate_status=running"
+} >"${manifest}"
+trap 'status=$?; if (( status != 0 )); then echo "gate_status=failed:${status}" >>"${manifest}"; fi' EXIT
 
-if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
-    # The focused runner rejects fake linkage, audits exact test inventories,
-    # and records each leak-qualified rerun. It clears the legacy native
-    # TSan/UBSan suppression lists for these adapter/cache tests.
-    run_logged cache-build \
-        cmake --build "${build_dir}" --parallel "${jobs}" \
-            --target rust_sto_cache_integration
-    python3 - "${build_dir}/compile_commands.json" "-fsanitize=${sanitizer}" <<'PY'
-import json
-import pathlib
-import shlex
-import sys
-
-required = {
-    "src/mako/storage/mtree_abi.cc", "src/mako/allocator.cc",
-    "src/mako/core.cc", "src/mako/counter.cc", "src/mako/rcu.cc",
-    "src/mako/ticker.cc", "src/mako/silo_runtime.cc",
-    "src/masstree/masstree_context.cc",
-}
-seen = set()
-for entry in json.loads(pathlib.Path(sys.argv[1]).read_text()):
-    source = pathlib.Path(entry["file"]).resolve()
-    try:
-        relative = source.relative_to(pathlib.Path.cwd()).as_posix()
-    except ValueError:
-        continue
-    if relative not in required:
-        continue
-    tokens = entry.get("arguments") or shlex.split(entry["command"])
-    if relative.startswith("src/mako/") and not any("CMakeFiles/mako_mtree_boundary.dir/" in token for token in tokens):
-        continue
-    if sys.argv[2] not in tokens or any(token.startswith("-fno-sanitize") for token in tokens):
-        raise SystemExit(f"native adapter source lacks complete instrumentation: {relative}")
-    seen.add(relative)
-if seen != required:
-    raise SystemExit(f"native adapter compile commands missing: {sorted(required - seen)}")
-print("verified all seven native adapter translation units and Masstree context instrumentation")
-PY
-    printf '%s\n' "focused_scope=native-rust-adapter-and-cache" \
-        "focused_test_report=${build_dir}/rust-sto-cache-tests.json" >>"${manifest}"
-    verify_unwind_config
-    exit 0
+runner=(python3 "${repo_root}/scripts/ci/run_native_sanitizer_tests.py"
+    --cargo "${selected_cargo}" --manifest "${repo_root}/crates/Cargo.toml" --target "${rust_target}"
+    --quarantine "${quarantine_allowlist}"
+    --quarantine "${repo_root}/scripts/ci/native-adapter-quarantine-tests.txt")
+if [[ "${MAKO_SANITIZER_FOCUS:-}" != cache ]]; then
+    # No native environment in the transaction-manager gate. The following
+    # process groups explicitly exercise Masstree and the application adapter.
+    run_logged transactions env --unset=MAKO_MTREE_NATIVE_INTEGRATION \
+        --unset=MAKO_MTREE_NATIVE_LIB_DIRS --unset=MAKO_MTREE_NATIVE_LIBS \
+        "${runner[@]}" --package sto-core --package sto-test-datatypes --all-features \
+        --report "${build_dir}/sanitizer-logs/transactions.json"
+    run_logged tree "${runner[@]}" --package masstree --package sto-masstree --all-features \
+        --report "${build_dir}/sanitizer-logs/tree.json"
+    run_logged adapter "${runner[@]}" --package sto-tpcc-ffi --all-features \
+        --report "${build_dir}/sanitizer-logs/adapter.json"
+    run_logged runtime "${runner[@]}" --package mako-runtime --features replication \
+        --report "${build_dir}/sanitizer-logs/runtime.json"
 fi
+# Retains its separate unsanitized Loom executions, exact quarantine reruns,
+# two checked startup allocation roots and the unrelated-lost-buffer tripwire.
+run_logged cache python3 "${repo_root}/scripts/ci/run_rust_sto_cache_tests.py" \
+    --cargo "${selected_cargo}" --manifest-path "${repo_root}/crates/Cargo.toml" \
+    --target "${rust_target}" --report "${build_dir}/sanitizer-logs/cache.json"
 
-run_logged build \
-    cmake --build "${build_dir}" --parallel "${jobs}" \
-        --target rust_sto_integration dbtest rocksdbInterfaceTest \
-            test_silo_nontxn_api test_silo_runtime -- -k 0
-
-ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
-    rocksdbInterfaceTest test_silo_nontxn_api test_silo_runtime \
-    >"${build_dir}/sanitizer-logs/rust-sto-integration-build-commands.txt"
-python3 - "${build_dir}/sanitizer-logs/rust-sto-integration-build-commands.txt" \
-    "${rust_compiler_instrumented}" "${sanitizer}" \
-    "${rust_sanitizer_target}" "${asan_quarantine_cmake}" \
-    "${asan_native_quarantine_cmake}" \
-    "${rust_linker_environment}" "${rust_linker}" \
-    "${selected_rustup_toolchain}" "${workspace_native_lib_dirs}" \
-    "${workspace_native_libs}" "${workspace_loader_environment}" \
-    "${workspace_loader_value}" "${repo_root}" "${rustflags}" \
-    "${rustdocflags}" "${selected_cargo}" "${cxx_compiler}" \
-    "${rust_std_sysroot}" <<'PY'
-import pathlib
-import shlex
-import sys
-
-commands = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
-rust_compiler_instrumented = sys.argv[2] == "1"
-sanitizer = sys.argv[3]
-rust_target = sys.argv[4]
-quarantine_names = [name for name in sys.argv[5].split(";") if name]
-native_quarantine_names = [name for name in sys.argv[6].split(";") if name]
-linker_environment = sys.argv[7]
-rust_linker = sys.argv[8]
-rustup_toolchain = sys.argv[9]
-native_lib_dirs = sys.argv[10]
-native_libs = sys.argv[11]
-loader_environment = sys.argv[12]
-loader_value = sys.argv[13]
-repo_root = pathlib.Path(sys.argv[14]).resolve()
-rustflags = sys.argv[15]
-rustdocflags = sys.argv[16]
-selected_cargo = pathlib.Path(sys.argv[17]).resolve()
-cxx_compiler = pathlib.Path(sys.argv[18])
-rust_std_sysroot = sys.argv[19]
-build_dir = pathlib.Path(sys.argv[1]).resolve().parents[1]
-
-clippy_commands = [
-    line
-    for line in commands
-    if " clippy " in line
-    and "crates/Cargo.toml" in line
-]
-test_commands = [
-    line
-    for line in commands
-    if " test " in line
-    and " --workspace" in line
-    and " --exclude sto-tpcc-ffi" in line
-]
-if len(clippy_commands) != 1 or len(test_commands) != 1:
-    raise SystemExit(
-        "expected one selected-package Clippy and workspace test command, found "
-        f"{len(clippy_commands)} and {len(test_commands)}"
-    )
-
-expected_clippy_packages = {
-    "mako-history", "masstree", "mtree-sys", "sto-core", "sto-masstree",
-    "sto-test-datatypes", "sto-tpcc-ffi",
-}
-clippy_tokens = shlex.split(clippy_commands[0])
-actual_clippy_packages = {
-    clippy_tokens[index + 1]
-    for index, token in enumerate(clippy_tokens[:-1])
-    if token in ("-p", "--package")
-}
-if actual_clippy_packages != expected_clippy_packages:
-    raise SystemExit(f"Clippy package selection differs: {actual_clippy_packages!r}")
-for package in ("mako-engine", "mako-engine-sto", "mako-cache", "mako-cache-bench",
-                "sto-rocksdb", "raft-host", "rocksdb-raft-service"):
-    if f"--exclude {package}" not in test_commands[0]:
-        raise SystemExit(f"workspace all-features test did not exclude {package}")
-
-native_runner_commands = [
-    line for line in commands if "RunRustMasstreeNativeIntegration.cmake" in line
-]
-if len(native_runner_commands) != 1:
-    raise SystemExit(
-        "expected one Rust native runner command, found "
-        f"{len(native_runner_commands)}"
-    )
-native_runner_command = native_runner_commands[0]
-native_runner_tokens = shlex.split(native_runner_command)
-
-
-def cmake_definition(name):
-    prefix = f"-D{name}="
-    matches = [token[len(prefix):] for token in native_runner_tokens if token.startswith(prefix)]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"native Rust runner must define {name} exactly once; found {len(matches)}"
-        )
-    if not matches[0]:
-        raise SystemExit(f"native Rust runner defines an empty {name}")
-    return matches[0]
-
-
-expected_path_definitions = {
-    "MAKO_CARGO_EXECUTABLE": selected_cargo,
-    "MAKO_RUST_MANIFEST": repo_root / "crates/Cargo.toml",
-    "MAKO_CARGO_TARGET_DIR": build_dir / "rust-native-target",
-    "MAKO_ARCHIVE": build_dir / "libmako.a",
-    "MASSTREE_ARCHIVE": build_dir / "src/masstree/libmasstree.a",
-    "MAKO_CXX_RUNTIME_DIR": cxx_compiler.parent.parent / "lib",
-    "MAKO_RUST_LINKER": pathlib.Path(rust_linker),
-}
-for definition, expected_path in expected_path_definitions.items():
-    actual_path = pathlib.Path(cmake_definition(definition)).resolve()
-    if actual_path != expected_path.resolve():
-        raise SystemExit(
-            f"native Rust runner {definition} selects {actual_path}, "
-            f"expected {expected_path.resolve()}"
-        )
-
-expected_value_definitions = {
-    "MAKO_NATIVE_LIBS": (
-        "static=mako,static=masstree,dylib=c++,dylib=c++abi,"
-        "dylib=numa,dylib=pthread"
-    ),
-    "MAKO_RUST_LINKER_ENV_NAME": linker_environment,
-    "MAKO_RUSTFLAGS": rustflags,
-    "MAKO_RUSTDOCFLAGS": rustdocflags,
-}
-for definition, expected_value in expected_value_definitions.items():
-    actual_value = cmake_definition(definition)
-    if actual_value != expected_value:
-        raise SystemExit(
-            f"native Rust runner {definition} is {actual_value!r}, "
-            f"expected {expected_value!r}"
-        )
-
-expected_suite_paths = {
-    "MAKO_MASSTREE_NATIVE_TEST": repo_root
-    / "crates/masstree/tests/native_integration.rs",
-    "MAKO_STO_NATIVE_TEST": repo_root
-    / "crates/sto-masstree/tests/native_integration.rs",
-    "MAKO_STO_HISTORY_TEST": repo_root
-    / "crates/sto-masstree/tests/history_oracle.rs",
-    "MAKO_STO_TPCC_NATIVE_TEST": repo_root
-    / "crates/sto-tpcc-ffi/tests/native_ffi.rs",
-}
-for definition, expected_path in expected_suite_paths.items():
-    actual_path = pathlib.Path(cmake_definition(definition)).resolve()
-    if actual_path != expected_path:
-        raise SystemExit(
-            f"native Rust runner {definition} selects {actual_path}, expected {expected_path}"
-        )
-
-for label, command in (
-    ("Clippy", clippy_commands[0]),
-    ("test", test_commands[0]),
-):
-    if f"{linker_environment}={rust_linker}" not in command:
-        raise SystemExit(
-            f"workspace {label} command does not select CMake's Clang linker"
-        )
-    if "-fno-sanitize" in command:
-        raise SystemExit(f"workspace {label} command disables sanitizer coverage")
-if f"-DMAKO_RUST_LINKER_ENV_NAME={linker_environment}" not in native_runner_command:
-    raise SystemExit("native Rust runner lacks the Cargo linker environment")
-if f"-DMAKO_RUST_LINKER={rust_linker}" not in native_runner_command:
-    raise SystemExit("native Rust runner does not select CMake's Clang linker")
-if "-fno-sanitize" in native_runner_command:
-    raise SystemExit("native Rust runner disables sanitizer coverage")
-
-if rust_compiler_instrumented:
-    required = (
-        "MAKO_MTREE_NATIVE_INTEGRATION=1",
-        f"MAKO_MTREE_NATIVE_LIB_DIRS={native_lib_dirs}",
-        f"MAKO_MTREE_NATIVE_LIBS={native_libs}",
-        f"{loader_environment}={loader_value}",
-        f"-Zsanitizer={sanitizer}",
-        "-Zexternal-clangrt",
-        f"--sysroot={rust_std_sysroot}",
-        f"--target {rust_target}",
-        f"RUSTUP_TOOLCHAIN={rustup_toolchain}",
-    )
-    for label, command in (("Clippy", clippy_commands[0]), ("test", test_commands[0])):
-        missing = [fragment for fragment in required if fragment not in command]
-        if missing:
-            raise SystemExit(
-                f"workspace {label} command lacks sanitizer/native closure: "
-                + ", ".join(missing)
-            )
-        if "unsafe-allow-abi-mismatch" in command:
-            raise SystemExit(f"workspace {label} command waives a sanitizer ABI mismatch")
-    # One std for the whole job: the shared sysroot, never a per-invocation
-    # -Zbuild-std std.
-    for label, command in (
-        ("Clippy", clippy_commands[0]),
-        ("test", test_commands[0]),
-        ("native runner", native_runner_command),
-    ):
-        if "-Zbuild-std" in command or "MAKO_RUST_BUILD_STD" in command:
-            raise SystemExit(f"workspace {label} command rebuilds its own std")
-    expected_runner_definitions = {
-        "MAKO_RUST_TARGET_TRIPLE": rust_target,
-        "MAKO_RUSTUP_TOOLCHAIN": rustup_toolchain,
-    }
-    for definition, expected_value in expected_runner_definitions.items():
-        actual_value = cmake_definition(definition)
-        if actual_value != expected_value:
-            raise SystemExit(
-                f"native Rust runner {definition} is {actual_value!r}, "
-                f"expected {expected_value!r}"
-            )
-    if sanitizer == "address":
-        if "detect_leaks=1" not in test_commands[0]:
-            raise SystemExit("workspace ASan test command does not retain leak detection")
-        missing_skips = [
-            name for name in quarantine_names if f"--skip {name}" not in test_commands[0]
-        ]
-        if missing_skips:
-            raise SystemExit(
-                "workspace ASan test command lacks exact quarantine skips: "
-                + ", ".join(missing_skips)
-            )
-        if "detect_leaks=1" not in native_runner_command:
-            raise SystemExit("native ASan runner does not inherit leak detection")
-        missing_native_quarantines = [
-            name
-            for name in native_quarantine_names
-            if name not in native_runner_command
-        ]
-        if missing_native_quarantines:
-            raise SystemExit(
-                "native ASan runner lacks exact quarantine allowlist: "
-                + ", ".join(missing_native_quarantines)
-            )
-else:
-    for command in (*clippy_commands, *test_commands):
-        if "MAKO_MTREE_NATIVE_INTEGRATION=1" in command:
-            raise SystemExit("stable UBSan workspace unexpectedly enables native-gated targets")
-        if "-fsanitize=undefined" not in command:
-            raise SystemExit("stable UBSan workspace lacks the native runtime link flag")
-
-print("verified Rust workspace sanitizer and native-link environment")
-PY
-
-if [[ "${sanitizer}" == "address" ]]; then
-    run_logged asan-quarantine-preflight audit_asan_quarantine_skips
-    run_logged asan-quarantine-tests run_asan_quarantine_tests
-fi
-
-audit_one_rust_std rust-workspace \
-    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}"
-
-ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
-    rocksdbInterfaceTest test_silo_nontxn_api test_silo_runtime \
-    >"${build_dir}/sanitizer-logs/sto-tpcc-build-commands.txt"
-python3 - "${build_dir}/sanitizer-logs/sto-tpcc-build-commands.txt" \
-    "-fsanitize=${sanitizer}" "${rust_compiler_instrumented}" \
-    "${rust_sanitizer_target}" "${rust_linker_environment}" \
-    "${rust_linker}" "${selected_rustup_toolchain}" "${rust_std_sysroot}" <<'PY'
-import pathlib
+# Inspect instrumented objects and every target executable, including binaries
+# Cargo built for the native process tests. Host build scripts are separate.
+case "${sanitizer}" in
+    address) native_hook=' U __asan_(report|load|store|init)' ;;
+    thread) native_hook=' U __tsan_(read|write|func_entry|init)' ;;
+    undefined) native_hook=' U __ubsan_handle_' ;;
+esac
+"${cmake_nm}" -u "${build_dir}/libmako_native_storage.a" >"${build_dir}/sanitizer-logs/native-hooks.txt"
+grep -Eq "${native_hook}" "${build_dir}/sanitizer-logs/native-hooks.txt"
+if [[ "${rust_compiler_instrumented}" == 1 ]]; then
+    python3 - "${cmake_nm}" "${CARGO_TARGET_DIR}/${rust_target}" "${native_hook}" "${MAKO_SANITIZER_FOCUS:-}" <<'PY'
+from pathlib import Path
 import re
+import subprocess
 import sys
-
-commands = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
-required_flag = sys.argv[2]
-rust_compiler_instrumented = sys.argv[3] == "1"
-rust_target = sys.argv[4]
-linker_environment = sys.argv[5]
-rust_linker = sys.argv[6]
-rustup_toolchain = sys.argv[7]
-rust_std_sysroot = sys.argv[8]
-
-rust_builds = [line for line in commands if "--package sto-tpcc-ffi" in line]
-if len(rust_builds) != 1:
-    raise SystemExit(
-        f"expected one sto-tpcc-ffi Rust build command, found {len(rust_builds)}"
-    )
-rust_build = rust_builds[0]
-if f"{linker_environment}={rust_linker}" not in rust_build:
-    raise SystemExit("sto-tpcc-ffi Rust build does not select CMake's Clang linker")
-if "-fno-sanitize" in rust_build:
-    raise SystemExit("sto-tpcc-ffi Rust build disables sanitizer coverage")
-if rust_compiler_instrumented:
-    required_rust_fragments = (
-        f"-Zsanitizer={required_flag.removeprefix('-fsanitize=')}",
-        "-Zexternal-clangrt",
-        f"--sysroot={rust_std_sysroot}",
-        f"--target {rust_target}",
-        f"RUSTUP_TOOLCHAIN={rustup_toolchain}",
-    )
-    missing_rust = [item for item in required_rust_fragments if item not in rust_build]
-    if missing_rust:
-        raise SystemExit(
-            "sto-tpcc-ffi Rust build lacks compiler instrumentation: "
-            + ", ".join(missing_rust)
-        )
-    if "unsafe-allow-abi-mismatch" in rust_build:
-        raise SystemExit("sto-tpcc-ffi Rust build waives a sanitizer ABI mismatch")
-    if "-Zbuild-std" in rust_build:
-        raise SystemExit("sto-tpcc-ffi Rust build rebuilds its own std")
-else:
-    if required_flag not in rust_build:
-        raise SystemExit(f"sto-tpcc-ffi Rust build lacks linker flag {required_flag}")
-
-boundary_executables = (
-    "test_benchmark_output",
-    "dbtest",
-    "rocksdbInterfaceTest",
-    "sto_tpcc_bench",
-    "sto_tpcc_cpp_wrapper_smoke",
-    "sto_tpcc_cpp_wrapper_scan_smoke",
-    "test_mako_value_metadata",
-    "test_mtree_abi",
-    "test_mtree_abi_c11_header",
-    "test_silo_nontxn_api",
-    "test_silo_runtime",
-    "test_silo_varint",
-    "test_sto_tpcc_ffi_c11_header",
-)
-for executable in boundary_executables:
-    output_pattern = re.compile(rf"(?:^| )-o {re.escape(executable)}(?: |$)")
-    links = [line for line in commands if output_pattern.search(line)]
-    if len(links) != 1:
-        raise SystemExit(
-            f"expected one {executable} link command, found {len(links)}"
-        )
-    link = links[0]
-    if required_flag not in link.split():
-        raise SystemExit(f"{executable} native link lacks {required_flag}")
-    if "-fno-sanitize" in link:
-        raise SystemExit(f"{executable} native link disables sanitizer coverage")
-    if required_flag in ("-fsanitize=address", "-fsanitize=thread"):
-        allocator_tokens = ("jemalloc", "tcmalloc")
-        forbidden = [token for token in allocator_tokens if token in link]
-        if forbidden:
-            raise SystemExit(
-                f"{executable} sanitizer link retains an incompatible allocator: "
-                + ", ".join(forbidden)
-            )
-
-print("verified Rust archive sanitizer linkage and all boundary executable links")
+nm, target, pattern, focus = sys.argv[1:]
+required = ['sto_core', 'sto_masstree', 'masstree', 'mako_engine_sto', 'mako_cache']
+if focus != 'cache':
+    required += ['sto_tpcc_ffi', 'mako_runtime']
+for crate in required:
+    archives = sorted(Path(target).glob(f'debug/deps/lib{crate}-*.rlib'))
+    if not archives:
+        raise SystemExit(f'missing instrumented crate: {crate}')
+    for archive in archives:
+        symbols = subprocess.check_output([nm, '-u', archive], text=True, stderr=subprocess.DEVNULL)
+        if not re.search(pattern, symbols):
+            raise SystemExit(f'no compiler sanitizer hooks in {archive}')
+print('verified first-party Rust sanitizer hooks')
 PY
-
-if [[ "${rust_compiler_instrumented}" == "1" ]]; then
-    rust_target_dir="$(sed -n 's/^STO_TPCC_RUST_TARGET_DIR:[^=]*=//p' \
-        "${build_dir}/CMakeCache.txt" | head -n 1)"
-    cmake_nm="$(sed -n 's/^CMAKE_NM:[^=]*=//p' \
-        "${build_dir}/CMakeCache.txt" | head -n 1)"
-    rust_archive="${rust_target_dir}/${rust_target}/release/libsto_tpcc_ffi.a"
-    if [[ -z "${rust_target_dir}" || ! -f "${rust_archive}" ]]; then
-        echo "instrumented Rust static archive is missing: ${rust_archive}" >&2
-        exit 1
-    fi
-    if [[ -z "${cmake_nm}" || ! -x "${cmake_nm}" ]]; then
-        echo "could not resolve CMake's symbol inspector" >&2
-        exit 1
-    fi
-
-    undefined_symbols="${build_dir}/sanitizer-logs/sto-tpcc-rust-undefined-symbols.txt"
-    defined_symbols="${build_dir}/sanitizer-logs/sto-tpcc-rust-defined-symbols.txt"
-    "${cmake_nm}" -u "${rust_archive}" >"${undefined_symbols}"
-    "${cmake_nm}" --defined-only "${rust_archive}" >"${defined_symbols}"
-    if [[ "${sanitizer}" == "address" ]]; then
-        hook_pattern='__asan_report_(load|store)'
-        runtime_pattern=' [TW] __asan_init$'
-    else
-        hook_pattern='__tsan_(read|write)'
-        runtime_pattern=' [TW] __tsan_init$'
-    fi
-    if ! grep -Eq "${hook_pattern}" "${undefined_symbols}"; then
-        echo "Rust static archive has no ${sanitizer} compiler hooks" >&2
-        exit 1
-    fi
-    if grep -Eq "${runtime_pattern}" "${defined_symbols}"; then
-        echo "Rust static archive bundled a conflicting ${sanitizer} runtime" >&2
-        exit 1
-    fi
-    echo "verified Rust ${sanitizer} hooks and external runtime ownership"
 fi
-
-# Rust artifacts of the build step (the workspace target directory is checked
-# with the native ABI suites below). Instrumented jobs pass --target, so their
-# target artifacts sit below <target-dir>/<triple>; build scripts and
-# proc-macros, which keep the toolchain's std, stay outside it.
-rust_target_subdir="${rust_target:+${rust_target}/}"
-sto_tpcc_target_dir="$(sed -n 's/^STO_TPCC_RUST_TARGET_DIR:[^=]*=//p' \
-    "${build_dir}/CMakeCache.txt" | head -n 1)"
-audit_one_rust_std build \
-    --must "${rust_lib_target_base}/release/librust_redis.a" \
-        "${build_dir}/native-sharding/release/libmako_sharding.a" \
-        "${build_dir}/raft-cargo/release/libraft_rt.a" \
-        "${sto_tpcc_target_dir}/${rust_target_subdir}release/libsto_tpcc_ffi.a" \
-        "${build_dir}/dbtest" "${build_dir}/sto_tpcc_bench" \
-        "${build_dir}/sto_tpcc_cpp_wrapper_smoke" \
-        "${build_dir}/sto_tpcc_cpp_wrapper_scan_smoke" \
-    --tree "${build_dir}/rust-native-target/${rust_target_subdir}" \
-        "${build_dir}/rust-cache-target/${rust_target_subdir}" \
-    --may-dir "${build_dir}"
-
-# Do not trust the toggle alone. Confirm that every boundary translation unit
-# actually received the sanitizer flag in this generated build.
-python3 - "${build_dir}/compile_commands.json" "-fsanitize=${sanitizer}" <<'PY'
-import json
-import pathlib
-import shlex
-import sys
-
-database_path = pathlib.Path(sys.argv[1])
-required_flag = sys.argv[2]
-required_sources = {
-    "crates/sto-tpcc-ffi/tests/cpp_wrapper_fixed_read_smoke.cc",
-    "crates/sto-tpcc-ffi/tests/cpp_wrapper_scan_smoke.cc",
-    "examples/rocksdbInterfaceTest.cc",
-    "src/mako/benchmarks/bench.cc",
-    "src/mako/benchmarks/dbtest.cc",
-    "src/mako/benchmarks/rpc_setup.cc",
-    "src/mako/benchmarks/sync_util_init.cc",
-    "src/mako/benchmarks/tpcc.cc",
-    "src/mako/lib/server.cc",
-    "src/mako/silo_runtime.cc",
-    "src/mako/runtime/epoch.cc",
-    "src/mako/runtime/ReplayDB.cc",
-    "src/mako/runtime/ThreadPool.cc",
-    "src/mako/runtime/benchmark_thread.cc",
-    "src/mako/storage/mtree_abi.cc",
-    "src/mako/storage/rust_sto_tpcc_wrapper.cc",
-    "tests/mtree_abi_c11_header.c",
-    "tests/sto_tpcc_ffi_c11_header.c",
-    "tests/test_benchmark_output.cc",
-    "tests/test_mako_value_metadata.cc",
-    "tests/test_mtree_abi.cc",
-    "tests/test_silo_nontxn_api.cc",
-    "tests/test_silo_runtime.cc",
-    "tests/test_silo_varint.cc",
-}
-
-database = json.loads(database_path.read_text(encoding="utf-8"))
-seen = set()
-for entry in database:
-    source = pathlib.Path(entry["file"])
-    try:
-        relative_source = source.resolve().relative_to(pathlib.Path.cwd().resolve()).as_posix()
-    except ValueError:
-        continue
-    if relative_source not in required_sources:
-        continue
-    tokens = entry.get("arguments") or shlex.split(entry.get("command", ""))
-    if required_flag not in tokens:
-        raise SystemExit(f"{relative_source} lacks {required_flag} in compile_commands.json")
-    if any(
-        token == "-fno-sanitize" or token.startswith("-fno-sanitize=")
-        for token in tokens
-    ):
-        raise SystemExit(
-            f"{relative_source} disables sanitizer coverage in compile_commands.json"
-        )
-    seen.add(relative_source)
-
-missing = sorted(required_sources - seen)
-if missing:
-    raise SystemExit("compile_commands.json lacks boundary sources: " + ", ".join(missing))
-print("verified native instrumentation: " + ", ".join(sorted(seen)))
-PY
-
-ctest_json="${build_dir}/sanitizer-logs/ctest-tests.json"
-ctest --test-dir "${build_dir}" --show-only=json-v1 >"${ctest_json}"
-python3 - "${ctest_json}" <<'PY'
-import json
-import pathlib
-import sys
-
-tests = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("tests", [])
-counts = {}
-by_name = {}
-for test in tests:
-    name = test.get("name")
-    counts[name] = counts.get(name, 0) + 1
-    by_name[name] = test
-required = {
-    "SiloVarintTests",
-    "test_mako_value_metadata",
-    "test_mtree_abi",
-    "test_mtree_abi_c11_header",
-    "test_rocksdb_interface_lifecycle",
-    "test_silo_nontxn_api",
-    "test_silo_runtime_concurrency_lifecycle",
-    "test_sto_tpcc_ffi_c11_header",
-    "test_benchmark_output",
-    "test_sto_tpcc_cpp_wrapper_scan_smoke",
-    "test_sto_tpcc_cpp_wrapper_smoke",
-    "test_sto_tpcc_default_slow_exit",
-    "test_sto_tpcc_default_multishard_slow_exit",
-    "test_sto_tpcc_rust_slow_exit",
-    "test_sto_tpcc_rust_concurrent",
-    "test_sto_tpcc_rust_startup_resource_exhausted",
-    "test_sto_tpcc_rust_load_resource_exhausted",
-    "test_sto_tpcc_rust_run_resource_exhausted",
-    "test_sto_tpcc_rust_concurrent_resource_exhausted",
-    "test_sto_tpcc_rejects_duplicate_local_shards",
-    "test_sto_tpcc_rejects_partial_local_shards",
-    "test_sto_tpcc_rejects_rust_worker_limit",
-}
-missing = sorted(required - set(by_name))
-if missing:
-    raise SystemExit("required Rust boundary CTests are not registered: " + ", ".join(missing))
-
-rust_names = set()
-for test in tests:
-    for prop in test.get("properties", []):
-        if prop.get("name") == "LABELS" and "rust" in prop.get("value", []):
-            rust_names.add(test["name"])
-
-if not rust_names:
-    raise SystemExit('no CTest carries the exact "rust" label')
-
-audited_names = required | rust_names
-duplicates = sorted(name for name in audited_names if counts.get(name) != 1)
-if duplicates:
-    raise SystemExit(
-        "audited Rust boundary CTests are not registered exactly once: "
-        + ", ".join(duplicates)
-    )
-
-forbidden_properties = {
-    "DISABLED",
-    "PASS_REGULAR_EXPRESSION",
-    "SKIP_REGULAR_EXPRESSION",
-    "SKIP_RETURN_CODE",
-    "WILL_FAIL",
-}
-allowed_environment = {
-    "test_sto_tpcc_rust_startup_resource_exhausted": [
-        "MAKO_STO_TPCC_REGISTRY_MEMORY=1"
-    ],
-    "test_sto_tpcc_rust_load_resource_exhausted": [
-        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=1"
-    ],
-    "test_sto_tpcc_rust_run_resource_exhausted": [
-        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
-        "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
-    ],
-    "test_sto_tpcc_rust_concurrent_resource_exhausted": [
-        "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
-        "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
-    ],
-}
-exact_filters = {
-    "test_silo_runtime_concurrency_lifecycle": (
-        "--gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:NativeThreadIdTest.*:NativeEpochAdvancerTest.*:NativeEpochGuardTest.*"
-    ),
-}
-fail_if_empty_gtests = set(exact_filters) | {
-    "SiloVarintTests",
-    "test_mako_value_metadata",
-    "test_mtree_abi",
-    "test_silo_nontxn_api",
-}
-for name in sorted(audited_names):
-    test = by_name[name]
-    command = test.get("command", [])
-    if not command:
-        raise SystemExit(f"required Rust boundary CTest has no command: {name}")
-    properties = {
-        prop.get("name"): prop.get("value")
-        for prop in test.get("properties", [])
-    }
-    forbidden = sorted(forbidden_properties & set(properties))
-    if forbidden:
-        raise SystemExit(
-            f"required Rust boundary CTest {name} has coverage-altering "
-            "properties: " + ", ".join(forbidden)
-        )
-    if "ENVIRONMENT_MODIFICATION" in properties:
-        raise SystemExit(
-            f"required Rust boundary CTest {name} modifies its environment"
-        )
-    environment = properties.get("ENVIRONMENT", [])
-    if environment != allowed_environment.get(name, []):
-        raise SystemExit(
-            f"required Rust boundary CTest {name} has unexpected environment: "
-            f"{environment!r}"
-        )
-    expected_filter = exact_filters.get(name)
-    if expected_filter is not None:
-        if command.count(expected_filter) != 1:
-            raise SystemExit(
-                f"required Rust boundary CTest {name} lost its exact "
-                f"GTest selector: {command!r}"
-            )
-    if name in fail_if_empty_gtests:
-        if command.count("--gtest_fail_if_no_test_selected") != 1:
-            raise SystemExit(
-                f"required Rust boundary CTest {name} lost its "
-                f"fail-if-empty guard: {command!r}"
-            )
-
-explicit_non_rust_runs = {
-    "test_mtree_abi_c11_header",
-    "test_rocksdb_interface_lifecycle",
-    "test_silo_nontxn_api",
-    "test_silo_runtime_concurrency_lifecycle",
-    "test_sto_tpcc_default_slow_exit",
-    "test_sto_tpcc_default_multishard_slow_exit",
-}
-missing_rust_labels = sorted((required - explicit_non_rust_runs) - rust_names)
-if missing_rust_labels:
-    raise SystemExit(
-        'required CTests lost the exact "rust" label: ' + ", ".join(missing_rust_labels)
-    )
-
-print("registered Rust CTests:")
-for name in sorted(rust_names):
-    print(f"  {name}")
-
-tpcc = sorted(name for name in rust_names if "tpcc" in name)
-if tpcc:
-    print("registered Rust TPC-C tests selected by this run:")
-    for name in tpcc:
-        print(f"  {name}")
-else:
-    print("no Rust TPC-C CTest is registered at this commit")
-PY
-
-# The public Masstree ABI header test predates the Rust label. Keep it in the
-# native boundary gate without broadening the dynamic label selection to every
-# Masstree stress test in the repository.
-run_logged ctest-masstree-c11-header \
-    ctest --test-dir "${build_dir}" --output-on-failure \
-        --no-tests=error -R '^test_mtree_abi_c11_header$'
-
-# The default runtime is first acquired concurrently in a fresh process.  This
-# directly guards its process-lifetime publication contract under each native
-# sanitizer, independent of the longer TPC-C lifecycle tests below.
-run_logged ctest-silo-runtime-concurrency-lifecycle \
-    ctest --test-dir "${build_dir}" --output-on-failure \
-        --no-tests=error -R '^test_silo_runtime_concurrency_lifecycle$'
-
-# These public facades now use Rust and must pass with leak detection enabled.
-run_logged ctest-native-facades \
-    ctest --test-dir "${build_dir}" --output-on-failure --no-tests=error \
-        -R '^(test_rocksdb_interface_lifecycle|test_silo_nontxn_api)$'
-
-if [[ "${sanitizer}" == "address" ]]; then
-    current_lsan_sha256="$(sha256sum "${lsan_suppressions}" | awk '{print $1}')"
-    if [[ "${current_lsan_sha256}" != "${lsan_suppression_sha256}" ]]; then
-        echo "LSan suppression source changed after sanitizer configuration" >&2
-        exit 1
-    fi
-
-    # Passing CTests hide child output unless verbose mode is selected. Run the
-    # only six qualified tests separately so their suppression tables are
-    # retained as independently auditable evidence.
-    run_logged ctest-default-slow-exit-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_default_slow_exit$'
-    run_logged ctest-default-multishard-slow-exit-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_default_multishard_slow_exit$'
-    run_logged ctest-rust-slow-exit-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_rust_slow_exit$'
-    run_logged ctest-rust-concurrent-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_rust_concurrent$'
-    run_logged ctest-rust-run-exhausted-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_rust_run_resource_exhausted$'
-    run_logged ctest-rust-concurrent-exhausted-lsan \
-        env LSAN_OPTIONS="${lsan_options}" \
-            ctest --test-dir "${build_dir}" --verbose \
-                --no-tests=error -R '^test_sto_tpcc_rust_concurrent_resource_exhausted$'
-
-    current_lsan_sha256="$(sha256sum "${lsan_suppressions}" | awk '{print $1}')"
-    if [[ "${current_lsan_sha256}" != "${lsan_suppression_sha256}" ]]; then
-        echo "LSan suppression source changed while qualified tests ran" >&2
-        exit 1
-    fi
-
-    python3 - "${manifest}" \
-        "${build_dir}/sanitizer-logs/ctest-default-slow-exit-lsan.log" \
-        test_sto_tpcc_default_slow_exit 4 1280 \
-        "${build_dir}/sanitizer-logs/ctest-default-multishard-slow-exit-lsan.log" \
-        test_sto_tpcc_default_multishard_slow_exit 8 2560 \
-        "${build_dir}/sanitizer-logs/ctest-rust-slow-exit-lsan.log" \
-        test_sto_tpcc_rust_slow_exit 4 1280 \
-        "${build_dir}/sanitizer-logs/ctest-rust-concurrent-lsan.log" \
-        test_sto_tpcc_rust_concurrent 16 5120 \
-        "${build_dir}/sanitizer-logs/ctest-rust-run-exhausted-lsan.log" \
-        test_sto_tpcc_rust_run_resource_exhausted 4 1280 \
-        "${build_dir}/sanitizer-logs/ctest-rust-concurrent-exhausted-lsan.log" \
-        test_sto_tpcc_rust_concurrent_resource_exhausted 16 5120 <<'PY'
-import hashlib
-import pathlib
-import re
-import sys
-
-manifest = pathlib.Path(sys.argv[1])
-arguments = sys.argv[2:]
-if len(arguments) % 4:
-    raise SystemExit("internal error: malformed LSan evidence arguments")
-
-observed = []
-for index in range(0, len(arguments), 4):
-    log = pathlib.Path(arguments[index])
-    test_name = arguments[index + 1]
-    expected_count = int(arguments[index + 2])
-    expected_bytes = int(arguments[index + 3])
-    lines = log.read_text(encoding="utf-8").splitlines()
-    clean = [re.sub(r"^\s*\d+:\s?", "", line) for line in lines]
-    markers = [i for i, line in enumerate(clean) if line.strip() == "Suppressions used:"]
-    if len(markers) != 1:
-        raise SystemExit(
-            f"{test_name}: expected one LSan suppression block, found {len(markers)}"
-        )
-    start = markers[0] + 1
-    try:
-        end = next(
-            i
-            for i in range(start, len(clean))
-            if re.fullmatch(r"-{5,}", clean[i].strip())
-        )
-    except StopIteration:
-        raise SystemExit(f"{test_name}: unterminated LSan suppression block")
-
-    rows = []
-    for line in clean[start:end]:
-        value = line.strip()
-        if not value or re.fullmatch(r"count\s+bytes\s+template", value):
-            continue
-        match = re.fullmatch(r"(\d+)\s+(\d+)\s+(\S+)", value)
-        if match is None:
-            raise SystemExit(f"{test_name}: unexpected LSan suppression row: {value!r}")
-        rows.append((int(match.group(1)), int(match.group(2)), match.group(3)))
-
-    expected = [(expected_count, expected_bytes, "mt_tree::mt_tree")]
-    if rows != expected:
-        raise SystemExit(f"{test_name}: LSan rows {rows!r}, expected {expected!r}")
-    observed.append((test_name, expected_count, expected_bytes, log.resolve(), hashlib.sha256(log.read_bytes()).hexdigest()))
-
-if (sum(row[1] for row in observed), sum(row[2] for row in observed)) != (52, 16640):
-    raise SystemExit("qualified LSan totals differ from 52 allocations / 16640 bytes")
-
-with manifest.open("a", encoding="utf-8") as output:
-    for test_name, count, byte_count, log, digest in observed:
-        output.write(
-            f"lsan_observed_{test_name}=allocations:{count},bytes:{byte_count}\n"
-        )
-        output.write(f"lsan_evidence_{test_name}={log}\n")
-        output.write(f"lsan_evidence_{test_name}_sha256={digest}\n")
-    output.write("lsan_observed_total=allocations:52,bytes:16640\n")
-print("verified exact LSan evidence: 52 allocations / 16640 bytes")
-PY
-
-    # Every other Rust-labeled test runs with leak detection enabled and no
-    # LSan suppression environment at all.
-    run_logged ctest-rust-boundary \
-        ctest --test-dir "${build_dir}" --output-on-failure \
-            --no-tests=error -L '^rust$' \
-            -E '^(test_sto_tpcc_default_slow_exit|test_sto_tpcc_default_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted)$'
-else
-    run_logged ctest-rust-boundary \
-        ctest --test-dir "${build_dir}" --output-on-failure \
-            --no-tests=error -L '^rust$'
-fi
-
-
+audit_one_rust_std native --tree "${CARGO_TARGET_DIR}/${rust_target}"
 verify_unwind_config
-
 final_head_sha="$("${repository_git[@]}" rev-parse --verify HEAD)"
 final_tree_status="$("${repository_git[@]}" status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)"
-if [[ "${final_head_sha}" != "${head_sha}" ]]; then
-    echo "sanitizer evidence is stale: HEAD changed from ${head_sha} to ${final_head_sha}" >&2
+if [[ "${final_head_sha}" != "${head_sha}" || "${final_tree_status}" != "${tree_status}" ]]; then
+    echo 'sanitizer evidence is stale: the checkout changed while the gate ran' >&2
     exit 2
 fi
-if [[ "${MAKO_SANITIZER_ALLOW_DIRTY:-0}" == "1" ]]; then
-    if [[ "${final_tree_status}" != "${tree_status}" ]]; then
-        echo "sanitizer diagnostic is stale: the worktree changed while the gate ran" >&2
-        diff -u <(printf '%s\n' "${tree_status}") \
-            <(printf '%s\n' "${final_tree_status}") >&2 || true
-        exit 2
-    fi
-elif [[ -n "${final_tree_status}" ]]; then
-    echo "sanitizer evidence is stale: the worktree became dirty while the gate ran" >&2
-    printf '%s\n' "${final_tree_status}" >&2
-    exit 2
-fi
-
-echo "final_commit=${final_head_sha}" >>"${manifest}"
-if [[ -n "${final_tree_status}" ]]; then
-    echo "final_worktree=dirty-local-diagnostic-unchanged" >>"${manifest}"
-else
-    echo "final_worktree=clean" >>"${manifest}"
-fi
-echo "gate_status=passed" >>"${manifest}"
-echo "${sanitizer} sanitizer gate passed for ${head_sha}"
+printf 'final_commit=%s\ngate_status=passed\n' "${final_head_sha}" >>"${manifest}"
+echo "${sanitizer} native Rust/storage sanitizer gate passed for ${head_sha}"

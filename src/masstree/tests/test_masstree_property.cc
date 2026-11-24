@@ -1,5 +1,6 @@
+#include "test_std.h"
 // Tier 2 of docs/masstree-test-plan.md — property-based test driving a
-// rusty::BTreeMap<std::string,uint64_t> oracle.
+// std::map<std::string,uint64_t> oracle.
 //
 // Each iteration draws an op from {insert, insert_if_absent, remove,
 // search, range-scan} weighted by realistic mix, applies it to both
@@ -16,14 +17,13 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/vec.hpp>
 #include <rusty/array.hpp>  // rusty::range (BTreeMap::range bounds)
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 using TestTree = single_threaded_btree;
 
@@ -36,8 +36,8 @@ inline varkey vk(const std::string& s) {
 // Builds a key pool whose members cover the cases that exercise
 // Masstree's slice / layer machinery: short keys, slice-boundary
 // keys, multi-slice keys, and clusters that share a long prefix.
-rusty::Vec<std::string> BuildKeyPool(std::mt19937_64& rng, size_t count) {
-  auto pool = rusty::Vec<std::string>::with_capacity(count);
+std::vector<std::string> BuildKeyPool(std::mt19937_64& rng, size_t count) {
+  auto pool = reserved_vector<std::string>(count);
 
   const std::array<std::string, 4> prefixes = {
       std::string(),
@@ -61,19 +61,19 @@ rusty::Vec<std::string> BuildKeyPool(std::mt19937_64& rng, size_t count) {
       // so any oracle divergence here points at non-trivial key paths.
       k.push_back(static_cast<char>(byte(rng)));
     }
-    pool.push(std::move(k));
+    pool.push_back(std::move(k));
   }
   return pool;
 }
 
 struct PropertyState {
   TestTree tree;
-  rusty::BTreeMap<std::string, uint64_t> oracle =
-      rusty::BTreeMap<std::string, uint64_t>::new_();
-  rusty::Vec<rusty::Box<uint64_t>> value_storage;
+  std::map<std::string, uint64_t> oracle =
+      std::map<std::string, uint64_t>{};
+  std::vector<rusty::Box<uint64_t>> value_storage;
 
   TestTree::value_type Make(uint64_t v) {
-    value_storage.push(rusty::Box<uint64_t>::make(v));
+    value_storage.push_back(rusty::Box<uint64_t>::make(v));
     return reinterpret_cast<TestTree::value_type>(value_storage.back().get());
   }
 
@@ -84,10 +84,10 @@ struct PropertyState {
   void FullScanMatchesOracle(uint64_t seed, size_t step) const {
     class Cb : public TestTree::search_range_callback {
      public:
-      ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
-      rusty::Vec<std::pair<std::string, uint64_t>> seen;
+      ~Cb() noexcept {}  // std::vector member -> force noexcept dtor
+      std::vector<std::pair<std::string, uint64_t>> seen;
       bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
-        seen.push(std::pair<std::string, uint64_t>(
+        seen.push_back(std::pair<std::string, uint64_t>(
             std::string(k.data(), k.length()),
             *reinterpret_cast<const uint64_t*>(v)));
         return true;
@@ -98,15 +98,11 @@ struct PropertyState {
     varkey lo = vk(empty);
     tree.search_range_call_unbounded(lo, cb);
 
-    ASSERT_EQ(cb.seen.len(), oracle.len())
+    ASSERT_EQ(cb.seen.size(), oracle.size())
         << "seed=" << std::hex << seed << " step=" << std::dec << step;
 
     size_t i = 0;
-    auto scan_it = oracle.iter();
-    while (true) {
-      auto scan_e = scan_it.next();
-      if (scan_e.is_none()) break;
-      auto [k, v] = scan_e.unwrap();
+    for (const auto& [k, v] : oracle) {
       ASSERT_EQ(cb.seen[i].first, k)
           << "seed=" << std::hex << seed << " step=" << std::dec
           << step << " i=" << i;
@@ -123,7 +119,7 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
   PropertyState s;
   auto pool = BuildKeyPool(rng, /*count=*/200);
 
-  std::uniform_int_distribution<size_t> pick_key(0, pool.len() - 1);
+  std::uniform_int_distribution<size_t> pick_key(0, pool.size() - 1);
   std::uniform_int_distribution<int> pick_op(0, 99);
   std::uniform_int_distribution<uint64_t> any_val(
       0, std::numeric_limits<uint64_t>::max());
@@ -137,36 +133,36 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
     if (op < 45) {
       // insert (45 %): always succeeds; returns true iff key was new.
       const uint64_t v = any_val(rng);
-      const bool was_new_oracle = !s.oracle.contains_key(key);
-      s.oracle.insert(key, v);
+      const bool was_new_oracle = !s.oracle.contains(key);
+      s.oracle.insert_or_assign(key, v);
       const bool was_new_tree = s.tree.insert(vk(key), s.Make(v));
       ASSERT_EQ(was_new_tree, was_new_oracle)
           << "seed=" << std::hex << seed << " step=" << std::dec << step;
     } else if (op < 55) {
       // insert_if_absent (10 %)
       const uint64_t v = any_val(rng);
-      const bool exists_oracle = s.oracle.contains_key(key);
+      const bool exists_oracle = s.oracle.contains(key);
       const bool inserted_tree = s.tree.insert_if_absent(vk(key), s.Make(v));
       ASSERT_EQ(inserted_tree, !exists_oracle)
           << "seed=" << std::hex << seed << " step=" << std::dec << step;
       if (!exists_oracle) {
-        s.oracle.insert(key, v);
+        s.oracle.insert_or_assign(key, v);
       }
     } else if (op < 75) {
       // remove (20 %)
-      const bool existed_oracle = s.oracle.remove(key).is_some();
+      const bool existed_oracle = s.oracle.erase(key) != 0;
       const bool removed_tree = s.tree.remove(vk(key));
       ASSERT_EQ(removed_tree, existed_oracle)
           << "seed=" << std::hex << seed << " step=" << std::dec << step;
     } else if (op < 90) {
       // search (15 %)
-      auto oracle_val = s.oracle.get(key);
+      auto oracle_val = s.oracle.find(key);
       TestTree::value_type v = nullptr;
       const bool found = s.tree.search(vk(key), v);
-      ASSERT_EQ(found, oracle_val.is_some())
+      ASSERT_EQ(found, oracle_val != s.oracle.end())
           << "seed=" << std::hex << seed << " step=" << std::dec << step;
       if (found) {
-        ASSERT_EQ(PropertyState::Decode(v), oracle_val.unwrap())
+        ASSERT_EQ(PropertyState::Decode(v), oracle_val->second)
             << "seed=" << std::hex << seed << " step=" << std::dec << step;
       }
     } else {
@@ -178,10 +174,10 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
 
       class CollectAll : public TestTree::search_range_callback {
        public:
-        ~CollectAll() noexcept {}  // rusty::Vec member -> force noexcept dtor
-        rusty::Vec<std::string> seen;
+        ~CollectAll() noexcept {}  // std::vector member -> force noexcept dtor
+        std::vector<std::string> seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
-          seen.push(std::string(k.data(), k.length()));
+          seen.push_back(std::string(k.data(), k.length()));
           return true;
         }
       };
@@ -190,20 +186,17 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
       varkey hi = vk(hi_s);
       s.tree.search_range_call_bounded(lo, hi, cb);
 
-      rusty::Vec<std::pair<std::string, uint64_t>> expected;
+      std::vector<std::pair<std::string, uint64_t>> expected;
       {
-        auto rng_it = s.oracle.range(rusty::range<std::string>(lo_s, hi_s));
-        while (true) {
-          auto rng_e = rng_it.next();
-          if (rng_e.is_none()) break;
-          auto [rk, rv] = rng_e.unwrap();
-          expected.push(std::pair<std::string, uint64_t>(rk, rv));
+        for (auto it = s.oracle.lower_bound(lo_s); it != s.oracle.lower_bound(hi_s); ++it) {
+          const auto& [rk, rv] = *it;
+          expected.push_back(std::pair<std::string, uint64_t>(rk, rv));
         }
       }
-      ASSERT_EQ(cb.seen.len(), expected.len())
+      ASSERT_EQ(cb.seen.size(), expected.size())
           << "seed=" << std::hex << seed << " step=" << std::dec << step
           << " lo.size=" << lo_s.size() << " hi.size=" << hi_s.size();
-      for (size_t i = 0; i < expected.len(); ++i) {
+      for (size_t i = 0; i < expected.size(); ++i) {
         ASSERT_EQ(cb.seen[i], expected[i].first)
             << "seed=" << std::hex << seed << " step=" << std::dec
             << step << " i=" << i;

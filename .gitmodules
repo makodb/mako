@@ -1,6 +1,3 @@
-[submodule "third-party/yaml-cpp"]
-	path = third-party/yaml-cpp
-	url = https://github.com/jbeder/yaml-cpp/
 [submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp
@@ -8,47 +5,6 @@
 [submodule "third-party/googletest"]
 	path = third-party/googletest
 	url = https://github.com/google/googletest.git
-[submodule "third-party/mako-redis"]
-	path = third-party/mako-redis
-	url = https://github.com/makodb/mako-redis
-
-# srpc's OWN nested submodules, pre-provisioned.
-#
-# `src/srpc` is a verbatim copy of github.com/stonysystems/srpc, which declares
-# these three in its own `.gitmodules`. Git only reads the ROOT `.gitmodules`, so
-# once those gitlinks arrive here (via subtree/subrepo import) they would be
-# orphans: `git submodule status` and `git submodule update --init --recursive`
-# both fail with exit 128 REPO-WIDE -- not just for srpc -- and mako's CI runs
-# `submodules: recursive` (.github/workflows/ci.yml:37,201). Mapping them here
-# is what keeps that working.
-#
-# `update = none` for rusty-cpp and googletest because mako never uses them
-# (Lion, below, is the exception). mako builds srpc through
-# src/srpc-cmake/CMakeLists.txt and its own third-party/rusty-cpp; srpc's
-# standalone CMakeLists.txt (which is what needs these) is never read here.
-# Skipping the checkout avoids a SECOND rusty-cpp clone in every one of mako's
-# worktrees. Both projects now pin 7e0c201f; Mako's build uses the root
-# checkout, which must track srpc's pin on every resync. It lives in the
-# tracked `.gitmodules` rather than local config so every clone and CI
-# inherits it; `submodule.<name>.active=false` does NOT work here, `--init`
-# overrides it.
-#
-# The nested gitlinks remain recorded for standalone SRPC consumers.
-[submodule "src/srpc/third-party/rusty-cpp"]
-	path = src/srpc/third-party/rusty-cpp
-	url = https://github.com/shuaimu/rusty-cpp.git
-	update = none
-[submodule "src/srpc/third-party/googletest"]
-	path = src/srpc/third-party/googletest
-	url = https://github.com/google/googletest.git
-	update = none
-
-# srpc's third nested submodule, and the one mako DOES check out. srpc runs its
-# executor, reactor and timers on Lion: `src/srpc/Cargo.toml` names
-# `third-party/lion/lion-{reactor,executor}` as path dependencies, and the
-# transpiler's `--crate-graph` reads those same sources to emit the Lion module
-# providers that compile into libsrpc.a. Without this checkout neither Cargo nor
-# the srpc-cmake codegen step can run, so there is no `update = none` here.
 [submodule "src/srpc/third-party/lion"]
 	path = src/srpc/third-party/lion
 	url = https://github.com/stonysystems/lion.git

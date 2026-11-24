@@ -66,11 +66,13 @@ def main():
     else:
         output = Path(tempfile.mkdtemp(prefix="mako-native-runtime-health-"))
     source = repo / "crates/mako-engine-sto/tests/native_runtime_health_proof.cc"
-    production = [build / "libmako.a", build / "src/masstree/libmasstree.a"]
+    production = [build / "libmako_native_storage.a"]
+    allocator_path = build / "generated/mako_allocator_contract.txt"
+    allocator = dict(line.split("=", 1) for line in allocator_path.read_text().splitlines())
     inputs = set(production + [source, Path(__file__).resolve(),
                               repo / "src/mako/storage/mtree_abi.cc",
                               build / "compile_commands.json", repo / "crates/Cargo.lock",
-                              repo / "rust-toolchain.toml"])
+                              repo / "rust-toolchain.toml", allocator_path])
     for crate in ("mako-engine-sto", "mako-engine-api", "mako-clock", "sto-core",
                   "sto-masstree", "masstree", "mtree-sys", "mako-differential", "mako-history"):
         inputs.update((repo / "crates" / crate).rglob("*.rs"))
@@ -94,12 +96,14 @@ def main():
 
     try:
         entries = [entry for entry in json.loads((build / "compile_commands.json").read_text())
-                   if entry.get("output") == "CMakeFiles/mako.dir/src/mako/storage/mtree_abi.cc.o"]
+                   if Path(entry.get("file", "")).resolve() == repo / "src/mako/storage/mtree_abi.cc"
+                   and Path(entry.get("output", "")).as_posix().endswith(
+                       "CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_abi.cc.o")]
         if len(entries) != 1:
             raise ValueError("expected exactly one production mtree_abi.cc compile command")
         original, removed, command = compile_command(entries[0], source, output / "proof.o")
         report.update(original_native_command=original, removed_native_args=removed)
-        compiler_bin = Path(command[0]).parent
+        compiler_bin = Path(command[0]).resolve().parent
         nm = compiler_bin / "llvm-nm"
         for index, archive in enumerate(production):
             symbols = run(f"production-symbols-{index}", [nm, "--defined-only", archive])
@@ -119,10 +123,11 @@ def main():
         configured = {
             "RUSTUP_TOOLCHAIN": "1.97.1", "CARGO_TARGET_DIR": str(output / "target"),
             "MAKO_BUILD_DIR": str(build), "MAKO_MTREE_NATIVE_INTEGRATION": "1",
-            "MAKO_MTREE_NATIVE_LIB_DIRS": os.pathsep.join(map(str, [output, build, build / "src/masstree", libcxx])),
-            "MAKO_MTREE_NATIVE_LIBS": "static=mtree_runtime_health_proof,static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread",
-            "LD_LIBRARY_PATH": os.pathsep.join(map(str, [libcxx, build / "third-party/yaml-cpp"])),
-            "RUSTFLAGS": "--cfg mako_native_runtime_health_proof -C target-cpu=znver1 -C force-frame-pointers=yes -C debuginfo=1",
+            "MAKO_MTREE_NATIVE_LIB_DIRS": os.pathsep.join(map(str, [output, build, libcxx])),
+            "MAKO_MTREE_NATIVE_LIBS": "static:-bundle=mtree_runtime_health_proof,static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+                + (f",dylib={allocator['link_name']}" if allocator["link_name"] else ""),
+            "LD_LIBRARY_PATH": str(libcxx),
+            "RUSTFLAGS": "--cfg mako_native_runtime_health_proof -C force-frame-pointers=yes -C debuginfo=1",
         }
         env.update(configured)
         report["environment"] = configured

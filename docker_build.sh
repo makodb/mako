@@ -739,7 +739,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
                 ;;
-            nativeShardingSmoke|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|cpuThrottlingScaling|clientServer)
+            nativeRuntime|nativeShardingSmoke|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|cpuThrottlingScaling|clientServer)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"

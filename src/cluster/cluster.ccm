@@ -1,9 +1,0 @@
-// Configuration KV ports and legacy static table addressing only.
-// Native Rust owns governed routing, leases and live migration.
-export module cluster;
-
-export import :kv_store;
-export import :in_memory_kv_store;
-export import :config_manager;
-export import :remote_kv_store;
-export import :shard_router;   // cluster<->mako routing bridge (namespace mako)

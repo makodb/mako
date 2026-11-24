@@ -25,7 +25,8 @@
 #include <vector>
 #include <thread>
 #include <memory>
-#include <rusty/rusty.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include "masstree/masstree_context.h"
 #include "macros.h"  // For NMAXCORES
 #include "spinlock.h"

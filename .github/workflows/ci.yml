@@ -101,6 +101,10 @@ jobs:
         run: bash ci/native_rust.sh compile
       - name: Transaction manager, Masstree and adapter components
         run: bash ci/native_rust.sh components
+      - name: Separate C++ storage component tests
+        run: bash ci/native_rust.sh storage
+      - name: Native poison transition and Rust API checks
+        run: bash ci/native_rust.sh health && bash ci/native_rust.sh quality
       - name: Runtime and process regression suites in debug and release
         run: bash ci/native_rust.sh runtime
       - name: Separate and colocated workload matrix
@@ -117,6 +121,8 @@ jobs:
             build/runs/
             build/rust-cache-tests.json
             build/native-dependency-audit/
+            build/native-health-*/
+            build/storage-tests/Testing/Temporary/
 
   native-srpc:
     name: Native SRPC without C++ tools or providers

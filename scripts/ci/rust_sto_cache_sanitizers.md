@@ -24,23 +24,21 @@ Only `local_version_tests::indeterminate_local_release_ignores_mixed_ordered_id`
 uses the exact intentional-quarantine leak qualification. The remaining
 record-local tests keep ordinary leak checking enabled.
 
-The focused native archive compiles these production sources with the same
-generated Masstree configuration and compiler flags as `mako`:
+Both the full and focused gates build the production native archive from the
+16-source `cmake/native-storage-sources.txt` manifest. It includes Masstree,
+the storage ABI and required allocator/RCU support, with the production
+configuration. There is no C++ transaction engine or application host.
 
-- `src/mako/storage/mtree_abi.cc`
-- `src/mako/allocator.cc`
-- `src/mako/core.cc`
-- `src/mako/counter.cc`
-- `src/mako/rcu.cc`
-- `src/mako/ticker.cc`
-- `src/mako/silo_runtime.cc`
+The default gate separately runs transaction-manager, tree, adapter, runtime
+and cache tests. Transaction tests receive no native library settings. Native
+SRPC's C platform kernels use the same compiler sanitizer runtime. Every
+selected test runs in a fresh process. The focused cache gate omits the other
+suites and makes no claim about their coverage.
 
-It links the separately compiled, instrumented Masstree archive. The focused
-gate does not compile the C++ transaction engine or cluster modules. It does
-not claim instrumentation of the system RocksDB library. ASan and TSan also
-instrument Rust and rebuild its standard library. UBSan instruments native
-C++, with stable Rust linked to the matching UBSan runtime; it is not Rust
-UBSan coverage.
+ASan and TSan instrument Rust and rebuild its standard library using
+`nightly-2026-08-12`. UBSan instruments native C/C++, with stable Rust 1.97.1
+linked to the matching runtime; it is not Rust UBSan coverage. The system
+RocksDB library is outside this instrumentation claim.
 
 An explicitly rebuilt RocksDB can be selected through the existing
 `ROCKSDB_LIB_DIR` and matching runtime library search path. For TSan, build it

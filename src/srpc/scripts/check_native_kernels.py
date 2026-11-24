@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin reviewed native leaves and the common Rust/C++ compilation manifest.
+"""Pin reviewed platform leaves and Cargo's native compilation manifest.
 
 C files own OS layouts, errno, clock/entropy access, and context-switch storage.
 Rust owns SRPC policy. This gate intentionally does not try to classify arbitrary
@@ -37,8 +37,7 @@ def sha256(data: bytes) -> str:
 
 
 def native_paths(repo: Path) -> list[Path]:
-    # Root headers are part of the public C++ include path. Scan all root
-    # carriers so a new file cannot bypass the reviewed import-shim inventory.
+    # Scan root carriers too, so new files cannot bypass the native inventory.
     paths = list(repo.iterdir())
     for directory in DIRECTORIES:
         paths.extend((repo / directory).rglob("*"))
@@ -46,22 +45,14 @@ def native_paths(repo: Path) -> list[Path]:
 
 
 def consumer_hashes(repo: Path) -> dict[str, str]:
-    cmake = (repo / "CMakeLists.txt").read_text()
-    begin = "# SRPC_NATIVE_MANIFEST_BEGIN\n"
-    end = "# SRPC_NATIVE_MANIFEST_END"
-    if cmake.count(begin) != 1 or cmake.count(end) != 1:
-        raise ValueError("missing/duplicate CMake native manifest block")
-    block = cmake.split(begin, 1)[1].split(end, 1)[0]
-    attachments = re.findall(r"target_sources\s*\(\s*srpc\s+PRIVATE\b[^)]*\)", cmake)
-    if attachments != ["target_sources(srpc PRIVATE ${SRPC_NATIVE_SOURCES})"]:
-        raise ValueError("CMake production native sources must come only from the common manifest")
-    return {"build.rs": sha256((repo / "build.rs").read_bytes()),
-            "CMakeLists.txt:native-manifest": sha256(block.encode())}
+    return {"build.rs": sha256((repo / "build.rs").read_bytes())}
 
 
 def audit(repo: Path) -> list[str]:
     inventory = json.loads((repo / "scripts" / "native-kernels.json").read_text())
     findings = []
+    if (repo / "CMakeLists.txt").exists():
+        findings.append("retired SRPC CMake compilation path is forbidden; use Cargo")
     if set(inventory) != {"schema_version", "roles", "files", "sources", "consumers"}:
         findings.append("invalid native kernel inventory fields")
     if inventory.get("schema_version") != 1 or inventory.get("roles") != ROLES:
@@ -103,7 +94,7 @@ def audit(repo: Path) -> list[str]:
     if set(sources) != compiled:
         findings.append("native manifest must list every production C/assembly source exactly once")
     if consumer_hashes(repo) != inventory["consumers"]:
-        findings.append("native manifest consumer changed; verify identical Rust/C++ kernel linkage")
+        findings.append("native manifest consumer changed; review Cargo kernel linkage")
     return findings
 
 
@@ -119,7 +110,7 @@ def main() -> int:
         for finding in findings:
             print(f"  {finding}", file=sys.stderr)
         return 1
-    print("native kernel audit passed: reviewed leaves; Rust and C++ share one source manifest")
+    print("native kernel audit passed: reviewed C/assembly leaves; Cargo owns compilation")
     return 0
 
 

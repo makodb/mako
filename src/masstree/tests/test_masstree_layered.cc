@@ -1,3 +1,4 @@
+#include "test_std.h"
 // Tier 7 of docs/masstree-test-plan.md — Masstree-specific edge cases
 // around its trie-of-B+trees design.
 //
@@ -22,13 +23,12 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/vec.hpp>
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 using TestTree = single_threaded_btree;
 
@@ -41,14 +41,14 @@ inline varkey vk(const std::string& s) {
 class StorageBank {
  public:
   TestTree::value_type Make(uint64_t v) {
-    slots_.push(rusty::Box<uint64_t>::make(v));
+    slots_.push_back(rusty::Box<uint64_t>::make(v));
     return reinterpret_cast<TestTree::value_type>(slots_.back().get());
   }
   static uint64_t Decode(TestTree::value_type v) {
     return *reinterpret_cast<const uint64_t*>(v);
   }
  private:
-  rusty::Vec<rusty::Box<uint64_t>> slots_;
+  std::vector<rusty::Box<uint64_t>> slots_;
 };
 
 }  // namespace
@@ -67,12 +67,12 @@ TEST(MasstreeLayered, DeepLayerKeysRoundTrip) {
   StorageBank bank;
   const std::string prefix(64, 'p');  // 8 slices of 'p'
   constexpr size_t kCount = 32;
-  auto raws = rusty::Vec<std::string>::with_capacity(kCount);
+  auto raws = reserved_vector<std::string>(kCount);
   for (size_t i = 0; i < kCount; ++i) {
     std::string k = prefix;
     k.push_back(static_cast<char>(i));      // 65th byte differs
     k.push_back(static_cast<char>(i ^ 0x5A)); // 66th byte differs
-    raws.push(std::move(k));
+    raws.push_back(std::move(k));
     ASSERT_TRUE(tree.insert(vk(raws.back()), bank.Make(i))) << "i=" << i;
   }
   ASSERT_EQ(tree.size(), kCount);
@@ -96,13 +96,13 @@ TEST(MasstreeLayered, LayerCollapseOnRemoval) {
   // suffix per key — total 33 bytes, forces 3 layers of nesting.
   const std::string prefix(24, 'L');
   constexpr size_t kCount = 64;
-  auto raws = rusty::Vec<std::string>::with_capacity(kCount);
+  auto raws = reserved_vector<std::string>(kCount);
   for (size_t i = 0; i < kCount; ++i) {
     std::string k = prefix;
     for (int j = 0; j < 9; ++j) {
       k.push_back(static_cast<char>((i * 7 + j) & 0xFF));
     }
-    raws.push(std::move(k));
+    raws.push_back(std::move(k));
     ASSERT_TRUE(tree.insert(vk(raws.back()), bank.Make(i)));
   }
   ASSERT_EQ(tree.size(), kCount);
@@ -132,18 +132,18 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   // length encode the test value.
   const std::string head = "ABCDEFGH";  // 8 bytes
   struct Spec { size_t suffix_len; char fill; uint64_t val; };
-  auto specs = rusty::Vec<Spec>::with_capacity(7);
-  specs.push({0,    '?', 1});     // exactly 8 bytes — no suffix, sits at root
-  specs.push({1,    'a', 2});     // 9 bytes — second slice partial
-  specs.push({7,    'b', 3});     // 15 bytes — second slice partial
-  specs.push({8,    'c', 4});     // 16 bytes — full second slice
-  specs.push({50,   'd', 5});     // multi-slice
-  specs.push({200,  'e', 6});     // forces layered descent
-  specs.push({1000, 'f', 7});     // near MASSTREE_MAX_KEY_LEN
-  auto raws = rusty::Vec<std::string>::with_capacity(specs.size());
+  auto specs = reserved_vector<Spec>(7);
+  specs.push_back({0,    '?', 1});     // exactly 8 bytes — no suffix, sits at root
+  specs.push_back({1,    'a', 2});     // 9 bytes — second slice partial
+  specs.push_back({7,    'b', 3});     // 15 bytes — second slice partial
+  specs.push_back({8,    'c', 4});     // 16 bytes — full second slice
+  specs.push_back({50,   'd', 5});     // multi-slice
+  specs.push_back({200,  'e', 6});     // forces layered descent
+  specs.push_back({1000, 'f', 7});     // near MASSTREE_MAX_KEY_LEN
+  auto raws = reserved_vector<std::string>(specs.size());
   for (const auto& s : specs) {
     std::string k = head + std::string(s.suffix_len, s.fill);
-    raws.push(std::move(k));
+    raws.push_back(std::move(k));
     ASSERT_TRUE(tree.insert(vk(raws.back()), bank.Make(s.val)))
         << "suffix_len=" << s.suffix_len;
   }
@@ -163,10 +163,10 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   // for len 0, 'a'..'f' for the rest).
   class Cb : public TestTree::search_range_callback {
    public:
-    ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
-    rusty::Vec<std::string> keys;
+    ~Cb() noexcept {}  // std::vector member -> force noexcept dtor
+    std::vector<std::string> keys;
     bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
-      keys.push(std::string(k.data(), k.length()));
+      keys.push_back(std::string(k.data(), k.length()));
       return true;
     }
   };
@@ -174,7 +174,7 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   const std::string lo_str = head;  // start at "ABCDEFGH"
   varkey lo = vk(lo_str);
   tree.search_range_call_unbounded(lo, cb);
-  ASSERT_EQ(cb.keys.len(), specs.len());
+  ASSERT_EQ(cb.keys.size(), specs.size());
   EXPECT_TRUE(std::is_sorted(cb.keys.begin(), cb.keys.end()));
 }
 
@@ -189,7 +189,7 @@ TEST(MasstreeLayered, SliceBoundaryFuzz) {
   TestTree tree;
   StorageBank bank;
 
-  auto keys = rusty::Vec<std::string>::with_capacity(32);
+  auto keys = reserved_vector<std::string>(32);
   for (int len = 1; len <= 32; ++len) {
     // Deterministic content tied to length so lookups by length
     // resolve unambiguously.
@@ -197,12 +197,12 @@ TEST(MasstreeLayered, SliceBoundaryFuzz) {
     for (int j = 0; j < len; ++j) {
       k.push_back(static_cast<char>('A' + ((len + j) % 26)));
     }
-    keys.push(std::move(k));
+    keys.push_back(std::move(k));
   }
 
   // Build a 0..N-1 permutation and shuffle it deterministically.
-  auto order = rusty::Vec<size_t>::with_capacity(keys.size());
-  for (size_t i = 0; i < keys.size(); ++i) order.push(i);
+  auto order = reserved_vector<size_t>(keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) order.push_back(i);
   std::mt19937 rng(0xBADC0FFEEull);
   std::shuffle(order.begin(), order.end(), rng);
 

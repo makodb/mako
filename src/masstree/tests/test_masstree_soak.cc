@@ -1,3 +1,4 @@
+#include "test_std.h"
 // Tier 8 of docs/masstree-test-plan.md — long-running soak / chaos.
 //
 // One test that runs a sustained mixed workload (writers, removers,
@@ -34,14 +35,13 @@
 
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 volatile mrcu_epoch_type globalepoch = 1;
 
@@ -151,12 +151,12 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
+  auto threads = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(
       kWriters + kRemovers + kReaders + kScanners);
-  for (int w = 0; w < kWriters; ++w) threads.push(rusty::thread::spawn(writer_body, w));
-  for (int r = 0; r < kRemovers; ++r) threads.push(rusty::thread::spawn(remover_body, r));
-  for (int r = 0; r < kReaders; ++r) threads.push(rusty::thread::spawn(reader_body));
-  for (int s = 0; s < kScanners; ++s) threads.push(rusty::thread::spawn(scanner_body));
+  for (int w = 0; w < kWriters; ++w) threads.push_back(rusty::thread::spawn(writer_body, w));
+  for (int r = 0; r < kRemovers; ++r) threads.push_back(rusty::thread::spawn(remover_body, r));
+  for (int r = 0; r < kReaders; ++r) threads.push_back(rusty::thread::spawn(reader_body));
+  for (int s = 0; s < kScanners; ++s) threads.push_back(rusty::thread::spawn(scanner_body));
 
   while (std::chrono::steady_clock::now() < deadline) {
     rusty::thread::sleep(std::chrono::milliseconds(200));

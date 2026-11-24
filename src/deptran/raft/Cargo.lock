@@ -31,78 +31,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lion-executor"
-version = "0.1.0"
-dependencies = [
- "lion-executor-spec",
- "lion-framework-spec",
- "lion-reactor",
- "lion-reactor-spec",
- "lion-slab",
- "lion-timer-wheel",
- "lion-utility-spec",
- "vstd",
-]
-
-[[package]]
-name = "lion-executor-spec"
-version = "0.1.0"
-dependencies = [
- "lion-framework-spec",
- "vstd",
-]
-
-[[package]]
-name = "lion-framework-spec"
-version = "0.1.0"
-dependencies = [
- "vstd",
-]
-
-[[package]]
-name = "lion-reactor"
-version = "0.1.0"
-dependencies = [
- "lion-framework-spec",
- "lion-reactor-spec",
- "lion-slab",
- "lion-timer-wheel",
- "lion-utility-spec",
- "vstd",
-]
-
-[[package]]
-name = "lion-reactor-spec"
-version = "0.1.0"
-dependencies = [
- "lion-framework-spec",
- "lion-utility-spec",
- "vstd",
-]
-
-[[package]]
-name = "lion-slab"
-version = "0.1.0"
-dependencies = [
- "vstd",
-]
-
-[[package]]
-name = "lion-timer-wheel"
-version = "0.1.0"
-dependencies = [
- "vstd",
-]
-
-[[package]]
-name = "lion-utility-spec"
-version = "0.1.0"
-dependencies = [
- "lion-framework-spec",
- "vstd",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -118,16 +46,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "raft"
-version = "0.0.0"
-dependencies = [
- "raft-core",
- "raft-replay",
- "raft-store",
- "rusty",
 ]
 
 [[package]]
@@ -147,37 +65,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "raft-rt"
-version = "0.0.0"
-dependencies = [
- "raft",
- "raft-store",
- "rusty",
- "srpc",
-]
-
-[[package]]
 name = "raft-store"
 version = "0.0.0"
-
-[[package]]
-name = "rusty"
-version = "0.0.0"
-dependencies = [
- "rusty-cpp-markers",
-]
-
-[[package]]
-name = "rusty-cpp-markers"
-version = "0.0.0"
-
-[[package]]
-name = "srpc"
-version = "0.0.0"
-dependencies = [
- "lion-executor",
- "lion-reactor",
-]
 
 [[package]]
 name = "syn"

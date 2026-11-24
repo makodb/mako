@@ -50,11 +50,17 @@ def stop(processes):
         try:
             child.wait(timeout=max(0.01, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGTERM)
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 child.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 child.wait()
 
 

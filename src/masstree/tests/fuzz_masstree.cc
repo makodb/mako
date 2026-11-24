@@ -1,3 +1,4 @@
+#include "test_std.h"
 // Tier 6 of docs/masstree-test-plan.md — libFuzzer differential harness.
 //
 // Decodes the libFuzzer-supplied byte stream into a sequence of
@@ -19,13 +20,12 @@
 #include <stdlib.h>
 
 #include <rusty/box.hpp>
-#include <rusty/vec.hpp>
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 using TestTree = single_threaded_btree;
 
@@ -71,14 +71,14 @@ class ByteStream {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   TestTree tree;
-  auto oracle = rusty::BTreeMap<std::string, uint64_t>::new_();
+  auto oracle = std::map<std::string, uint64_t>{};
   // Heap-backed value storage so the pointers Masstree retains stay
   // alive until tree destruction. libFuzzer creates a fresh
   // (tree, oracle) per invocation, so growth is bounded by the input
   // length.
-  rusty::Vec<rusty::Box<uint64_t>> storage;
+  std::vector<rusty::Box<uint64_t>> storage;
   auto MakeValue = [&](uint64_t v) -> TestTree::value_type {
-    storage.push(rusty::Box<uint64_t>::make(v));
+    storage.push_back(rusty::Box<uint64_t>::make(v));
     return reinterpret_cast<TestTree::value_type>(storage.back().get());
   };
   auto Decode = [](TestTree::value_type p) -> uint64_t {
@@ -102,8 +102,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       case 0: {  // insert (always overwrites; returns true iff new key)
         if (!s.has(8)) return 0;
         const uint64_t v = s.u64();
-        const bool oracle_was_new = !oracle.contains_key(key);
-        oracle.insert(key, v);
+        const bool oracle_was_new = !oracle.contains(key);
+        oracle.insert_or_assign(key, v);
         const bool tree_was_new = tree.insert(vk(key), MakeValue(v));
         if (tree_was_new != oracle_was_new) Diverge("insert.return");
         break;
@@ -111,24 +111,24 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       case 1: {  // insert_if_absent
         if (!s.has(8)) return 0;
         const uint64_t v = s.u64();
-        const bool oracle_existed = oracle.contains_key(key);
+        const bool oracle_existed = oracle.contains(key);
         const bool tree_inserted = tree.insert_if_absent(vk(key), MakeValue(v));
         if (tree_inserted == oracle_existed) Diverge("insert_if_absent.return");
-        if (tree_inserted) oracle.insert(key, v);
+        if (tree_inserted) oracle.insert_or_assign(key, v);
         break;
       }
       case 2: {  // remove
-        const bool oracle_existed = oracle.remove(key).is_some();
+        const bool oracle_existed = oracle.erase(key) != 0;
         const bool tree_removed = tree.remove(vk(key));
         if (tree_removed != oracle_existed) Diverge("remove.return");
         break;
       }
       case 3: {  // search
-        auto oracle_val = oracle.get(key);
+        auto oracle_val = oracle.find(key);
         TestTree::value_type out = nullptr;
         const bool tree_found = tree.search(vk(key), out);
-        if (tree_found != oracle_val.is_some()) Diverge("search.return");
-        if (tree_found && Decode(out) != oracle_val.unwrap()) Diverge("search.value");
+        if (tree_found != (oracle_val != oracle.end())) Diverge("search.return");
+        if (tree_found && Decode(out) != oracle_val->second) Diverge("search.value");
         break;
       }
     }
@@ -138,10 +138,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // sorted order with matching values.
   class Cb : public TestTree::search_range_callback {
    public:
-    ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
-    rusty::Vec<std::pair<std::string, uint64_t>> seen;
+    ~Cb() noexcept {}  // std::vector member -> force noexcept dtor
+    std::vector<std::pair<std::string, uint64_t>> seen;
     bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
-      seen.push(std::pair<std::string, uint64_t>(
+      seen.push_back(std::pair<std::string, uint64_t>(
           std::string(k.data(), k.length()),
           *reinterpret_cast<const uint64_t*>(v)));
       return true;
@@ -152,13 +152,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   varkey lo = vk(empty_key);
   tree.search_range_call_unbounded(lo, cb);
 
-  if (cb.seen.len() != oracle.len()) Diverge("scan.size");
+  if (cb.seen.size() != oracle.size()) Diverge("scan.size");
   size_t i = 0;
-  auto scan_it = oracle.iter();
-  while (true) {
-    auto scan_e = scan_it.next();
-    if (scan_e.is_none()) break;
-    auto [k, v] = scan_e.unwrap();
+  for (const auto& [k, v] : oracle) {
     if (cb.seen[i].first != k) Diverge("scan.key");
     if (cb.seen[i].second != v) Diverge("scan.value");
     ++i;

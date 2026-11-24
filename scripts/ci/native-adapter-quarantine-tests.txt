@@ -1,0 +1,2 @@
+# The existing native adapter's deliberate post-install quarantine case.
+sto-tpcc-ffi|lib|tests::post_install_row_count_failure_marks_runtime_indeterminate

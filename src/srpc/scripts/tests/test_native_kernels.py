@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Negative controls for the reviewed C kernels and C++ adapters."""
+"""Negative controls for the reviewed C kernels and rejected C++ additions."""
 import json
 from pathlib import Path
 import shutil
@@ -27,7 +27,7 @@ class NativeKernelAuditTests(unittest.TestCase):
         (self.repo / "scripts").mkdir()
         for name in ("native-kernels.json", "native-kernel-sources.txt"):
             shutil.copy(source / "scripts" / name, self.repo / "scripts")
-        for name in ("build.rs", "CMakeLists.txt"):
+        for name in ("build.rs",):
             shutil.copy(source / name, self.repo)
 
     def findings(self):
@@ -50,18 +50,10 @@ class NativeKernelAuditTests(unittest.TestCase):
         path.write_text(path.read_text() + "\nint retry_forever(void) { for (;;) {} }\n")
         self.assertIn("changed native kernel/header", self.findings())
 
-    def test_policy_added_to_adapter_header_is_rejected(self):
-        path = self.repo / "misc" / "serializable_support.hpp"
+    def test_policy_added_to_native_header_is_rejected(self):
+        path = self.repo / "misc" / "srpc_timing.h"
         path.write_text(path.read_text() + "\ninline int serialize_fake() { return 0; }\n")
         self.assertIn("changed native kernel/header", self.findings())
-
-    def test_policy_added_to_root_import_headers_is_rejected(self):
-        for name in ("srpc.hpp", "std_compat.hpp"):
-            with self.subTest(header=name):
-                path = self.repo / name
-                path.write_text(path.read_text() +
-                    "\nnamespace srpc { inline int hidden_policy(int value) { return value + 1; } }\n")
-                self.assertIn(f"changed native kernel/header: {name};", self.findings())
 
     def test_new_root_carriers_are_rejected(self):
         for suffix in (".c", ".cpp", ".hpp", ".inc"):
@@ -76,9 +68,9 @@ class NativeKernelAuditTests(unittest.TestCase):
                     self.assertIn("manifest must list every", findings)
                 path.unlink()
 
-    def test_missing_root_header_is_rejected(self):
-        (self.repo / "srpc.hpp").unlink()
-        self.assertIn("stale native kernel inventory entry: srpc.hpp", self.findings())
+    def test_missing_native_header_is_rejected(self):
+        (self.repo / "misc/srpc_rand.h").unlink()
+        self.assertIn("stale native kernel inventory entry: misc/srpc_rand.h", self.findings())
 
     def test_native_manifest_missing_source_is_rejected(self):
         path = self.repo / "scripts" / "native-kernel-sources.txt"
@@ -95,13 +87,10 @@ class NativeKernelAuditTests(unittest.TestCase):
         path.write_text(path.read_text().replace('sources.push(source);', 'sources.push("misc/srpc_io.c");'))
         self.assertIn("native manifest consumer changed", self.findings())
 
-    def test_cpp_native_linkage_drift_is_rejected(self):
+    def test_cpp_build_path_is_rejected(self):
         path = self.repo / "CMakeLists.txt"
-        path.write_text(path.read_text().replace(
-            "target_sources(srpc PRIVATE ${SRPC_NATIVE_SOURCES})",
-            "target_sources(srpc PRIVATE misc/srpc_io.c)"))
-        with self.assertRaisesRegex(ValueError, "production native sources"):
-            self.findings()
+        path.write_text("add_library(srpc misc/srpc_io.c)\n")
+        self.assertIn("retired SRPC CMake compilation path", self.findings())
 
     def test_stale_native_inventory_is_rejected(self):
         (self.repo / "misc" / "srpc_io.c").unlink()

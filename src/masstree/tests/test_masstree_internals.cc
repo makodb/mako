@@ -1,3 +1,4 @@
+#include "test_std.h"
 /**
  * test_masstree_internals.cc
  *
@@ -17,18 +18,17 @@
 #include <gtest/gtest.h>
 
 // No <rusty/hashset.hpp>: upstream deleted the header-form HashMap/HashSet
-// (rusty-cpp task #185). rusty::HashSet now comes from the std_port module,
-// re-aliased by `import rusty;` below.
+// (rusty-cpp task #185). std::unordered_set now comes from the std_port module,
+// re-aliased by `` below.
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 // Masstree headers
 #include "masstree/masstree_context.h"
 #include "masstree/kvthread.hh"
 
 import std;
-import rusty;
+
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
@@ -145,13 +145,13 @@ TEST_F(MasstreeInternalsTest, ThreadInfoCreation) {
 // Test 2: Multiple ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultipleThreadInfoCreation) {
     const int COUNT = 5;
-    auto infos = rusty::Vec<threadinfo*>::with_capacity(COUNT);
+    auto infos = reserved_vector<threadinfo*>(COUNT);
 
     for (int i = 0; i < COUNT; ++i) {
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 2000 + i);
         ASSERT_NE(ti, nullptr);
         EXPECT_EQ(ti->index(), 2000 + i);
-        infos.push(ti);
+        infos.push_back(ti);
     }
 
     // Verify all are in the list
@@ -161,10 +161,10 @@ TEST_F(MasstreeInternalsTest, MultipleThreadInfoCreation) {
     //   deref_if_pointer_like(self_) == rusty::borrow(key)
     // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
     // dereferences BOTH sides and then demands `operator==` on the pointee — so
-    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // `std::unordered_set<threadinfo*>` no longer compiles. The retired hashbrown_port
     // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
     // semantics these assertions want; revert if upstream stops dereferencing.
-    rusty::HashSet<uintptr_t> found_set;
+    std::unordered_set<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
         found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
@@ -465,13 +465,13 @@ TEST_F(MasstreeInternalsTest, ThreadPurposes) {
 // Test 10: Multi-threaded ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
+    auto threads = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(NUM_THREADS);
     rusty::sync::atomic::Atomic<int> created{0};
-    auto thread_infos = rusty::Vec<threadinfo*>::with_capacity(NUM_THREADS);
-    for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push(nullptr);
+    auto thread_infos = reserved_vector<threadinfo*>(NUM_THREADS);
+    for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push_back(nullptr);
 
     for (int i = 0; i < NUM_THREADS; ++i) {
-        threads.push(rusty::thread::spawn([i, &created, &thread_infos]() {
+        threads.push_back(rusty::thread::spawn([i, &created, &thread_infos]() {
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 6000 + i);
             ASSERT_NE(ti, nullptr);
             EXPECT_EQ(ti->index(), 6000 + i);
@@ -493,10 +493,10 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     //   deref_if_pointer_like(self_) == rusty::borrow(key)
     // (transpiled/std_port/hashbrown/hashbrown.cppm), which for a raw-pointer key
     // dereferences BOTH sides and then demands `operator==` on the pointee — so
-    // `rusty::HashSet<threadinfo*>` no longer compiles. The retired hashbrown_port
+    // `std::unordered_set<threadinfo*>` no longer compiles. The retired hashbrown_port
     // accepted pointer keys. uintptr_t keeps exactly the pointer-identity
     // semantics these assertions want; revert if upstream stops dereferencing.
-    rusty::HashSet<uintptr_t> found_set;
+    std::unordered_set<uintptr_t> found_set;
     for (threadinfo* t = ctx_->get_allthreads(); t; t = t->next()) {
         found_set.insert(reinterpret_cast<uintptr_t>(t));
     }
@@ -511,11 +511,11 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
 // Test 11: Multi-threaded RCU Operations
 TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
+    auto threads = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(NUM_THREADS);
     rusty::sync::atomic::Atomic<int> completed{0};
 
     for (int i = 0; i < NUM_THREADS; ++i) {
-        threads.push(rusty::thread::spawn([i, &completed]() {
+        threads.push_back(rusty::thread::spawn([i, &completed]() {
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 7000 + i);
             ASSERT_NE(ti, nullptr);
 
@@ -577,9 +577,9 @@ TEST_F(MasstreeInternalsTest, GlobalEpochShared) {
 // Test 13: Allthreads list integrity
 TEST_F(MasstreeInternalsTest, AllthreadsListIntegrity) {
     // Create several threadinfos
-    auto infos = rusty::Vec<threadinfo*>::with_capacity(10);
+    auto infos = reserved_vector<threadinfo*>(10);
     for (int i = 0; i < 10; ++i) {
-        infos.push(threadinfo::make(threadinfo::TI_PROCESS, 9000 + i));
+        infos.push_back(threadinfo::make(threadinfo::TI_PROCESS, 9000 + i));
     }
 
     // Walk the list and count - should be consistent

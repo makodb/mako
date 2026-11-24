@@ -1,20 +1,20 @@
+#include "test_std.h"
 #include <stdint.h>
 #include <stddef.h>
 
 #include <rusty/box.hpp>
 // No <rusty/hashmap.hpp>: upstream deleted the header-form HashMap/HashSet
-// (rusty-cpp task #185). rusty::HashMap now comes from the std_port module,
-// re-aliased by `import rusty;` below.
+// (rusty-cpp task #185). std::unordered_map now comes from the std_port module,
+// re-aliased by `` below.
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 // Required by Masstree's RCU machinery when concurrent_btree is used.
 volatile mrcu_epoch_type globalepoch = 1;
@@ -37,12 +37,12 @@ struct BenchmarkConfig {
   size_t repetitions = 1;
   // Thread counts for the concurrent_btree scenarios. Empty disables
   // them entirely (single-thread scenarios still run).
-  rusty::Vec<size_t> thread_counts;
+  std::vector<size_t> thread_counts;
 };
 
 struct BenchmarkSummary {
   BenchmarkConfig config;
-  rusty::Vec<ScenarioResult> results;
+  std::vector<ScenarioResult> results;
 };
 
 namespace {
@@ -67,8 +67,8 @@ class StorageBank {
  public:
   // Eager-allocate so per-key allocation cost is paid once at construction,
   // not measured inside the benchmarked loop.
-  explicit StorageBank(size_t n) : slots_(rusty::Vec<rusty::Box<uint64_t>>::with_capacity(n)) {
-    for (size_t i = 0; i < n; ++i) slots_.push(rusty::Box<uint64_t>::make(i));
+  explicit StorageBank(size_t n) : slots_(reserved_vector<rusty::Box<uint64_t>>(n)) {
+    for (size_t i = 0; i < n; ++i) slots_.push_back(rusty::Box<uint64_t>::make(i));
   }
 
   PerfTree::value_type ValueFor(size_t idx) {
@@ -76,34 +76,34 @@ class StorageBank {
   }
 
  private:
-  rusty::Vec<rusty::Box<uint64_t>> slots_;
+  std::vector<rusty::Box<uint64_t>> slots_;
 };
 
 class BenchmarkHarness {
  public:
   explicit BenchmarkHarness(BenchmarkConfig cfg)
       : cfg_(std::move(cfg)),
-        keys_(rusty::Vec<u64_varkey>::with_capacity(cfg_.key_count)),
-        sequential_order_(rusty::Vec<size_t>::with_capacity(cfg_.key_count)) {
+        keys_(reserved_vector<u64_varkey>(cfg_.key_count)),
+        sequential_order_(reserved_vector<size_t>(cfg_.key_count)) {
     for (size_t i = 0; i < cfg_.key_count; ++i) {
-      keys_.push(u64_varkey(static_cast<uint64_t>(i)));
-      sequential_order_.push(i);
+      keys_.push_back(u64_varkey(static_cast<uint64_t>(i)));
+      sequential_order_.push_back(i);
     }
   }
 
   BenchmarkSummary RunAll() {
     BenchmarkSummary summary;
     summary.config = cfg_;
-    summary.results.push(BestOf([this]{ return RunSequentialInsert(); }));
-    summary.results.push(BestOf([this]{ return RunRandomInsert(); }));
-    summary.results.push(BestOf([this]{ return RunRandomLookup(); }));
-    summary.results.push(BestOf([this]{ return RunMixedReadWrite(); }));
-    summary.results.push(BestOf([this]{ return RunRangeScan(); }));
-    summary.results.push(BestOf([this]{ return RunSequentialRemove(); }));
+    summary.results.push_back(BestOf([this]{ return RunSequentialInsert(); }));
+    summary.results.push_back(BestOf([this]{ return RunRandomInsert(); }));
+    summary.results.push_back(BestOf([this]{ return RunRandomLookup(); }));
+    summary.results.push_back(BestOf([this]{ return RunMixedReadWrite(); }));
+    summary.results.push_back(BestOf([this]{ return RunRangeScan(); }));
+    summary.results.push_back(BestOf([this]{ return RunSequentialRemove(); }));
     for (size_t t : cfg_.thread_counts) {
-      summary.results.push(BestOf([this, t]{ return RunParallelInsert(t); }));
-      summary.results.push(BestOf([this, t]{ return RunParallelLookup(t); }));
-      summary.results.push(BestOf([this, t]{ return RunParallelMixed(t); }));
+      summary.results.push_back(BestOf([this, t]{ return RunParallelInsert(t); }));
+      summary.results.push_back(BestOf([this, t]{ return RunParallelLookup(t); }));
+      summary.results.push_back(BestOf([this, t]{ return RunParallelMixed(t); }));
     }
     return summary;
   }
@@ -249,7 +249,7 @@ class BenchmarkHarness {
   }
 
   void PopulateTree(PerfTree* tree, StorageBank* bank,
-                    const rusty::Vec<size_t>& order) {
+                    const std::vector<size_t>& order) {
     for (size_t idx : order) {
       tree->insert(keys_[idx], bank->ValueFor(idx));
     }
@@ -275,9 +275,9 @@ class BenchmarkHarness {
   template <typename WorkerFn>
   static std::chrono::nanoseconds RunParallel(size_t threads, WorkerFn&& fn) {
     rusty::sync::atomic::Atomic<bool> go{false};
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(threads);
+    auto workers = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(threads);
     for (size_t t = 0; t < threads; ++t) {
-      workers.push(rusty::thread::spawn([&, t]() {
+      workers.push_back(rusty::thread::spawn([&, t]() {
         while (!go.load(rusty::sync::atomic::Ordering::Acquire)) {
           rusty::thread::yield_now();
         }
@@ -351,8 +351,8 @@ class BenchmarkHarness {
   }
 
   BenchmarkConfig cfg_;
-  rusty::Vec<u64_varkey> keys_;
-  rusty::Vec<size_t> sequential_order_;
+  std::vector<u64_varkey> keys_;
+  std::vector<size_t> sequential_order_;
   std::mt19937_64 rng_{42};
 };
 
@@ -373,12 +373,12 @@ void WriteJson(const BenchmarkSummary& summary, const std::string& output_path) 
   out << "    \"repetitions\": " << summary.config.repetitions << "\n";
   out << "  },\n";
   out << "  \"results\": [\n";
-  for (size_t i = 0; i < summary.results.len(); ++i) {
+  for (size_t i = 0; i < summary.results.size(); ++i) {
     const auto& result = summary.results[i];
     out << "    { \"name\": \"" << result.name << "\", "
         << "\"ops_per_sec\": " << result.ops_per_sec << ", "
         << "\"operations\": " << result.operations << " }";
-    if (i + 1 != summary.results.len()) {
+    if (i + 1 != summary.results.size()) {
       out << ",";
     }
     out << "\n";
@@ -387,7 +387,7 @@ void WriteJson(const BenchmarkSummary& summary, const std::string& output_path) 
   out << "}\n";
 }
 
-rusty::HashMap<std::string, double> LoadBaseline(const std::string& path) {
+std::unordered_map<std::string, double> LoadBaseline(const std::string& path) {
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error("failed to open baseline file: " + path);
@@ -395,7 +395,7 @@ rusty::HashMap<std::string, double> LoadBaseline(const std::string& path) {
   std::stringstream buffer;
   buffer << in.rdbuf();
   std::string content = buffer.str();
-  rusty::HashMap<std::string, double> metrics;
+  std::unordered_map<std::string, double> metrics;
   size_t pos = 0;
   while ((pos = content.find("\"name\"", pos)) != std::string::npos) {
     auto name_start = content.find('"', pos + 6);
@@ -418,7 +418,7 @@ rusty::HashMap<std::string, double> LoadBaseline(const std::string& path) {
     auto ops_end = content.find_first_of(",}\n", ops_pos + 1);
     std::string token = content.substr(ops_pos + 1, ops_end - ops_pos - 1);
     try {
-      metrics.insert(std::move(name), std::stod(token));
+      metrics.insert_or_assign(std::move(name), std::stod(token));
     } catch (...) {
       // Ignore parse failures.
     }
@@ -432,17 +432,17 @@ rusty::HashMap<std::string, double> LoadBaseline(const std::string& path) {
 // means "the worst-regressed scenario is 3.4 % slower than baseline."
 // Scenarios missing from baseline are skipped (no comparison possible).
 double PrintComparison(const BenchmarkSummary& summary,
-                       const rusty::HashMap<std::string, double>& baseline) {
+                       const std::unordered_map<std::string, double>& baseline) {
   std::cout << "Performance comparison vs. baseline:\n";
   double worst_delta_pct = 0.0;
   bool any_compared = false;
   for (const auto& result : summary.results) {
-    auto v_ptr = baseline.get(result.name);
-    if (v_ptr.is_none()) {
+    auto v_ptr = baseline.find(result.name);
+    if (v_ptr == baseline.end()) {
       std::cout << "  " << result.name << ": no baseline\n";
       continue;
     }
-    double baseline_val = v_ptr.unwrap();
+    double baseline_val = v_ptr->second;
     double delta = result.ops_per_sec - baseline_val;
     double pct = baseline_val == 0.0 ? 0.0 : (delta / baseline_val) * 100.0;
     std::cout << "  " << result.name << ": current=" << result.ops_per_sec
@@ -471,8 +471,8 @@ void PrintUsage(const char* prog) {
             << "                          is more than PCT %% slower (default off)\n";
 }
 
-rusty::Vec<size_t> ParseThreadList(const std::string& s) {
-  rusty::Vec<size_t> out;
+std::vector<size_t> ParseThreadList(const std::string& s) {
+  std::vector<size_t> out;
   size_t i = 0;
   while (i < s.size()) {
     size_t j = s.find(',', i);
@@ -480,7 +480,7 @@ rusty::Vec<size_t> ParseThreadList(const std::string& s) {
     if (j > i) {
       try {
         size_t n = std::stoull(s.substr(i, j - i));
-        if (n > 0) out.push(n);
+        if (n > 0) out.push_back(n);
       } catch (...) {
         throw std::runtime_error("invalid --threads list: " + s);
       }

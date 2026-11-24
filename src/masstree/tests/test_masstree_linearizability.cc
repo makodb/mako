@@ -1,3 +1,4 @@
+#include "test_std.h"
 // Tier 3.2 of docs/masstree-test-plan.md — linearizability check for the
 // concurrent Masstree on a small per-key keyspace.
 //
@@ -35,14 +36,13 @@
 #include <rusty/option.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
-#include <rusty/vec.hpp>
 
 #include "masstree/kvthread.hh"
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
-import rusty;
+
 
 volatile mrcu_epoch_type globalepoch = 1;
 
@@ -122,10 +122,10 @@ ApplyResult Apply(const Op& op, KeyState state) {
   return r;
 }
 
-bool TryLinearize(rusty::Vec<Op*>& pending, KeyState state) {
-  if (pending.is_empty()) return true;
+bool TryLinearize(std::vector<Op*>& pending, KeyState state) {
+  if (pending.empty()) return true;
 
-  for (size_t i = 0; i < pending.len(); ++i) {
+  for (size_t i = 0; i < pending.size(); ++i) {
     Op* candidate = pending[i];
 
     // Check candidate has no required predecessor among pending ops.
@@ -146,20 +146,20 @@ bool TryLinearize(rusty::Vec<Op*>& pending, KeyState state) {
 
     // Remove candidate, recurse.
     std::swap(pending[i], pending.back());
-    auto _ = pending.pop();
+    pending.pop_back();
     if (TryLinearize(pending, std::move(ar.new_state))) return true;
-    pending.push(candidate);
+    pending.push_back(candidate);
     std::swap(pending[i], pending.back());
   }
   return false;
 }
 
-bool CheckPerKeyLinearizability(rusty::Vec<Op>& ops_for_key) {
+bool CheckPerKeyLinearizability(std::vector<Op>& ops_for_key) {
   // Sort by begin_seq for a more constrained (faster) search.
   std::sort(ops_for_key.begin(), ops_for_key.end(),
             [](const Op& a, const Op& b) { return a.begin_seq < b.begin_seq; });
-  auto pending = rusty::Vec<Op*>::with_capacity(ops_for_key.len());
-  for (auto& o : ops_for_key) pending.push(&o);
+  auto pending = reserved_vector<Op*>(ops_for_key.size());
+  for (auto& o : ops_for_key) pending.push_back(&o);
   return TryLinearize(pending, rusty::None);
 }
 
@@ -173,7 +173,7 @@ const char* KindName(OpKind k) {
   return "?";
 }
 
-std::string DumpOps(const rusty::Vec<Op>& ops) {
+std::string DumpOps(const std::vector<Op>& ops) {
   std::ostringstream os;
   for (const auto& o : ops) {
     os << "  t" << o.thread_id << " [" << o.begin_seq << "," << o.end_seq << "] "
@@ -197,9 +197,9 @@ void RunLinearizabilitySession(uint64_t seed) {
   constexpr int kOpsPerThread = 30;
   constexpr int kKeyspace = 8;
 
-  auto per_thread = rusty::Vec<rusty::Vec<Op>>::with_capacity(kThreads);
+  auto per_thread = reserved_vector<std::vector<Op>>(kThreads);
   for (int t = 0; t < kThreads; ++t) {
-    per_thread.push(rusty::Vec<Op>::with_capacity(kOpsPerThread));
+    per_thread.push_back(reserved_vector<Op>(kOpsPerThread));
   }
 
   std::array<uint64_t, kThreads> thread_seeds{};
@@ -242,44 +242,38 @@ void RunLinearizabilitySession(uint64_t seed) {
       }
 
       op.end_seq = clock.fetch_add(1, rusty::sync::atomic::Ordering::SeqCst);
-      log.push(op);
+      log.push_back(op);
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
+  auto threads = reserved_vector<rusty::thread::JoinHandle<rusty::thread::Unit>>(kThreads);
   for (int t = 0; t < kThreads; ++t) {
-    threads.push(rusty::thread::spawn(thread_body, t));
+    threads.push_back(rusty::thread::spawn(thread_body, t));
   }
   for (auto& th : threads) { auto _ = th.join(); }
 
   // Bucket ops by key.
-  auto per_key = rusty::BTreeMap<uint64_t, rusty::Vec<Op>>::new_();
+  auto per_key = std::map<uint64_t, std::vector<Op>>{};
   for (auto& pt : per_thread) {
     for (auto& op : pt) {
-      if (!per_key.contains_key(op.key)) {
-        per_key.insert(op.key, rusty::Vec<Op>::new_());
-      }
-      per_key.get_mut(op.key).unwrap().push(op);
+      per_key[op.key].push_back(op);
     }
   }
 
-  rusty::Vec<uint64_t> keys;
+  std::vector<uint64_t> keys;
   {
-    auto key_it = per_key.iter();
-    while (true) {
-      auto key_e = key_it.next();
-      if (key_e.is_none()) break;
-      keys.push(std::get<0>(key_e.unwrap()));
+    for (const auto& [key, ops] : per_key) {
+      keys.push_back(key);
     }
   }
-  for (size_t ki = 0; ki < keys.len(); ++ki) {
+  for (size_t ki = 0; ki < keys.size(); ++ki) {
     const uint64_t k = keys[ki];
-    rusty::Vec<Op>& ops = per_key.get_mut(k).unwrap();
+    std::vector<Op>& ops = per_key.at(k);
     const bool ok = CheckPerKeyLinearizability(ops);
     ASSERT_TRUE(ok)
         << "non-linearizable history at key=" << k
         << " seed=0x" << std::hex << seed << std::dec
-        << " ops=" << ops.len() << "\n"
+        << " ops=" << ops.size() << "\n"
         << DumpOps(ops);
   }
 }

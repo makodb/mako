@@ -66,6 +66,11 @@ if(_native_sanitizer)
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+option(MAKO_STORAGE_TESTS_ONLY "Build the separate C++ Masstree component tests" OFF)
+if(MAKO_STORAGE_TESTS_ONLY)
+    include("${CMAKE_SOURCE_DIR}/src/masstree/CMakeLists.txt")
+    return()
+endif()
 add_custom_target(native_storage_source_audit ALL
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_native_rust_build.py"
         --build "${CMAKE_BINARY_DIR}" --archive "$<TARGET_FILE:mako_native_storage>"
@@ -228,6 +233,15 @@ add_custom_target(rust_native_dependency_audit
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/audit_native_dependencies.py"
         --build "${CMAKE_BINARY_DIR}" --cargo "${MAKO_NATIVE_CARGO}"
         --nm "${CMAKE_NM}"
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_custom_target(rust_native_quality
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
+        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --all-targets -- -D warnings
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
+        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --doc
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit

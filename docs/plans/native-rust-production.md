@@ -40,7 +40,7 @@ Completion requires:
 | 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Complete |
 | 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Complete |
 | 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | In progress |
-| 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | Pending |
+| 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | In progress |
 
 Stages may overlap where a dependency requires it. A stage is complete only
 after its checks pass; failures and remaining gaps stay recorded here. Work
@@ -490,3 +490,24 @@ these existing components while preserving the current application contracts.
   a duration-based throttled workload passed. Native health-runner unit checks
   and shell/Python syntax checks passed. Source retirement, sanitizer port
   qualification, documentation and the final fresh-build audit remain.
+
++ Source-retirement checkpoint: removed 353 replaced first-party C/C++ sources,
+  obsolete generators/build scripts, the old Raft transpiler shell and unused
+  submodules. Root Raft is now a virtual workspace for core/store/replay.
+  The native production build passes after deletion. Current README, developer
+  instructions and SRPC instructions describe Cargo-only production.
++ `docs/developer/native-rust-retirement.md` maps removed application code and
+  test drivers to native coverage. Separate C++ storage tests use standard
+  containers and do not need a Rust-to-C++ collection provider.
+  `/tmp/mako-native-rust-storage-tests-04.log`: 236 storage tests passed.
+  Soak/performance target qualification is in progress in a fresh profile.
++ `/tmp/mako-native-rust-proof-gates-01.log`: native sharding and host Verus
+  gates passed, including semantic negative controls. Production sharding
+  verified 1495 obligations and its independent model verified 707.
++ `/tmp/mako-native-rust-retired-gates-03.log`: actual native poison-transition
+  proof and copied-source SRPC independence passed after retirement. The
+  kernel inventory's negative controls now reject a restored CMake path.
++ The sanitizer driver has been ported to the storage-only archive and native
+  Cargo applications. Qualification is pending, including its rebuilt std,
+  exact quarantine inventory and leak controls. No sanitizer success is claimed
+  by this source-retirement checkpoint.

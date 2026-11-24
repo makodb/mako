@@ -1,12 +1,7 @@
-# Canonical Rust ownership for modules compiled directly by rustc and
-# translated into complete C++ module providers by rusty-cpp crate mode.
+# Native Rust source inventory for isolation and source audits.
+# cpp_module retains the historical logical namespace used by the AST pins;
+# no C++ providers or transpiler consume this file.
 schema_version = 2
-
-# Crate-level flat-import namespace: crate mode passes
-# --flat-import-namespace srpc, so every private
-# `use crate::<child>::<Name leaves>;` item in a canonical source carries an
-# implicit cpp_import_namespace(srpc) contract; per-item markers are gone.
-flat_import_namespace = "srpc"
 
 [[module]]
 cpp_module = "srpc.basetypes"
