@@ -511,3 +511,15 @@ these existing components while preserving the current application contracts.
   Cargo applications. Qualification is pending, including its rebuilt std,
   exact quarantine inventory and leak controls. No sanitizer success is claimed
   by this source-retirement checkpoint.
++ Fresh storage profile: all 238 tests passed, including the retained soak and
+  performance smoke. The Clippy gate found a cache-only helper compiled when
+  the cache feature is off; its cfg now matches its callers.
++ Initial sanitizer qualification exposed a fresh-process runner working-dir
+  bug in trybuild. Tests now use their Cargo crate directory. TSan also needs
+  the container to permit its ASLR personality syscall; the sanitizer workflow
+  records that requirement. These initial lanes did not pass.
++ The external redis-py suite exposed a four-argument CLIENT SETINFO handshake
+  being rejected by the RESP frame parser with a closed connection. The parser
+  now bounds argument count at 64 and returns the normal unsupported-command
+  error, allowing clients to continue. Native process coverage asserts the
+  handshake error followed by a successful PING on the same socket.

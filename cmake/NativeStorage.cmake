@@ -238,7 +238,7 @@ add_custom_target(rust_native_dependency_audit
 add_custom_target(rust_native_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --all-targets -- -D warnings
+        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --all-targets --no-deps -- -D warnings
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
         -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --doc

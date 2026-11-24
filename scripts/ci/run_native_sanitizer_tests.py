@@ -55,30 +55,30 @@ def main():
         if event.get("reason") == "compiler-artifact" and event.get("profile", {}).get("test") and event.get("executable"):
             package = Path(event["manifest_path"]).parent.name
             suite = "lib" if "lib" in event["target"]["kind"] else event["target"]["name"]
-            executables[event["executable"]] = (package, suite)
+            executables[event["executable"]] = (package, suite, str(Path(event["manifest_path"]).parent))
     if built.returncode:
         return built.returncode
     inventory = {}
-    for executable, (package, suite) in sorted(executables.items()):
-        listed = subprocess.check_output([executable, "--list", "--format", "terse"], text=True, timeout=180)
+    for executable, (package, suite, directory) in sorted(executables.items()):
+        listed = subprocess.check_output([executable, "--list", "--format", "terse"], cwd=directory, text=True, timeout=180)
         for line in listed.splitlines():
             if line.endswith(": test"):
                 identity = (package, suite, line.removesuffix(": test"))
                 if identity in inventory:
                     raise RuntimeError(f"duplicate test identity: {identity}")
-                inventory[identity] = executable
+                inventory[identity] = (executable, directory)
     if not inventory or quarantine - inventory.keys():
         raise RuntimeError(f"missing tests or quarantine identities: {quarantine - inventory.keys()}")
     report = {"passed": False, "tests": [], "quarantine": [list(i) for i in sorted(quarantine)]}
     args.report.parent.mkdir(exist_ok=True, parents=True)
     try:
-        for index, (identity, executable) in enumerate(sorted(inventory.items())):
+        for index, (identity, (executable, directory)) in enumerate(sorted(inventory.items())):
             environment = os.environ.copy()
             qualified = address and identity in quarantine
             if qualified:
                 environment["ASAN_OPTIONS"] = environment["ASAN_OPTIONS"].replace("detect_leaks=1", "detect_leaks=0")
             result = subprocess.run([executable, identity[2], "--exact", "--include-ignored", "--test-threads=1"],
-                                    env=environment, text=True, capture_output=True, timeout=600)
+                                    cwd=directory, env=environment, text=True, capture_output=True, timeout=600)
             output = result.stdout + result.stderr
             log = args.report.with_name(f"{args.report.stem}-{index}.log")
             log.write_text(output)

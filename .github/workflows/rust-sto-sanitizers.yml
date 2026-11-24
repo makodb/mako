@@ -43,6 +43,8 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24@sha256:3bf4d101ad119672560a28c0c7eb5fbf5e36c1695437382f8393aa5e26644628
+      # TSan may re-exec with ADDR_NO_RANDOMIZE on high-entropy ASLR hosts.
+      options: --security-opt seccomp=unconfined
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

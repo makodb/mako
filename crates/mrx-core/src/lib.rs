@@ -156,6 +156,7 @@ pub enum CopyOutcome {
 /// The one place "does it fit" is decided, so the slice readers in
 /// [`value`] and [`store`] cannot disagree about it.
 #[inline]
+#[cfg(feature = "cache")]
 pub(crate) fn place(bytes: &[u8], out: &mut [u8]) -> CopyOutcome {
     if bytes.len() > out.len() {
         return CopyOutcome::TooSmall(bytes.len());

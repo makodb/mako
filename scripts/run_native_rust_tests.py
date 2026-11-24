@@ -32,7 +32,7 @@ def main():
     if args.release:
         command.append("--release")
     built = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)
-    executables = set()
+    executables = {}
     for line in built.stdout.splitlines():
         event = json.loads(line)
         if event.get("reason") == "compiler-message":
@@ -40,19 +40,19 @@ def main():
         if event.get("reason") == "compiler-artifact" and event.get("profile", {}).get("test"):
             executable = event.get("executable")
             if executable:
-                executables.add(executable)
+                executables[executable] = str(Path(event["manifest_path"]).parent)
     if built.returncode:
         return built.returncode
     count = 0
-    for executable in sorted(executables):
+    for executable, directory in sorted(executables.items()):
         listing = subprocess.check_output([executable, "--list", "--format", "terse"],
-                                          text=True, timeout=args.timeout)
+                                          cwd=directory, text=True, timeout=args.timeout)
         cases = [line.removesuffix(": test") for line in listing.splitlines()
                  if line.endswith(": test")]
         for case in cases:
             result = subprocess.run([executable, case, "--exact", "--include-ignored",
                                      "--test-threads=1"], capture_output=True,
-                                    text=True, timeout=args.timeout)
+                                    cwd=directory, text=True, timeout=args.timeout)
             if result.returncode:
                 print(result.stdout, end="")
                 print(result.stderr, end="", file=sys.stderr)

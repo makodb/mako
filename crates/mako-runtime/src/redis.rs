@@ -107,8 +107,11 @@ fn frame(bytes: &[u8]) -> std::result::Result<Parsed, &'static str> {
         return Ok(None);
     };
     let count = number(count)?;
-    if !(1..=3).contains(&count) {
-        return Err("command must have 1..3 arguments");
+    // Parse bounded unknown commands too. Clients send four-argument
+    // CLIENT SETINFO handshakes and accept an error reply for that optional
+    // metadata; closing the socket here prevents them from reaching PING.
+    if !(1..=64).contains(&count) {
+        return Err("command must have 1..64 arguments");
     }
     let mut values = Vec::with_capacity(count);
     for _ in 0..count {

@@ -183,6 +183,12 @@ fn redis_exec_is_atomic_across_shards_and_idle_clients_do_not_own_workers() {
     let mut origin = Server::start(directory.path(), config(0, peers));
     let mut idle: Vec<_> = (0..8).map(|_| connect(&origin.redis)).collect();
     for stream in &mut idle {
+        // redis-py sends optional metadata before PING. An unsupported command
+        // gets an error response without closing an otherwise valid session.
+        assert!(matches!(
+            command(stream, &[b"CLIENT", b"SETINFO", b"LIB-NAME", b"redis-py"]),
+            Resp::Error(_)
+        ));
         assert_eq!(command(stream, &[b"PING"]), Resp::Text("PONG".into()));
     }
     let home = (0u32..)
