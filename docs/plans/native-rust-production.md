@@ -36,8 +36,8 @@ Completion requires:
 | Stage | Work | Exit evidence | Status |
 | --- | --- | --- | --- |
 | 1 | Delete Paxos protocol, worker, services and selection. Preserve shared Raft state under neutral names. | Raft builds and relevant regression tests; removed protocol rejected; source/symbol audit. | Complete |
-| 2 | Establish a storage-only native build and an idiomatic Rust application API over STO/Masstree. Separate storage runtime from worker/replay policy. | Cargo links against only the explicit Masstree native dependency set; local transaction/application tests pass. | In progress |
-| 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Pending |
+| 2 | Establish a storage-only native build and an idiomatic Rust application API over STO/Masstree. Separate storage runtime from worker/replay policy. | Cargo links against only the explicit Masstree native dependency set; local transaction/application tests pass. | Complete |
+| 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | In progress |
 | 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Pending |
 | 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | Pending |
 | 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | Pending |
@@ -107,3 +107,28 @@ these existing components while preserving the current application contracts.
   table lifetimes across attempts. Two native lifecycle tests, the !Send worker
   compile-fail doctest, and Clippy passed against that archive in
   `/tmp/mako-native-rust-api-tests-02.log`. Full adapter coverage is next.
+
++ Stage 2 complete: the storage archive no longer depends on `TThread` or the
+  application's epoch runtime. Thread registration now owns only native RCU
+  identity allocation. The old application delegates to that allocator while
+  its replacement is in progress. `native::Database`, `Worker`, `Table`, and
+  `Transaction` provide an owned Rust API with same-thread workers, table
+  pinning, commit/abort, point operations and bounded directional scans.
++ `/tmp/mako-native-rust-adapter-suite-03.log`: 271 Masstree/STO-tree cases and
+  78 application-adapter cases passed against `libmako_native_storage.a`.
+  The latter include four public Rust API cases for CRUD/scan/abort/lifetime,
+  forgotten-guard cleanup, concurrent conflicts and foreign-database rejection.
+  Existing poison/limit tests retain the old runner's fresh-process contract.
+  Earlier aggregate runs exposed that contract and were corrected in the runner,
+  without removing or weakening cases.
++ `/tmp/mako-native-rust-components-01.log`: the independent `sto-core` and
+  `sto-test-datatypes` suites passed, including compile-fail cases and doctests;
+  the new API's !Send doctest and all-target Clippy also passed.
++ `/tmp/mako-native-rust-storage-audit-02.log`: fresh-profile build and CTest
+  audit passed. The compile database contains only the 16 named native storage
+  sources plus the toolchain standard-library module. The archive has no
+  application worker/epoch, shard client/receiver, SRPC, or DepTran definitions.
++ This profile is still opt-in and currently builds the storage dependency and
+  Rust test targets. Stage 3 starts the production application port; the default
+  C++ application is not yet switched or deleted. Paxos removal is committed as
+  `195ceb8a0`.

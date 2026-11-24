@@ -1268,6 +1268,7 @@ macro_rules! with_active_transaction {
 
 mod protocol;
 pub use protocol::*;
+pub mod native;
 mod shard_host;
 pub use shard_host::*;
 

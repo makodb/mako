@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "runtime/thread_properties.hh"
+#include "runtime/thread_registration.hh"
 namespace mako { class ShardClient; }
 
 
@@ -22,8 +23,6 @@ class TThread {
     static __thread int warehouses;  // warehouses per shard
     static __thread int shard_index;  // current shard_index
     static __thread int the_id; // thread-id
-    static __thread int assigned_stable_id;
-    static std::atomic<int> next_stable_id;
     static __thread int pid; // partition-id
     // MODE: 0 => default, 1 => no checking in_process
     static __thread int the_mode;
@@ -144,14 +143,9 @@ public:
     // across detach/reattach. Slots are deliberately not recycled across
     // threads because their deferred-RCU lists are process-lived.
     static int assign_stable_id() {
-        if (assigned_stable_id < 0) {
-            const int candidate =
-                next_stable_id.fetch_add(1, std::memory_order_relaxed);
-            if (candidate < 0 || candidate >= MAX_THREADS) {
-                throw std::runtime_error(
-                    "native worker thread-ID budget exhausted");
-            }
-            assigned_stable_id = candidate;
+        const int assigned_stable_id = mako::silo::try_allocate_thread_id();
+        if (assigned_stable_id < 0 || assigned_stable_id >= MAX_THREADS) {
+            throw std::runtime_error("native worker thread-ID budget exhausted");
         }
         set_id(assigned_stable_id);
         return assigned_stable_id;

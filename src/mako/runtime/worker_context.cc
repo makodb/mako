@@ -2,8 +2,6 @@
 #include "runtime/worker_context.hh"
 
 __thread int TThread::the_id;
-__thread int TThread::assigned_stable_id = -1;
-std::atomic<int> TThread::next_stable_id{0};
 __thread int TThread::nshards;
 __thread int TThread::shard_index;
 __thread int TThread::pid;

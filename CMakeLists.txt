@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.30)
 
-set(MAKO_BUILD_PROFILE "MAKO" CACHE STRING "Build profile: MAKO or ROCKSDB_RAFT")
-set_property(CACHE MAKO_BUILD_PROFILE PROPERTY STRINGS MAKO ROCKSDB_RAFT)
+set(MAKO_BUILD_PROFILE "MAKO" CACHE STRING "Build profile: MAKO, NATIVE_RUST or ROCKSDB_RAFT")
+set_property(CACHE MAKO_BUILD_PROFILE PROPERTY STRINGS MAKO NATIVE_RUST ROCKSDB_RAFT)
 if(MAKO_BUILD_PROFILE STREQUAL "ROCKSDB_RAFT")
     project(mako_rocksdb_raft LANGUAGES NONE)
     include(cmake/RocksdbRaft.cmake)
     return()
-elseif(NOT MAKO_BUILD_PROFILE STREQUAL "MAKO")
+elseif(NOT MAKO_BUILD_PROFILE MATCHES "^(MAKO|NATIVE_RUST)$")
     message(FATAL_ERROR "Unknown MAKO_BUILD_PROFILE: ${MAKO_BUILD_PROFILE}")
 endif()
 
@@ -205,6 +205,14 @@ endif()
 # it to every C++23 target. Per-target opt-out is via setting
 # `CXX_MODULE_STD OFF` on the target.
 set(CMAKE_CXX_MODULE_STD ON)
+
+# During the application port this profile builds the storage boundary alone.
+# Rust production targets are added here as their existing behavior is ported.
+# In particular, it never configures SRPC C++ or its transpiler.
+if(MAKO_BUILD_PROFILE STREQUAL "NATIVE_RUST")
+    include(cmake/NativeStorage.cmake)
+    return()
+endif()
 
 # Check compiler and version. C++23 + named modules require GCC >= 13.1
 # or Clang >= 17.
