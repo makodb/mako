@@ -1,111 +1,56 @@
-#!/bin/bash
-#sudo cgdelete -g cpuset:/cpulimit 2>/dev/null || true
-#sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
-
-# Source common utilities (includes GDB_PREFIX for debugging)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/util.sh"
-
-# Set LD_LIBRARY_PATH to find shared libraries (libtxlog.so, etc.)
-export LD_LIBRARY_PATH="$(pwd)/${BUILD_DIR:-build}:${LD_LIBRARY_PATH}"
-
-nshard=$1
+#!/usr/bin/env bash
+# Launch one native Rust benchmark shard using an existing topology file.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+if (( $# < 4 || $# > 7 )); then
+    echo "Usage: bash/shard.sh SHARDS SHARD WORKERS SITE [MICRO=0] [REPLICATED=0] [raft]" >&2
+    exit 2
+fi
+shards=$1
 shard=$2
-trd=$3
-cluster=$4
-is_micro=$5
-is_replicated=$6
-# Raft is the only supported replication protocol.
-replication_type=${7:-raft}
-let up=trd+3
-#sudo cgset -r cpuset.mems=0 cpulimit
-#sudo cgset -r cpuset.cpus=0-$up cpulimit
-mkdir -p results
-path=$(pwd)/src/mako
-
-# Build the base command
-config_path="$path/config/local-shards${nshard}-warehouses${trd}.yml"
-if [ -n "$MAKO_CONFIG" ]; then
-    config_path="$MAKO_CONFIG"
+workers=$3
+site=$4
+micro=${5:-0}
+replicated=${6:-0}
+protocol=${7:-raft}
+for number in "$shards" "$workers"; do
+    [[ "$number" =~ ^[1-9][0-9]*$ ]] || { echo 'SHARDS and WORKERS must be positive integers' >&2; exit 2; }
+done
+[[ "$micro" =~ ^[01]$ && "$replicated" =~ ^[01]$ ]] || { echo 'MICRO and REPLICATED must be 0 or 1' >&2; exit 2; }
+[[ "$protocol" == raft ]] || { echo 'Only Raft replication is supported' >&2; exit 2; }
+config=${MAKO_CONFIG:-src/mako/config/local-shards${shards}-warehouses${workers}.yml}
+binary=${MAKO_BENCH_BIN:-${BUILD_DIR:-build}/mako_bench}
+args=(--shard-config "$config" --num-threads "$workers" --site-name "$site")
+if [[ "$shard" == all || "$shard" == *,* ]]; then
+    args+=(--local-shards "$shard")
+else
+    args+=(--shard-index "$shard")
 fi
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $config_path -P $cluster"
-
-THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
-if [ -n "$THROTTLE_ARGS" ]; then
-    CMD="$CMD$THROTTLE_ARGS"
+[[ "$micro" == 0 ]] || args+=(--is-micro)
+[[ -z "${MAKO_RUNTIME_SECONDS:-}" ]] || args+=(--runtime "$MAKO_RUNTIME_SECONDS")
+[[ -z "${MAKO_CPU_LIMIT:-}" ]] || args+=(--cpu-limit "$MAKO_CPU_LIMIT")
+[[ -z "${MAKO_THROTTLE_CYCLE_MS:-}" ]] || args+=(--throttle-cycle "$MAKO_THROTTLE_CYCLE_MS")
+[[ -z "${MAKO_STARTUP_TIMEOUT_SEC:-}" ]] || args+=(--startup-timeout-sec "$MAKO_STARTUP_TIMEOUT_SEC")
+[[ "${MAKO_MIGRATION:-0}" != 1 ]] || args+=(--migration)
+if [[ -n "${MAKO_DATA_DIR:-}" ]]; then
+    args+=(--data-dir "$MAKO_DATA_DIR")
+    [[ "${MAKO_CREATE:-0}" != 1 ]] || args+=(--create)
 fi
-
-# Add --is-micro flag if enabled (value is 1)
-if [ "$is_micro" == "1" ]; then
-    CMD="$CMD --is-micro"
-fi
-
-# Add Raft config and --is-replicated only when replication is enabled
-if [ "$is_replicated" == "1" ]; then
-    replication_type_normalized="$(echo "$replication_type" | tr '[:upper:]' '[:lower:]')"
-
-    # Select the Raft config files.
-    # MAKO_PAXOS_CONFIG_DIR is set by the replication test wrappers when they
-    # materialize a randomized-port copy of the config into a tmp dir; fall back
-    # to the hardcoded path otherwise.
-    REPLICATION_CONFIG_DIR="${MAKO_PAXOS_CONFIG_DIR:-config/1leader_2followers}"
-    if [ "$replication_type_normalized" != "raft" ]; then
-        echo "Error: only Raft replication is supported" >&2
-        exit 1
-    fi
-    MODE_CONFIG="config/raft.yml"
-    REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/raft${trd}_shardidx${shard}.yml"
-
-    if [ ! -f "$REPLICATION_CONFIG" ]; then
-        echo "Error: replication config not found: $REPLICATION_CONFIG"
-        exit 1
-    fi
-    if [ ! -f "$MODE_CONFIG" ]; then
-        echo "Error: replication mode config not found: $MODE_CONFIG"
-        exit 1
-    fi
-
-    # Combined leaders and their standalone followers share identical ordered
-    # site/partition IDs. Ordinary separate-process runs keep one shard file.
-    if [ "${MAKO_FULL_REPLICATION_TOPOLOGY:-0}" = "1" ]; then
-        for ((replication_shard=0; replication_shard<nshard; ++replication_shard)); do
-            topology_config="${REPLICATION_CONFIG_DIR}/${replication_type_normalized}${trd}_shardidx${replication_shard}.yml"
-            if [ ! -f "$topology_config" ]; then
-                echo "Error: replication topology config not found: $topology_config"
-                exit 1
-            fi
-            CMD="$CMD -F $topology_config"
+if [[ "$replicated" == 1 ]]; then
+    : "${MAKO_DATA_DIR:?Set MAKO_DATA_DIR for native Raft storage; set MAKO_CREATE=1 only to allow creation}"
+    directory=${MAKO_RAFT_CONFIG_DIR:-config/1leader_2followers}
+    args+=(--replication raft)
+    if [[ "$shard" == all || "$shard" == *,* ]]; then
+        selection=$shard
+        [[ "$selection" != all ]] || selection=$(seq -s, 0 "$((shards - 1))")
+        IFS=, read -ra owners <<< "$selection"
+        for owner in "${owners[@]}"; do
+            args+=(--raft-config "${owner}=${directory}/raft${workers}_shardidx${owner}.yml")
         done
     else
-        CMD="$CMD -F $REPLICATION_CONFIG"
+        args+=(--raft-config "${directory}/raft${workers}_shardidx${shard}.yml")
     fi
-    CMD="$CMD -F $MODE_CONFIG --is-replicated --replication=$replication_type_normalized"
 fi
-
-# Print configuration
-echo "========================================="
-echo "Configuration:"
-echo "========================================="
-if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
-    cpu_throttle_label="${MAKO_CPU_LIMIT}%"
-else
-    cpu_throttle_label="disabled"
-fi
-echo "  Number of shards:  $nshard"
-echo "  Shard index:       $shard"
-echo "  Number of threads: $trd"
-echo "  Cluster:           $cluster"
-echo "  Micro benchmark:   $([ "$is_micro" == "1" ] && echo "enabled" || echo "disabled")"
-echo "  Replicated mode:   $([ "$is_replicated" == "1" ] && echo "enabled" || echo "disabled")"
-# Unreplicated runs never read the type, so they do not print one.
-if [ "$is_replicated" == "1" ]; then
-    echo "  Replication type:  $replication_type"
-fi
-echo "  CPU throttle:      ${cpu_throttle_label} (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
-echo "========================================="
-
-# Execute command (with or without gdb based on GDB_PREFIX from util.sh)
-if [ "$GDB_ENABLED" == "1" ]; then
-    echo "Running under gdb batch mode..."
-fi
-$GDB_PREFIX $CMD
+[[ "${MAKO_PRINT_CONFIG:-0}" != 1 ]] || args+=(--print-config)
+exec "$binary" "${args[@]}"

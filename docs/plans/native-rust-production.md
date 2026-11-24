@@ -437,3 +437,14 @@ these existing components while preserving the current application contracts.
   `thread.h` include in `rcu.cc` for removal during retirement. Native storage
   currently still imports the third-party ownership library's umbrella header;
   that library's transpiler is not built by the native profile.
+
++ Native launchers now use argument arrays and the Rust CLI. `bash/shard.sh`
+  requires an explicit native storage directory for Raft, accepts explicit
+  creation, and uses `MAKO_RAFT_CONFIG_DIR`. `examples/run_native.py` generates
+  small workloads for separate/colocated, persistent and replicated topologies;
+  it retains port reservations through startup and stops only its children.
++ `/tmp/mako-native-rust-launchers-02.log`: shell syntax and topology conversion,
+  two colocated three-replica transaction shards, colocated persistent micro,
+  and separate TPC-C shard processes all passed and joined their workers.
+  The first launcher command had a check expecting the native JSON `node` form;
+  conversion emits the equally valid `nodes` form. Corrected that check.
