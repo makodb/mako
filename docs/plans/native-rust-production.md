@@ -264,3 +264,22 @@ these existing components while preserving the current application contracts.
   replica leadership changes need review and coverage, along with supported
   persistence/configuration workflows. Stages 5 and 6 remain outstanding. No
   default switch or C++ application retirement is claimed by this checkpoint.
++ Durable gateway receipts now share the committed row batch, including exact
+  GET bytes and no-change INSERT/DELETE outcomes. A new leader checks receipts
+  under quorum admission before executing an operation. The Rust SDK can discover
+  a configured replica group's leader while retaining the exact pending request.
+  Distributed clients discover participants once per attempt and pin those
+  endpoints through cleanup; they never redirect an in-flight INSTALL.
++ `/tmp/mako-native-rust-receipts-crash-01.log`: a SIGKILL/restart case recovers
+  INSERT, DELETE and GET receipts, returns their original results, and leaves
+  later row generations unchanged. Altered requests cannot reuse that identity.
+  `/tmp/mako-native-rust-replica-clients-01.log`: real replica failover preserves
+  those receipts and permits the next distributed transaction to select the new
+  leader. Discovery checks the configured shard and Raft group identity.
++ `/tmp/mako-native-rust-replica-clients-02.log`: all 29 runtime cases pass;
+  all ten default-feature runtime/client unit tests also pass without native
+  storage settings. Gateway session grouping remains tied to its gateway;
+  the SDK reports closure if discovery moves an active group to another replica.
++ Remaining stage-4 work is configuration wiring for replica groups and supported
+  local disk persistence. The core replicated path and its client recovery checks
+  are implemented; production-default and workload retirement are still pending.

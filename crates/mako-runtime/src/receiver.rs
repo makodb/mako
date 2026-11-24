@@ -329,6 +329,9 @@ impl RunningShard {
             &network,
             address,
             move |message, respond| match message {
+                Message::ReplicaStatus => {
+                    respond(Reply::ReplicaStatus(store.log.replica_status(store.owner)))
+                }
                 message @ (Message::Gateway(_) | Message::Route(_)) => {
                     if let Some(gateway) = &gateway {
                         gateway.dispatch(message, respond);

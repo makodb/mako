@@ -102,8 +102,10 @@ fn request(prepared: &core::Request) -> Result<GatewayRequest> {
 pub struct GatewayClient {
     network: Arc<Network>,
     endpoint: String,
+    replicas: Option<(u32, ReplicaSet)>,
     sequencer: core::Client,
     session: u64,
+    session_endpoint: Option<String>,
     timeout: Duration,
 }
 impl GatewayClient {
@@ -135,15 +137,18 @@ impl GatewayClient {
         Ok(Self {
             network,
             endpoint,
+            replicas: None,
             sequencer,
             session: 0,
+            session_endpoint: None,
             timeout,
         })
     }
     pub fn resolve(&self, request: RouteRequest) -> Result<Target> {
+        let endpoint = self.endpoint()?;
         match self
             .network
-            .call(&self.endpoint, Message::Route(request), self.timeout)?
+            .call(&endpoint, Message::Route(request), self.timeout)?
         {
             Reply::Route(result) => result,
             Reply::Error(error) => Err(error),
@@ -152,6 +157,30 @@ impl GatewayClient {
                 "unexpected route response",
             )),
         }
+    }
+    pub fn set_replicas(&mut self, owner: u32, replicas: ReplicaSet) -> Result<()> {
+        if replicas.endpoints.is_empty() {
+            return Err(Error::new(ErrorCode::Invalid, "empty replica group"));
+        }
+        self.replicas = Some((owner, replicas));
+        Ok(())
+    }
+    fn endpoint(&self) -> Result<String> {
+        let selected = match &self.replicas {
+            Some((owner, replicas)) => self.network.find_leader(*owner, replicas, self.timeout),
+            None => Ok(self.endpoint.clone()),
+        }?;
+        if self
+            .session_endpoint
+            .as_ref()
+            .is_some_and(|endpoint| *endpoint != selected)
+        {
+            return Err(Error::new(
+                ErrorCode::Closed,
+                "gateway session ended with its replica; create a new client",
+            ));
+        }
+        Ok(selected)
     }
     /// Unknown and in-flight responses retain the exact request. Calling again
     /// with the same intent resends that identity; a different intent is refused.
@@ -183,39 +212,36 @@ impl GatewayClient {
             })?
             .clone();
         let request = request(&prepared)?;
-        let reply =
-            match self
-                .network
-                .call(&self.endpoint, Message::Gateway(request), self.timeout)?
+        let endpoint = self.endpoint()?;
+        let reply = match self
+            .network
+            .call(&endpoint, Message::Gateway(request), self.timeout)?
+        {
+            Reply::Gateway(reply) => reply,
+            Reply::Error(error)
+                if matches!(
+                    error.code,
+                    ErrorCode::Busy | ErrorCode::Closed | ErrorCode::Invalid | ErrorCode::Capacity
+                ) =>
             {
-                Reply::Gateway(reply) => reply,
-                Reply::Error(error)
-                    if matches!(
-                        error.code,
-                        ErrorCode::Busy
-                            | ErrorCode::Closed
-                            | ErrorCode::Invalid
-                            | ErrorCode::Capacity
-                    ) =>
-                {
-                    GatewayResponse {
-                        client: prepared.client,
-                        sequence: prepared.sequence,
-                        snapshot_version: prepared.snapshot_version,
-                        status: if error.code == ErrorCode::Busy { 4 } else { 2 },
-                        outcome: core::ABORTED,
-                        op_result: false,
-                        value: Vec::new(),
-                    }
+                GatewayResponse {
+                    client: prepared.client,
+                    sequence: prepared.sequence,
+                    snapshot_version: prepared.snapshot_version,
+                    status: if error.code == ErrorCode::Busy { 4 } else { 2 },
+                    outcome: core::ABORTED,
+                    op_result: false,
+                    value: Vec::new(),
                 }
-                Reply::Error(error) => return Err(error),
-                _ => {
-                    return Err(Error::new(
-                        ErrorCode::Transport,
-                        "unexpected gateway response",
-                    ))
-                }
-            };
+            }
+            Reply::Error(error) => return Err(error),
+            _ => {
+                return Err(Error::new(
+                    ErrorCode::Transport,
+                    "unexpected gateway response",
+                ))
+            }
+        };
         if reply.client != prepared.client
             || reply.sequence != prepared.sequence
             || reply.snapshot_version != prepared.snapshot_version
@@ -233,8 +259,14 @@ impl GatewayClient {
         );
         if reply.outcome == core::COMMITTED {
             match kind {
-                core::BEGIN => self.session = prepared.session,
-                core::COMMIT | core::ROLLBACK => self.session = 0,
+                core::BEGIN => {
+                    self.session = prepared.session;
+                    self.session_endpoint = Some(endpoint);
+                }
+                core::COMMIT | core::ROLLBACK => {
+                    self.session = 0;
+                    self.session_endpoint = None;
+                }
                 _ => (),
             }
         }

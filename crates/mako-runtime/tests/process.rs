@@ -92,6 +92,11 @@ impl Process {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+    #[cfg(feature = "replication")]
+    fn crash(&mut self) {
+        self.child.kill().unwrap();
+        assert!(!self.child.wait().unwrap().success());
+    }
 }
 
 #[test]
@@ -366,6 +371,7 @@ fn separate_process_clocks_commit_and_abort_through_native_srpc() {
 #[cfg(feature = "replication")]
 fn replicated_server_recovers_rows_in_a_fresh_process() {
     use mako_runtime::node::{ReplicaConfig, ReplicaPeer};
+    use mako_sharding::gateway as core;
     let root = tempfile::tempdir().unwrap();
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let raft_address = socket.local_addr().unwrap().to_string();
@@ -407,7 +413,52 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
     client.put(target(0), b"a", b"durable").unwrap();
     client.put(target(0), b"deleted", b"temporary").unwrap();
     assert!(client.remove(target(0), b"deleted").unwrap());
-    first.stop();
+    let network = Network::default();
+    let call = |address: &str, request: &GatewayRequest| match network
+        .call(
+            address,
+            Message::Gateway(request.clone()),
+            Duration::from_secs(10),
+        )
+        .unwrap()
+    {
+        Reply::Gateway(response) => response,
+        reply => panic!("gateway response: {reply:?}"),
+    };
+    let mut receipts = Vec::new();
+    for (index, (kind, key, value)) in [
+        (core::INSERT, b"inserted".as_slice(), b"original".as_slice()),
+        (core::GET, b"inserted", b""),
+        (core::DELETE, b"inserted", b""),
+        (core::INSERT, b"a", b"must not replace"),
+        (core::DELETE, b"missing", b""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let request = GatewayRequest {
+            client: (1 << 63) + 400 + index as u64,
+            sequence: 1,
+            session: 0,
+            kind,
+            target: Some(target(0)),
+            key: key.to_vec(),
+            value: value.to_vec(),
+            forwarded: false,
+        };
+        let response = call(&first.address, &request);
+        assert_eq!(response.outcome, core::COMMITTED);
+        assert_eq!(response.op_result, index < 3);
+        if kind == core::GET {
+            assert_eq!(response.value, b"original");
+        }
+        receipts.push((request, response));
+    }
+    client
+        .put(target(0), b"inserted", b"new generation")
+        .unwrap();
+    // SIGKILL exercises committed WAL recovery, without graceful host shutdown.
+    first.crash();
     drop(first);
     config.replication.as_mut().unwrap().create = false;
     let mut recovered = Process::start(config);
@@ -418,6 +469,16 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
         Some(b"durable".as_slice())
     );
     assert_eq!(client.get(target(0), b"deleted").unwrap(), None);
+    for (request, expected) in &receipts {
+        assert_eq!(call(&recovered.address, request), *expected);
+    }
+    assert_eq!(
+        client.get(target(0), b"inserted").unwrap().as_deref(),
+        Some(b"new generation".as_slice())
+    );
+    let mut changed = receipts[0].0.clone();
+    changed.value = b"changed request".to_vec();
+    assert_ne!(call(&recovered.address, &changed).outcome, core::COMMITTED);
     client.put(target(0), b"a", b"after recovery").unwrap();
     assert_eq!(
         client.get(target(0), b"a").unwrap().as_deref(),

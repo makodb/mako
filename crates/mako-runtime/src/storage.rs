@@ -48,6 +48,25 @@ fn check(status: Status) -> Result<()> {
 }
 
 pub trait CommitLog: Send + Sync {
+    fn replica_status(&self, owner: u32) -> ReplicaStatus {
+        ReplicaStatus {
+            owner,
+            group: None,
+            leader: true,
+            term: 0,
+            healthy: true,
+            durable_receipts: false,
+        }
+    }
+    fn retains_gateway_receipts(&self) -> bool {
+        false
+    }
+    fn gateway_receipt(&self, _: &GatewayRequest) -> Result<Option<GatewayResponse>> {
+        Ok(None)
+    }
+    fn append_gateway(&self, bytes: &[u8], time_term: u32, _: &GatewayReceipt) -> Result<()> {
+        self.append(bytes, time_term)
+    }
     fn admit(&self) -> Result<Box<dyn CommitPermit>> {
         Ok(Box::new(()))
     }

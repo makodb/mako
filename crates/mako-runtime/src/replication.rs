@@ -30,6 +30,7 @@ struct Command {
     incarnation: u64,
     sequence: u64,
     rows: Vec<redo::Row>,
+    receipt: Option<wire::GatewayReceipt>,
 }
 fn storage(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorCode::Fatal, error.to_string())
@@ -168,7 +169,7 @@ impl StateMachine for State {
             if command.version != 1
                 || command.incarnation == 0
                 || command.sequence == 0
-                || command.rows.is_empty()
+                || (command.rows.is_empty() && command.receipt.is_none())
             {
                 return Err(storage("invalid replicated command"));
             }
@@ -188,7 +189,12 @@ impl StateMachine for State {
                     "leadership changed with active local transactions; recovery required",
                 ));
             }
-            let rows = self.durable.apply(position(p), bytes, &command.rows)?;
+            let rows = self.durable.apply_gateway(
+                position(p),
+                bytes,
+                &command.rows,
+                command.receipt.as_ref(),
+            )?;
             if !local {
                 self.replay.apply(rows)?;
             }
@@ -232,6 +238,7 @@ impl StateMachine for State {
 struct Binding {
     host: Host,
     state: Arc<State>,
+    group: u64,
 }
 pub struct ReplicatedLog {
     binding: OnceLock<Binding>,
@@ -275,9 +282,10 @@ impl ReplicatedLog {
             schema,
         });
         state.restore()?;
+        let group = config.group;
         let host = Host::start(config, state.clone()).map_err(storage)?;
         self.binding
-            .set(Binding { host, state })
+            .set(Binding { host, state, group })
             .map_err(|_| storage("replication already started"))
     }
     pub fn host(&self) -> Result<&Host> {
@@ -303,7 +311,20 @@ impl ReplicatedLog {
         }
     }
     fn append_inner(&self, binding: &Binding, bytes: &[u8], time_term: u32) -> Result<()> {
-        let rows = redo::decode_legacy(bytes, time_term)?;
+        self.append_record(binding, bytes, time_term, None)
+    }
+    fn append_record(
+        &self,
+        binding: &Binding,
+        bytes: &[u8],
+        time_term: u32,
+        receipt: Option<&wire::GatewayReceipt>,
+    ) -> Result<()> {
+        let rows = if bytes.is_empty() && receipt.is_some() {
+            Vec::new()
+        } else {
+            redo::decode_legacy(bytes, time_term)?
+        };
         let sequence = self
             .next
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
@@ -315,6 +336,7 @@ impl ReplicatedLog {
             incarnation: self.incarnation,
             sequence,
             rows,
+            receipt: receipt.cloned(),
         })?;
         let status = binding.host.status();
         if !status.is_leader || status.failure.is_some() {
@@ -369,6 +391,61 @@ impl Drop for Permit {
     }
 }
 impl CommitLog for ReplicatedLog {
+    fn replica_status(&self, owner: u32) -> wire::ReplicaStatus {
+        let Some(binding) = self.binding.get() else {
+            return wire::ReplicaStatus {
+                owner,
+                group: None,
+                leader: false,
+                term: 0,
+                healthy: false,
+                durable_receipts: true,
+            };
+        };
+        let status = binding.host.status();
+        wire::ReplicaStatus {
+            owner,
+            group: Some(binding.group),
+            leader: status.is_leader,
+            term: status.term,
+            healthy: status.failure.is_none()
+                && binding
+                    .state
+                    .gate
+                    .try_lock()
+                    .is_some_and(|gate| gate.fault.is_none()),
+            durable_receipts: true,
+        }
+    }
+    fn retains_gateway_receipts(&self) -> bool {
+        true
+    }
+    fn gateway_receipt(
+        &self,
+        request: &wire::GatewayRequest,
+    ) -> Result<Option<wire::GatewayResponse>> {
+        let binding = self
+            .binding
+            .get()
+            .ok_or_else(|| storage("replication not started"))?;
+        State::ensure(&binding.state.gate.lock())?;
+        binding.state.durable.gateway_receipt(request)
+    }
+    fn append_gateway(
+        &self,
+        bytes: &[u8],
+        time_term: u32,
+        receipt: &wire::GatewayReceipt,
+    ) -> Result<()> {
+        let binding = self.binding.get().ok_or_else(|| {
+            Error::new(ErrorCode::Unknown, "replication not started after install")
+        })?;
+        if let Err(error) = self.append_record(binding, bytes, time_term, Some(receipt)) {
+            binding.state.gate.lock().fault = Some(error.to_string());
+            return Err(Error::new(ErrorCode::Unknown, error.to_string()));
+        }
+        Ok(())
+    }
     fn admit(&self) -> Result<Box<dyn CommitPermit>> {
         let binding = self
             .binding

@@ -13,6 +13,7 @@ pub use crate::wire::Target;
 pub struct Client {
     network: Arc<Network>,
     endpoints: Arc<BTreeMap<u32, String>>,
+    replicas: BTreeMap<u32, ReplicaSet>,
     stream: Stream,
     incarnation: u64,
     attempt: u64,
@@ -42,6 +43,7 @@ impl Client {
         Ok(Self {
             network,
             endpoints: Arc::new(endpoints),
+            replicas: BTreeMap::new(),
             stream,
             incarnation,
             attempt: 0,
@@ -49,6 +51,13 @@ impl Client {
             timeout,
             fenced: false,
         })
+    }
+    pub fn set_replicas(&mut self, owner: u32, replicas: ReplicaSet) -> Result<()> {
+        if replicas.endpoints.is_empty() {
+            return Err(Error::new(ErrorCode::Invalid, "empty replica group"));
+        }
+        self.replicas.insert(owner, replicas);
+        Ok(())
     }
     pub fn begin<'a, 'worker>(
         &'a mut self,
@@ -82,6 +91,7 @@ impl Client {
         let remotes = Remotes {
             network: self.network.clone(),
             endpoints: self.endpoints.clone(),
+            replicas: self.replicas.clone(),
             stream: self.stream,
             identity: Identity {
                 incarnation: self.incarnation,
@@ -127,10 +137,12 @@ impl Client {
 
 struct Peer {
     sequence: u64,
+    endpoint: String,
 }
 struct Remotes {
     network: Arc<Network>,
     endpoints: Arc<BTreeMap<u32, String>>,
+    replicas: BTreeMap<u32, ReplicaSet>,
     stream: Stream,
     identity: Identity,
     peers: BTreeMap<u32, Peer>,
@@ -140,12 +152,28 @@ struct Remotes {
 }
 impl Remotes {
     fn call(&mut self, owner: u32, action: Action) -> Result<Value> {
-        let endpoint = self
-            .endpoints
-            .get(&owner)
-            .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing shard endpoint"))?;
+        if !self.peers.contains_key(&owner) {
+            let endpoint = if let Some(replicas) = self.replicas.get(&owner) {
+                self.network.find_leader(owner, replicas, self.timeout)?
+            } else {
+                self.endpoints
+                    .get(&owner)
+                    .cloned()
+                    .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing shard endpoint"))?
+            };
+            self.peers.insert(
+                owner,
+                Peer {
+                    sequence: 0,
+                    endpoint,
+                },
+            );
+        }
         // A lost initial reply may leave a remote session requiring ABORT.
-        let peer = self.peers.entry(owner).or_insert(Peer { sequence: 0 });
+        let peer = self
+            .peers
+            .get_mut(&owner)
+            .expect("selected participant endpoint");
         peer.sequence = peer.sequence.checked_add(1).ok_or_else(|| {
             Error::new(
                 ErrorCode::Capacity,
@@ -157,7 +185,7 @@ impl Remotes {
             ..self.identity
         };
         let reply = self.network.call(
-            endpoint,
+            &peer.endpoint,
             Message::Participant(Request {
                 stream: self.stream,
                 identity,

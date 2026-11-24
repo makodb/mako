@@ -4,7 +4,7 @@
 use crate::{
     migration::Schema,
     rpc::{Network, Respond},
-    storage::{engine, LogCallbacks, Store},
+    storage::{engine, CommitLog, LogCallbacks, Store},
     wire::*,
 };
 use mako_sharding::{gateway as core, types::NO_SNAPSHOT};
@@ -20,6 +20,19 @@ use std::{
     time::Duration,
 };
 use sto_tpcc_ffi::native as sto;
+
+struct GatewayLog<'a> {
+    log: &'a dyn CommitLog,
+    receipt: GatewayReceipt,
+    submitted: AtomicBool,
+}
+impl CommitLog for GatewayLog<'_> {
+    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
+        self.log.append_gateway(bytes, time_term, &self.receipt)?;
+        self.submitted.store(true, Ordering::Release);
+        Ok(())
+    }
+}
 
 pub struct Config {
     pub schema: Arc<Schema>,
@@ -313,6 +326,13 @@ impl State {
             if let Err(error) = protection.point(&target.access, &request.key) {
                 return failed(error, false);
             }
+            match self.store.log.gateway_receipt(request) {
+                Ok(Some(reply)) => {
+                    return terminal(reply.status, reply.outcome, reply.op_result, reply.value)
+                }
+                Ok(None) => (),
+                Err(error) => return failed(error, false),
+            }
             let table = match self.store.table(target.access.table) {
                 Ok(table) => table,
                 Err(error) => return failed(error, false),
@@ -368,21 +388,40 @@ impl State {
                 drop(participant);
                 return failed(error, false);
             }
+            let success = terminal(
+                if request.kind == core::GET && !changed {
+                    3
+                } else {
+                    0
+                },
+                core::COMMITTED,
+                changed,
+                value,
+            );
+            let log = GatewayLog {
+                log: &*self.store.log,
+                receipt: GatewayReceipt {
+                    request: request.clone(),
+                    response: response(request, success.clone()),
+                },
+                submitted: AtomicBool::new(false),
+            };
             match participant
-                .commit(0, &mut LogCallbacks(&*self.store.log))
+                .commit(0, &mut LogCallbacks(&log))
                 .map_err(engine)
             {
                 Ok(_) => {
-                    return terminal(
-                        if request.kind == core::GET && !changed {
-                            3
-                        } else {
-                            0
-                        },
-                        core::COMMITTED,
-                        changed,
-                        value,
-                    )
+                    // Reads and no-change INSERT/DELETE operations have no
+                    // row log. Persist their exact result before replying too.
+                    if self.store.log.retains_gateway_receipts()
+                        && !log.submitted.load(Ordering::Acquire)
+                    {
+                        if let Err(error) = log.append(&[], 0) {
+                            self.store.quarantine(protection);
+                            return failed(error, true);
+                        }
+                    }
+                    return success;
                 }
                 Err(error) if error.code == ErrorCode::Conflict => continue,
                 Err(error) => {

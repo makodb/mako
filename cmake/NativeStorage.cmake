@@ -112,14 +112,14 @@ add_custom_target(rust_shard_integration_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features native-storage
+        --package mako-runtime --features replication
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME rust_shard_integration
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features native-storage)
+        --package mako-runtime --features replication)
 add_test(NAME native_storage_source_audit
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_native_rust_build.py"
         --build "${CMAKE_BINARY_DIR}" --archive "$<TARGET_FILE:mako_native_storage>"

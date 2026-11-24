@@ -30,6 +30,12 @@ fn entry_key(index: u64) -> Vec<u8> {
     key.extend_from_slice(&index.to_be_bytes());
     key
 }
+fn receipt_key(client: u64, sequence: u64) -> Vec<u8> {
+    let mut key = vec![2];
+    key.extend_from_slice(&client.to_be_bytes());
+    key.extend_from_slice(&sequence.to_be_bytes());
+    key
+}
 fn request(position: Position) -> RequestId {
     RequestId {
         client: 1,
@@ -103,19 +109,31 @@ impl DurableRows {
     /// The source envelope is fingerprinted in the same batch as its rows.
     /// Duplicate positions require the same envelope, even after restart.
     pub fn apply(&self, position: Position, source: &[u8], rows: &[Row]) -> Result<Vec<Row>> {
+        self.apply_gateway(position, source, rows, None)
+    }
+    pub fn apply_gateway(
+        &self,
+        position: Position,
+        source: &[u8],
+        rows: &[Row],
+        receipt: Option<&wire::GatewayReceipt>,
+    ) -> Result<Vec<Row>> {
         let _gate = self.gate.lock();
-        if rows.is_empty() || source.len() > wire::MAX_BYTES {
+        if (rows.is_empty() && receipt.is_none()) || source.len() > wire::MAX_BYTES {
             return Err(storage("invalid durable command size"));
         }
         for row in rows {
             row.validate()?;
+        }
+        if let Some(receipt) = receipt {
+            receipt.validate()?;
         }
         let table = self.table()?;
         let mut fingerprint = position.term.to_be_bytes().to_vec();
         fingerprint.extend_from_slice(&Sha256::digest(source));
         // Include decoded rows too: callers cannot pair one envelope with
         // different effects during repeated application.
-        fingerprint.extend_from_slice(&Sha256::digest(wire::encode(&rows)?));
+        fingerprint.extend_from_slice(&Sha256::digest(wire::encode(&(rows, receipt))?));
         let mut worker = self.db.attach_worker().map_err(storage)?;
         let mut tx = worker.begin().map_err(storage)?;
         let entry = entry_key(position.index);
@@ -123,6 +141,23 @@ impl DurableRows {
         let duplicate = position.index <= previous.index;
         if duplicate && tx.get(table, &entry).map_err(storage)?.as_deref() != Some(&fingerprint) {
             return Err(storage("conflicting replay position"));
+        }
+        if let Some(receipt) = receipt {
+            let key = receipt_key(receipt.request.client, receipt.request.sequence);
+            let encoded = wire::encode(receipt)?;
+            let existing = tx.get(table, &key).map_err(storage)?;
+            if duplicate {
+                if existing.as_deref() != Some(&encoded) {
+                    return Err(storage("receipt replay mismatch"));
+                }
+            } else {
+                if existing.is_some() {
+                    return Err(storage(
+                        "request already published at another Raft position",
+                    ));
+                }
+                tx.put(table, &key, &encoded).map_err(storage)?;
+            }
         }
         let mut published = BTreeMap::new();
         for row in rows {
@@ -187,6 +222,31 @@ impl DurableRows {
         }
         tx.rollback();
         Ok(())
+    }
+    pub fn gateway_receipt(
+        &self,
+        request: &wire::GatewayRequest,
+    ) -> Result<Option<wire::GatewayResponse>> {
+        let _gate = self.gate.lock();
+        let table = self.table()?;
+        let mut worker = self.db.attach_worker().map_err(storage)?;
+        let mut tx = worker.begin().map_err(storage)?;
+        let bytes = tx
+            .get(table, &receipt_key(request.client, request.sequence))
+            .map_err(storage)?;
+        tx.rollback();
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        let receipt: wire::GatewayReceipt = wire::decode(&bytes)?;
+        receipt.validate()?;
+        if !receipt.matches(request) {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "gateway identity reused with different intent",
+            ));
+        }
+        Ok(Some(receipt.response))
     }
     pub fn create_checkpoint(&self, path: &Path, position: Position) -> Result<()> {
         let _gate = self.gate.lock();

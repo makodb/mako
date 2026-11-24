@@ -86,7 +86,7 @@ pub struct Target {
     pub access: Access,
     pub log_id: u16,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GatewayRequest {
     pub client: u64,
     pub sequence: u64,
@@ -106,6 +106,57 @@ pub struct GatewayResponse {
     pub outcome: u32,
     pub op_result: bool,
     pub value: Vec<u8>,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GatewayReceipt {
+    pub request: GatewayRequest,
+    pub response: GatewayResponse,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReplicaSet {
+    pub group: u64,
+    pub endpoints: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReplicaStatus {
+    pub owner: u32,
+    pub group: Option<u64>,
+    pub leader: bool,
+    pub term: u64,
+    pub healthy: bool,
+    pub durable_receipts: bool,
+}
+impl GatewayReceipt {
+    pub fn validate(&self) -> Result<()> {
+        let request = &self.request;
+        let response = &self.response;
+        if request.client < 1 << 63
+            || request.sequence == 0
+            || !matches!(request.kind, 23 | 24 | 25 | 28)
+            || request.target.is_none()
+            || request.key.len() > 64
+            || request.value.len() > 8000
+            || response.client != request.client
+            || response.sequence != request.sequence
+            || response.outcome != 1
+            || response.value.len() > 8000
+            || !(response.status == 0
+                || (request.kind == 24 && response.status == 3 && !response.op_result))
+        {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "invalid durable gateway receipt",
+            ));
+        }
+        Ok(())
+    }
+    pub fn matches(&self, request: &GatewayRequest) -> bool {
+        let mut normalized = request.clone();
+        normalized.forwarded = false;
+        let mut saved = self.request.clone();
+        saved.forwarded = false;
+        normalized == saved
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RouteRequest {
@@ -244,6 +295,7 @@ impl Response {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
+    ReplicaStatus,
     Gateway(GatewayRequest),
     Route(RouteRequest),
     Participant(Request),
@@ -255,6 +307,7 @@ pub enum Message {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    ReplicaStatus(ReplicaStatus),
     Gateway(GatewayResponse),
     Route(Result<Target>),
     Participant(Response),

@@ -134,6 +134,35 @@ impl Default for Network {
     }
 }
 impl Network {
+    /// Discovery is read-only. Transaction calls pin the chosen endpoint for
+    /// their attempt; an INSTALL is never resent to another participant.
+    pub fn find_leader(
+        &self,
+        owner: u32,
+        replicas: &wire::ReplicaSet,
+        timeout: Duration,
+    ) -> Result<String> {
+        for endpoint in &replicas.endpoints {
+            if let Ok(Reply::ReplicaStatus(status)) = self.call(
+                endpoint,
+                Message::ReplicaStatus,
+                timeout.min(Duration::from_millis(500)),
+            ) {
+                if status.owner == owner
+                    && status.group == Some(replicas.group)
+                    && status.leader
+                    && status.healthy
+                    && status.durable_receipts
+                {
+                    return Ok(endpoint.clone());
+                }
+            }
+        }
+        Err(Error::new(
+            ErrorCode::RouteChanged,
+            "no healthy leader in configured replica group",
+        ))
+    }
     fn client(&self, endpoint: &str) -> Result<Arc<Client>> {
         let mut clients = self.clients.lock();
         if let Some(client) = clients.get(endpoint) {
