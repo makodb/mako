@@ -23,7 +23,7 @@
 #include "mako/varkey.h"
 #include "mako/core.h"
 #include "mako/silo_runtime.h"
-#include "mako/sto/thread_registration.hh"
+#include "mako/runtime/thread_registration.hh"
 
 #include <string.h>
 

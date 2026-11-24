@@ -24,13 +24,18 @@ class EngineSelectionTests(unittest.TestCase):
                     RUNNER.ORIGINAL_TOOLCHAIN.read_bytes(),
                 )
                 self.assertIn("../rust-toolchain.toml", RUNNER.dependency_hashes())
+                helper = Path("native-build-support/native_allocator.rs")
+                self.assertEqual(
+                    (workspace.root / helper).read_bytes(),
+                    (RUNNER.ORIGINAL_CRATES / helper).read_bytes(),
+                )
+                self.assertIn(helper.as_posix(), RUNNER.dependency_hashes())
             finally:
                 workspace.close()
 
-    def test_cabi_selection_does_not_depend_on_default_features(self):
-        args = RUNNER.cargo_args("c-abi")
-        self.assertIn("--no-default-features", args)
-        self.assertEqual(args[-1], "engine-c-abi,test-support")
+    def test_retired_engine_is_rejected(self):
+        with self.assertRaises(RUNNER.HarnessFailure):
+            RUNNER.cargo_args("c-abi")
 
     def test_sto_baseline_and_designated_test_select_rust_hooks(self):
         args = RUNNER.cargo_args("sto")
@@ -46,26 +51,22 @@ class EngineSelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.HarnessFailure, "MAKO_MTREE_NATIVE_INTEGRATION"):
                 RUNNER.resolve_build_dirs(args, RUNNER.MUTATIONS)
 
-    def test_report_distinguishes_rust_hooks_from_cpp_archive_hooks(self):
-        build = Path("/test/build")
-        for engine, archive_hooks in (("sto", False), ("c-abi", True)):
-            with self.subTest(engine=engine):
-                profile = RUNNER.native_profile(build, engine, True)
-                self.assertTrue(profile["commit_hooks_required"])
-                self.assertEqual(profile["hook_archive_required"], archive_hooks)
-                self.assertEqual(profile["hook_implementation"], "rust" if engine == "sto" else "c++")
-                self.assertFalse(RUNNER.native_profile(build, engine, False)["hook_archive_required"])
+    def test_report_requires_rust_hooks(self):
+        profile = RUNNER.native_profile(Path("/test/build"), "sto", True)
+        self.assertTrue(profile["commit_hooks_required"])
+        self.assertEqual(profile["hook_implementation"], "rust")
+        self.assertFalse(profile["hook_archive_required"])
 
     def test_sto_hooks_do_not_require_cpp_hook_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
-            (build / "libmako.a").touch()
-            (build / "CMakeCache.txt").write_text("MAKO_LOCAL_TEST_HOOKS:BOOL=OFF\n")
+            (build / "libmako_mtree_boundary.a").touch()
+            (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n")
             args = RUNNER.parser().parse_args(["--engine", "sto", "--mako-build-dir", directory])
             env = {
                 "MAKO_MTREE_NATIVE_INTEGRATION": "1",
                 "MAKO_MTREE_NATIVE_LIB_DIRS": directory,
-                "MAKO_MTREE_NATIVE_LIBS": "static=mako",
+                "MAKO_MTREE_NATIVE_LIBS": "static=mako_mtree_boundary",
             }
             with patch.dict(os.environ, env, clear=True):
                 chosen, require_hooks = RUNNER.resolve_build_dirs(args, RUNNER.MUTATIONS)

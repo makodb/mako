@@ -21,7 +21,7 @@ def main():
         binaries[name] = Path(path).resolve(strict=True)
     if len(binaries) < 2:
         parser.error("need at least two Rust STO variants")
-    # C ABI measurements use the explicit --c-abi/--sto pair driver, never a
+    # Paired Rust revisions use the --baseline/--candidate driver, never a
     # Rust variant label. The shared validator enforces the backend per sample.
     run_comparison(parser, args, binaries, {name: "sto" for name in binaries}, "variant")
 

@@ -4,6 +4,136 @@ Branch `sharding-on-rust-engine`, worktree `/var/tmp/mako-shard-rust`. Sections 
 
 ## Resumed implementation
 
+### Completed Rust-only transaction backend retirement, 2026-11-23
+
+The owner has now authorized removing the C++ transaction path, making Rust
+the default, and migrating its callers and tests. This supersedes the older
+instructions below to preserve C++ as the default or retain both engines.
+Masstree, its native allocator/RCU support, and the application/RPC bridges stay.
+Transaction-manager tests continue to use simple in-memory datatypes; native
+Masstree and application integration checks remain separate.
+
+Execution plan and completion checks:
+
+- [x] Extract the worker context, epoch admission/drain, thread registration,
+  replay/logging data, and benchmark worker setup from transaction-engine files.
+  Rust production sources must include only the extracted runtime interfaces.
+  Preserve epoch nesting, freeze/drain ordering, and cleanup behavior.
+- [x] Make the Rust adapter available to ordinary application targets and the
+  sole default backend. Move cache/engine Cargo defaults to Rust and remove
+  C++ selection. Explicit requests for the retired engine must fail clearly.
+- [x] Migrate direct C++ consumers, sharded-index operations, native sharding
+  callbacks, examples, replay and the RocksDB-compatible facade. Preserve their
+  public behavior and exercise local, distributed and replicated execution.
+- [x] Replace backend-specific tests with Rust equivalents for their useful
+  contracts. Remove tests, comparison tools and FFI crates whose only purpose
+  is the retired engine. Keep Masstree tests independent.
+- [x] Delete C++ transaction implementation, adapters and selection branches;
+  remove their build/script references. Audit includes and linked symbols so
+  renaming or leaving an unselected implementation cannot count as removal.
+- [x] Run container builds, separate component tests, application/facade and
+  Raft-backed transaction checks, migration/proof gates, and relevant sanitizer
+  checks. Record failures and fixes, update documentation, and commit the
+  completed change. Do not publish or push.
+
+The retirement checks are complete and committed locally on this branch.
+The completed live-migration work below is the starting point; the evidence
+here covers removal of the C++ transaction backend and the Rust default.
+
+Retirement validation:
+
+- The C++ implementation and its C ABI crates are deleted. `libmako.a`, the
+  isolated Masstree boundary archive, `dbtest` and the TPC-C runner contain no
+  retired `Transaction`, `MassTrans`, `mbta_*`, `Sto::*` or `mako_local_*`
+  symbols. Ordinary applications and `mako::DB::Open` default to Rust and
+  reject explicit C++ selection.
+- The full default container build passed, including the Raft and SRPC source
+  provenance gates. The generated Rust workspace/native integration commands
+  passed Clippy, rustdoc, native FFI checks and workspace tests. The separate
+  transaction-manager suite passed 406 tests without native tree linkage;
+  the Masstree component checks passed separately.
+- All seven native application/facade suites passed. The receiver ports exposed
+  a missing engine pin when an empty participant preceded its incoming request;
+  first physical access now pins it until terminal cleanup. Rollback and worker
+  teardown also resolve remote participants after an earlier local Rust abort.
+  Reusing the same client lane after teardown is covered by a regression.
+- Existing scan bridge tests caught a raw-callback dispatch regression in arena
+  retention. A scoped delivery frame now preserves raw-byte overrides and
+  stable arena strings for string callbacks, including exception cleanup.
+  The bridge, arena, and distributed scan suites passed after this fix.
+- All 22 Rust-labeled application checks passed after the final scan fix,
+  including TPC-C default/explicit selection, resource exhaustion, and all four
+  static or Raft protocol layouts. Nine native facade/runtime/ABI checks and both
+  native ABI suites passed. Native migration passed both process layouts,
+  four metadata reopen cases, and all six Rust storage fixture outcomes.
+- Rust cache integration passed 52 engine tests and 232 cache tests, including
+  ordered-map model replay. Fresh-process recovery passed six workload cases,
+  eight retained/checkpoint state cases and two checksum negative controls.
+  Five allocator contract checks moved to the cache suite and passed; the
+  mutation runner preserves and fingerprints their shared helper.
+- ASan exposed facade ownership leaks and a colocated TPC-C allocation overwrite.
+  Routing facades are now owned and reused by the Rust adapter; local DB
+  destruction releases that adapter. TPC-C allocates its lock/ID arrays once
+  with distinct shard offsets. The affected application and sanitizer checks
+  passed after these fixes. Gateway cleanup also now matches the public
+  `delete` ownership contract and joins its listener before closing its socket.
+  Test-owned servers and queues are released after their workers join.
+- UBSan passed ten runtime/facade/scan/default application checks, both native
+  migration layouts, four metadata reopen cases and all six storage outcomes.
+  It used the existing Masstree `bounds:internode` suppression;
+  `/tmp/mako-retire-ubsan-final-02.log` records the run after the facade/TPC-C
+  fixes. The distributed gateway cleanup passed its focused UBSan rerun.
+- ASan passed the ordinary facade/runtime/scan checks and all three distributed
+  suites with leak detection enabled and no suppressions. Native migration
+  passed both process layouts, all four metadata reopen cases, and all six
+  storage scenarios under the same leak checking. Six exact TPC-C lifecycle
+  cases use the existing `leak:mt_tree::mt_tree` constructor rule; their audited
+  counts are 4/8/4/16/4/16 allocations, totaling 52 allocations / 16,640 bytes.
+  No suppression was added for the ownership, allocation-mismatch or fixture
+  leaks found and fixed during retirement. Evidence:
+  `/tmp/mako-retire-asan-final-01.log` (five unaffected focused cases) and
+  `/tmp/mako-retire-asan-final-03.log` (fixed distributed cases, exact LSan audit
+  and all migration scenarios).
+- TSan passed the focused application/default/facade checks, all three
+  distributed suites, both migration layouts, metadata reopen and all six
+  storage scenarios. It uses the existing reviewed Masstree internal-race
+  suppressions. The gateway shutdown race was fixed without a new suppression.
+  Evidence: `/tmp/mako-retire-tsan-final-01.log` (eight passing cases before
+  the gateway fix), `/tmp/mako-retire-tsan-final-02.log` (fixed distributed
+  cases and migration), and `/tmp/mako-retire-tsan-teardown-03.log` (final
+  test-owned queue teardown).
+- The pinned Miri script passed, including its final 224-test Masstree lane
+  with the seven documented exclusions. The full sharding proof/negative-control
+  and runtime/recovery gate passed against the Rust storage host.
+
+The retired tests map to the following maintained contracts:
+
+| Retired implementation tests | Maintained checks |
+| --- | --- |
+| `Transaction` item lifetime, bounded sets, ownership and cleanup | `sto-core` and `sto-test-datatypes`, using in-memory cells, counters and arrays; scoped capability compile-fail tests and Miri |
+| C++ transaction timestamp/participant tests | `mako-clock`, `sto-core/tests/participant.rs`, and Rust protocol/clock proof targets |
+| C++ native ABI/direct-engine three-way replay | Rust engine replay against `mako-differential`'s independent ordered-map model; the binary-key, interval and 864 composition corpus is retained |
+| MassTrans nontransactional operations and sharded facade | `test_silo_nontxn_api`, `test_kv_backends`, `test_config_manager_rust`, and `rocksdbInterfaceTest`, all on the Rust adapter |
+| C++ receiver/migration fixture | Rust-backed `test_mako_nontxn_distributed`, `test_mako_native_mixed_scan`, and `native_sharding_smoke` |
+| C++ MVCC chain internals | Rust MVCC/record lifecycle tests; wire metadata/replay encoding checks stay native |
+| Masstree/RCU internals | Existing native ABI and independent `rust_masstree_tests`; transaction-manager algorithm tests do not link Masstree |
+
+Final normal-build/application evidence is in
+`/tmp/mako-retire-full-build-01.log`,
+`/tmp/mako-retire-final-validation-02.log`, and
+`/tmp/mako-retire-native-abi-final-01.log`. Separate component/cache, Miri,
+workspace, and proof logs are `/tmp/mako-retire-allocator-components-01.log`,
+`/tmp/mako-retire-cache-02.log`, `/tmp/mako-retire-miri-01.log`,
+`/tmp/mako-retire-workspace-01.log`, and `/tmp/mako-retire-proofs-01.log`.
+The final gateway consumer rebuilds and distributed reruns are recorded in
+`/tmp/mako-retire-{normal,asan,ubsan,tsan}-gateway-final.log`. The final source,
+linked-symbol, and canonical storage DSL audit is
+`/tmp/mako-retire-final-audit-03.log`. The symbol audit and both default
+`dbtest` lifecycle cases also passed after the final gateway consumer relink
+(`/tmp/mako-retire-final-audit-04.log`). These native checks retain the Masstree
+qualifications above; they do not establish native memory reclamation,
+replicated migration, durable primary-data recovery, or performance acceptance.
+
 ### Completed integration, 2026-11-23
 
 The remaining live integration work is complete, with the scope and proof

@@ -14,9 +14,8 @@
 #include "benchmarks/benchmark_config.h"
 #include "lib/common.h"
 #include "lib/table_registry.h"
-#include "sto/Transaction.hh"
+#include "runtime/epoch.hh"
 #include "silo_runtime.h"
-#include "storage/mbta_wrapper.hh"
 #include "storage/rust_sto_tpcc_wrapper.hh"
 
 // Host-private exports of crates/sto-tpcc-ffi/src/shard_host.rs. They stay
@@ -308,7 +307,7 @@ MakoShardHost rust_sharding_callbacks(NativeShardingHost& base) {
         mako_sharding_warehouse_opener(base.owner, db, open_warehouse) != MAKO_SHARD_OK)
         throw std::logic_error("warehouse directory has a different engine opener");
     if (warehouses) state->builders.emplace(base.owner, std::make_pair(db, total));
-    Transaction::start_epoch_advancer();
+    mako::EpochRuntime::start_epoch_advancer();
     state->closed.insert(base.owner);
     base.rust_storage = true;
     MakoShardHost host = base.callbacks();

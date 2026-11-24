@@ -1,5 +1,5 @@
 # Workspace for Mako's native Rust components: the Masstree/RocksDB cache
-# (mrx-*, mako-cache, mako-local), the native Rust STO (sto-*), and the direct
+# (mrx-*, mako-cache), the native Rust STO (sto-*), and the direct
 # RocksDB/Raft profile (sto-rocksdb, raft-host, rocksdb-raft-service; built
 # and tested by cmake/RocksdbRaft.cmake, not by the workspace-wide sweeps).
 #
@@ -20,8 +20,6 @@ members = [
     "mako-engine-api",
     "mako-engine-sto",
     "mako-history",
-    "mako-local",
-    "mako-local-sys",
     "masstree",
     "mrx",
     "mrx-ffi",

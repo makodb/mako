@@ -80,8 +80,6 @@
  * rcu::mysync() registers the calling thread lazily, so entering an RCU
  * region is the whole per-thread contract.
  *
- * INCLUDE ORDER: before any header pulling sto/MassTrans.hh
- * (`#define RCU 1` vs imstring.h's template parameter).
  */
 
 #include "mako/masstree_btree.h"  // concurrent_btree

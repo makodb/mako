@@ -3081,20 +3081,22 @@ fn native_fingerprint() -> String {
     let Some(build) = env::var_os("MAKO_BUILD_DIR") else {
         return String::new();
     };
-    let manifest = PathBuf::from(build).join("generated/mako_local_build_manifest.json");
-    let Ok(contents) = fs::read_to_string(manifest) else {
-        return String::new();
-    };
-    extract_json_string(&contents, "fingerprint").unwrap_or_default()
-}
-
-fn extract_json_string(document: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\"");
-    let rest = document.split_once(&needle)?.1;
-    let rest = rest.trim_start().strip_prefix(':')?.trim_start();
-    let quoted = rest.strip_prefix('"')?;
-    let end = quoted.find('"')?;
-    Some(quoted[..end].to_owned())
+    let build = PathBuf::from(build);
+    Command::new("sha256sum")
+        .arg(build.join("libmako_mtree_boundary.a"))
+        .arg(build.join("src/masstree/libmasstree.a"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|output| {
+            output
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .collect::<Vec<_>>()
+                .join(":")
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -3541,10 +3543,6 @@ mod tests {
         let mut output = String::new();
         push_json_string(&mut output, "a\"b\\c\n\t\u{1f}");
         assert_eq!(output, "\"a\\\"b\\\\c\\n\\t\\u001f\"");
-        assert_eq!(
-            extract_json_string("{ \"fingerprint\" : \"abc123\" }", "fingerprint"),
-            Some("abc123".to_owned())
-        );
     }
 
     #[test]

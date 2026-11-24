@@ -1,7 +1,7 @@
 #include <std_compat.hpp>
 #include "mako/lib/server.h"
 #include "mako/benchmarks/bench.h"
-#include "mako/sto/Transaction.hh"
+#include "mako/runtime/epoch.hh"
 #include <rusty/option.hpp>
 #include <cstring>
 #include <cerrno>

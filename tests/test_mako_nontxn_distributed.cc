@@ -23,8 +23,9 @@
 
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
-#include "storage/mbta_wrapper.hh"
-#include "storage/mbta_sharded_ordered_index.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
+#include "storage/rust_sto_sharding_host.hh"
+#include "storage/sharded_ordered_index.hh"
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
@@ -33,8 +34,8 @@
 #include "rocks_interface/client_tcp_server.h"
 #include "rocks_interface/local_table.hh"
 #include "rocks_interface/remote_db.hh"
-#include "sto/Transaction.hh"
-#include "sto/sync_util.hh"
+#include "runtime/epoch.hh"
+#include "runtime/sync_util.hh"
 #include "native_sharding_host.h"
 #include <rusty/thread.hpp>
 
@@ -52,13 +53,39 @@ constexpr int kNumWarehouses = 1;
 constexpr long kRemoteTableId = 201;
 
 FastTransport* g_server_transport = nullptr;
+std::unique_ptr<mako::HelperQueue> g_request_queue;
+std::unique_ptr<mako::HelperQueue> g_response_queue;
 transport::Configuration* g_config = nullptr;
-mbta_wrapper* g_db = nullptr;
+rust_sto_tpcc_wrapper* g_db = nullptr;
 SiloRuntime* g_native_runtime = nullptr;
 
+rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> rpc_worker;
+rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> rpc_helper;
+void stop_rpc_workers() {
+    if (g_server_transport) g_server_transport->Stop();
+    if (rpc_helper.is_some()) rpc_helper.take().unwrap().join().unwrap();
+    if (rpc_worker.is_some()) rpc_worker.take().unwrap().join().unwrap();
+    delete g_server_transport;
+    g_server_transport = nullptr;
+    g_request_queue.reset();
+    g_response_queue.reset();
+}
+
 // The same logical table seen from the two roles:
-mbta_ordered_index* g_client_tbl = nullptr;  // is_remote=true  → RPC path
-mbta_ordered_index* g_server_tbl = nullptr;  // is_remote=false → local store
+rust_sto_tpcc_ordered_index* g_client_tbl = nullptr;  // is_remote=true  → RPC path
+rust_sto_tpcc_ordered_index* g_server_tbl = nullptr;  // is_remote=false → local store
+
+void start_attempt() {
+    thread_local str_arena arena;
+    g_db->new_txn(0, arena, nullptr);
+}
+void abort_attempt() {
+    g_db->abort_txn(rust_sto_tpcc_wrapper::current_transaction_handle());
+}
+bool try_commit_attempt() {
+    try { return g_db->commit_txn(rust_sto_tpcc_wrapper::current_transaction_handle()); }
+    catch (const abstract_db::abstract_abort_exception&) { abort_attempt(); return false; }
+}
 
 class QueuedGetRequest final : public mako::TransportRequestHandle {
 public:
@@ -84,7 +111,7 @@ public:
     void EnqueueResponse(size_t response_size) override {
         response_size_ = response_size;
         transaction_active_at_response_ =
-            TThread::txn != nullptr && TThread::txn->has_active_state();
+            rust_sto_tpcc_wrapper::current_transaction_active();
         ++response_count_;
     }
 
@@ -134,7 +161,7 @@ void set_server_table_multiversion_mode() {
 // production rpc_server in benchmarks/rpc_setup.cc (handler range
 // 1..18 inclusive covers the non-txn types 14-17 and full scan pages;
 // rpc id = warehouses + 5 + alpha matches the client's destination).
-// @unsafe - legacy transport and helper-queue ownership lasts until process exit.
+// @unsafe - queues outlive both joined transport/helper workers.
 void rpc_server_thread(std::string cluster, transport::Configuration* config) {
     std::string local_uri =
         config->shard(kServerShard, mako::convertCluster(cluster)).host;
@@ -151,8 +178,10 @@ void rpc_server_thread(std::string cluster, transport::Configuration* config) {
     std::unordered_map<uint16_t, mako::HelperQueue*> queues_response;
     // Key 0 = the requesting client's global warehouse id
     // (shard 0, par 0 with 1 warehouse per shard).
-    queues[0] = new mako::HelperQueue(0, true);
-    queues_response[0] = new mako::HelperQueue(0, false);
+    g_request_queue = std::make_unique<mako::HelperQueue>(0, true);
+    g_response_queue = std::make_unique<mako::HelperQueue>(0, false);
+    queues[0] = g_request_queue.get();
+    queues_response[0] = g_response_queue.get();
     g_server_transport->SetHelperQueues(queues);
     g_server_transport->SetHelperQueuesResponse(queues_response);
     g_server_transport->Run();
@@ -177,14 +206,12 @@ void helper_server_thread(transport::Configuration* config,
     TThread::set_pid(kParId);
     TThread::set_nshards(config->nshards);
     TThread::in_loading_phase = false;
-    auto* ss = new mako::ShardServer(config->configFile,
-                                     kServerShard,
-                                     kClientShard, kParId);
-    ss->Register(db,
+    mako::ShardServer server(config->configFile, kServerShard, kClientShard, kParId);
+    server.Register(db,
                  g_server_transport->GetHelperQueue(0),
                  g_server_transport->GetHelperQueueResponse(0),
                  open_tables);
-    ss->Run();  // event driven
+    server.Run();  // event driven; destroyed after the joined helper exits
 }
 
 class MakoNontxnDistributed : public ::testing::Test {
@@ -195,6 +222,7 @@ protected:
         // On --gtest_repeat, reuse them and only recreate this iteration's
         // main-thread client, which TearDownTestSuite releases below.
         if (g_config != nullptr) {
+            g_db->thread_init(true);
             ASSERT_EQ(TThread::sclient, nullptr);
             TThread::sclient = new mako::ShardClient(g_config->configFile,
                                                      "localhost",
@@ -219,25 +247,17 @@ protected:
         register_sync_util_sc([]() { return 0; });
         register_sync_util_ss([]() { return 0; });
 
-        g_db = new mbta_wrapper;
+        g_db = new rust_sto_tpcc_wrapper;
 
-        {
-            // Registers the gtest main thread with Silo/masstree
-            // (loader mode avoids the ShardClient bring-up inside
-            // thread_init).
-            scoped_db_thread_ctx ctx(g_db, /*loader=*/true);
-        }
-        // MV deletes leave physical tombstones. Direct verification through
-        // g_server_tbl must interpret them in the same mode as the helper.
+        g_db->init();
+        BenchmarkConfig::setThreadLocalShardIndex(kServerShard);
+        g_server_tbl = static_cast<rust_sto_tpcc_ordered_index*>(g_db->open_index("nontxn_dist", kServerShard));
+        ASSERT_EQ(g_server_tbl->get_table_id(), kRemoteTableId);
+        g_client_tbl = new rust_sto_tpcc_ordered_index(g_db, nullptr, kRemoteTableId,
+                                                     "nontxn_dist", true);
+        BenchmarkConfig::setThreadLocalShardIndex(kClientShard);
+        g_db->thread_init(true);
         set_server_table_multiversion_mode();
-
-        // The same logical table from the two role perspectives.
-        g_client_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,
-                                        /*is_remote=*/true);
-        g_server_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,
-                                        /*is_remote=*/false);
-        mako::get_table_registry().register_table(kRemoteTableId, "nontxn_dist",
-                                                  kServerShard, true, g_server_tbl);
 
         // Server role in detached threads (transport first, then the
         // worker that consumes its queues).
@@ -245,7 +265,7 @@ protected:
         auto t1 = rusty::thread::spawn([config = g_config]() {
             rpc_server_thread("localhost", config);
         });
-        t1.detach();
+        rpc_worker = rusty::Some(std::move(t1));
         sleep(2);
         std::map<int, abstract_ordered_index*> open_tables_by_id;
         open_tables_by_id[kRemoteTableId] = g_server_tbl;
@@ -254,7 +274,7 @@ protected:
             [config = g_config, db = g_db, tables = std::move(open_tables_by_id)]() mutable {
                 helper_server_thread(config, db, std::move(tables));
             });
-        t2.detach();
+        rpc_helper = rusty::Some(std::move(t2));
         sleep(1);
 
         // Client role on this thread.
@@ -270,10 +290,12 @@ protected:
     }
 
     static void TearDownTestSuite() {
-        EXPECT_TRUE(TThread::txn == nullptr ||
-                    !TThread::txn->has_active_state());
+        EXPECT_TRUE(!rust_sto_tpcc_wrapper::current_transaction_active());
         delete TThread::sclient;
         TThread::sclient = nullptr;
+        g_db->thread_end();
+        stop_rpc_workers();
+        g_config = nullptr;
     }
 };
 
@@ -287,6 +309,36 @@ TEST_F(MakoNontxnDistributed, RemotePutRoundTrip) {
     std::string out;
     ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk1"), out, std::string::npos));
     EXPECT_EQ(out, "dist-v1");
+}
+
+// A failed local operation may abort Rust before its coordinator is detached.
+// The remote read lease still needs an abort, or the reused client lane fences.
+TEST_F(MakoNontxnDistributed, ThreadEndResolvesPeersAfterLocalAbort) {
+    TThread::set_mode(0);
+    TThread::set_shard_index(kClientShard);
+    TThread::set_pid(kParId);
+    TThread::in_loading_phase = false;
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("detach-peer"), "value"));
+    start_attempt();
+    std::string value;
+    ASSERT_TRUE(g_client_tbl->tx_get(
+        rust_sto_tpcc_wrapper::current_transaction_handle(),
+        lcdf::Str("detach-peer"), value, std::string::npos));
+    ASSERT_TRUE(TThread::sclient->hasTouchedParticipants());
+    rust_sto_tpcc_wrapper::abort_current_thread_transaction();
+    ASSERT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
+    g_db->thread_end();
+    g_db->thread_init(true);
+    TThread::set_pid(kParId);
+    TThread::in_loading_phase = false;
+    TThread::sclient = new mako::ShardClient(
+        g_config->configFile, "localhost", kClientShard, kParId);
+    start_attempt();
+    ASSERT_TRUE(g_client_tbl->tx_get(
+        rust_sto_tpcc_wrapper::current_transaction_handle(),
+        lcdf::Str("detach-peer"), value, std::string::npos));
+    EXPECT_TRUE(try_commit_attempt());
+    EXPECT_FALSE(TThread::sclient->hasTouchedParticipants());
 }
 
 TEST_F(MakoNontxnDistributed, RemotePutOverwrites) {
@@ -330,15 +382,15 @@ TEST_F(MakoNontxnDistributed, RemoteTransactionalDeleteCommitsAndAborts) {
     // @unsafe - stage through the public transactional API and finish all peers.
     auto remove = [&](bool commit, bool put_first) {
         mako::ShardingOperation operation;
-        Sto::start_transaction();
+        start_attempt();
         try {
-            if (put_first) g_client_tbl->tx_put(nullptr, key, replacement);
-            g_client_tbl->tx_remove(nullptr, key);
-            if (commit && Sto::try_commit()) return true;
-            Sto::abort_without_throw();
+            if (put_first) g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), key, replacement);
+            g_client_tbl->tx_remove(rust_sto_tpcc_wrapper::current_transaction_handle(), key);
+            if (commit && try_commit_attempt()) return true;
+            abort_attempt();
             return false;
         } catch (...) {
-            Sto::abort_without_throw();
+            abort_attempt();
             throw;
         }
     };
@@ -361,16 +413,16 @@ TEST_F(MakoNontxnDistributed, RemoteTransactionalDeleteCommitsAndAborts) {
     // @unsafe - same public API and terminals as `remove` above.
     auto rewrite = [&](bool delete_first) {
         mako::ShardingOperation operation;
-        Sto::start_transaction();
+        start_attempt();
         try {
-            if (delete_first) g_client_tbl->tx_remove(nullptr, key);
-            else g_client_tbl->tx_put(nullptr, key, small);
-            g_client_tbl->tx_put(nullptr, key, big);
-            if (Sto::try_commit()) return true;
-            Sto::abort_without_throw();
+            if (delete_first) g_client_tbl->tx_remove(rust_sto_tpcc_wrapper::current_transaction_handle(), key);
+            else g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), key, small);
+            g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), key, big);
+            if (try_commit_attempt()) return true;
+            abort_attempt();
             return false;
         } catch (...) {
-            Sto::abort_without_throw();
+            abort_attempt();
             throw;
         }
     };
@@ -423,11 +475,11 @@ TEST_F(MakoNontxnDistributed, FailedReadRestoresIdleHelper) {
     receiver.ReceiveRequest(mako::scanReqType,
         reinterpret_cast<char*>(&scan), reinterpret_cast<char*>(&scan_reply));
     EXPECT_EQ(scan_reply.status, mako::ErrorCode::ABORT);
-    EXPECT_TRUE(TThread::txn->in_progress());
-    EXPECT_FALSE(TThread::txn->has_epoch());
-    const auto idle_cut = Transaction::epoch_cut();
+    EXPECT_TRUE(rust_sto_tpcc_wrapper::current_transaction_active());
+    EXPECT_FALSE(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() != 0);
+    const auto idle_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(idle_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(idle_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(idle_cut));
 
     // No terminal Abort between the failed scan and this next transaction.
     mako::get_request_t get{};
@@ -450,7 +502,7 @@ TEST_F(MakoNontxnDistributed, FailedReadRestoresIdleHelper) {
     receiver.ReceiveRequest(mako::abortReqType,
         reinterpret_cast<char*>(&abort), reinterpret_cast<char*>(&abort_reply));
     EXPECT_EQ(abort_reply.status, mako::ErrorCode::SUCCESS);
-    Sto::silent_abort();
+    abort_attempt();
     TThread::set_shard_index(saved_shard);
     TThread::set_mode(saved_mode);
     EXPECT_TRUE(g_server_tbl->remove(lcdf::Str(key)));
@@ -569,9 +621,9 @@ TEST_F(MakoNontxnDistributed, RemoteOpSequence) {
 // L7 facade: ITable non-txn surface over the same store.
 // ---------------------------------------------------------------------------
 TEST_F(MakoNontxnDistributed, L7LocalTableNontxn) {
-    auto* sharded = new mbta_sharded_ordered_index(
+    sharded_ordered_index sharded(
         "nontxn_dist", std::vector<abstract_ordered_index*>{g_server_tbl});
-    mako::LocalTable lt(sharded, "nontxn_dist");
+    mako::LocalTable lt(&sharded, "nontxn_dist");
 
     EXPECT_TRUE(lt.Put("l7k1", "v1").ok());
     std::string out;
@@ -599,18 +651,19 @@ TEST_F(MakoNontxnDistributed, L7LocalTableNontxn) {
 // the server table. This is the re-based (sound) RemoteTable KV path;
 // the old one staged shard_put writes that never committed.
 TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
-    auto* recv = new mako::ShardReceiver(config_path());
+    mako::ShardReceiver recv(config_path());
     std::map<int, abstract_ordered_index*> tables;
     tables[kRemoteTableId] = g_server_tbl;
-    recv->Register(g_db, tables);
+    recv.Register(g_db, tables);
 
-    auto* tcp = new mako::ClientTcpServer(31307, 2);
-    tcp->SetReceiver(recv);
-    ASSERT_TRUE(tcp->Start());
+    mako::ClientTcpServer tcp(31307, 2);
+    tcp.SetReceiver(&recv);
+    ASSERT_TRUE(tcp.Start());
 
     mako::RemoteDB* rdb = nullptr;
     ASSERT_TRUE(mako::RemoteDB::ConnectNontxn("127.0.0.1", 31307,
         UINT64_C(0x8000000000000307), &rdb).ok());
+    std::unique_ptr<mako::RemoteDB> remote_owner(rdb);
     mako::ITable* tbl = rdb->GetTable("nontxn_dist", kRemoteTableId);
     ASSERT_NE(tbl, nullptr);
 
@@ -651,8 +704,8 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     EXPECT_EQ(out, "already-committed");
 
     rdb->Disconnect();
-    delete rdb;
-    tcp->Stop();
+    remote_owner.reset();
+    tcp.Stop();
 }
 
 // @unsafe - Exercises the real helper and C++ participant against stored rows.
@@ -705,22 +758,14 @@ TEST_F(MakoNontxnDistributed,
               sizeof(mako::get_response_t) - mako::max_value_length);
 }
 
-// ShardServer::Run() parks an idle mode-1 participant before suspend() so a
-// waiting helper pins neither the STO epoch nor Masstree RCU. The original
-// detector (test_mako_nontxn_distributed_rcu_shutdown) only hung a departing
-// worker's blocking thread_end() drain; thread_end() no longer waits for an
-// older reader, so check the suspended helper directly. Its empty participant
-// has entered both, as every mode-1 storage access does first, and must leave
-// them before the helper suspends and be restored for the next request.
-// @unsafe - Exercises the real helper loop; reads the helper's published
-// Masstree and STO epochs only through their atomic accessors.
-TEST_F(MakoNontxnDistributed, ParkedIdleHelperLeavesMasstreeRcu) {
-    using helper_threadinfo = decltype(mbta_table::mythreadinfo.ti);
+// An idle helper must release its empty Rust frame before suspension and
+// reopen it before the next request. Masstree RCU ownership is checked in the
+// separate native ABI suite; no C++ transaction internals are inspected here.
+TEST_F(MakoNontxnDistributed, ParkedIdleHelperReopensRustParticipant) {
     const std::string key = "__parked_idle_helper_row__";
     g_server_tbl->put(lcdf::Str(key), "parked-helper-value");
     mako::HelperQueue request_queue(0, true);
     mako::HelperQueue response_queue(0, false);
-    std::atomic<helper_threadinfo> helper_ti{nullptr};
     std::atomic<int> helper_id{-1};
     std::atomic<bool> run_returned{false};
 
@@ -739,12 +784,9 @@ TEST_F(MakoNontxnDistributed, ParkedIdleHelperLeavesMasstreeRcu) {
         // Registration resets the participant to a lazy placeholder that has
         // entered neither epoch; give Run() the state its parking guards.
         server.Register(g_db, &request_queue, &response_queue, tables);
-        TThread::txn->ensure_epoch();
         EXPECT_TRUE(g_db->shard_participant_active());
         EXPECT_TRUE(g_db->shard_participant_empty());
-        EXPECT_TRUE(mbta_table::mythreadinfo.ti->rcu_active());
         helper_id.store(TThread::id(), std::memory_order_release);
-        helper_ti.store(mbta_table::mythreadinfo.ti, std::memory_order_release);
         server.Run();
         run_returned.store(true, std::memory_order_release);
         if (g_db->shard_participant_active()) g_db->shard_abort_txn(nullptr);
@@ -754,25 +796,13 @@ TEST_F(MakoNontxnDistributed, ParkedIdleHelperLeavesMasstreeRcu) {
     // Unparked, it would keep both epochs published for as long as it waits.
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    helper_threadinfo ti = nullptr;
-    while ((ti = helper_ti.load(std::memory_order_acquire)) == nullptr &&
+    int slot = -1;
+    while ((slot = helper_id.load(std::memory_order_acquire)) < 0 &&
            std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    bool left_rcu = false;
-    bool left_sto_epoch = false;
-    if (ti != nullptr) {
-        auto& sto_epoch =
-            Transaction::tinfo[helper_id.load(std::memory_order_acquire)].epoch;
-        do {
-            left_rcu = !ti->rcu_active();
-            left_sto_epoch = sto_epoch.load(std::memory_order_seq_cst) == 0;
-            if (left_rcu && left_sto_epoch) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        } while (std::chrono::steady_clock::now() < deadline);
-    }
-    EXPECT_NE(ti, nullptr);
-    EXPECT_TRUE(left_rcu) << "idle mode-1 helper suspended inside Masstree RCU";
-    EXPECT_TRUE(left_sto_epoch) << "idle mode-1 helper suspended inside the STO epoch";
+    EXPECT_GE(slot, 0);
+    if (slot >= 0)
+        EXPECT_EQ(mako::EpochRuntime::tinfo[slot].epoch.load(), 0u);
     EXPECT_FALSE(run_returned.load(std::memory_order_acquire));
 
     // The parked helper restores its participant before serving a request.
@@ -789,7 +819,7 @@ TEST_F(MakoNontxnDistributed, ParkedIdleHelperLeavesMasstreeRcu) {
     EXPECT_TRUE(get.transaction_active_at_response());
 }
 
-// @unsafe - Actual receiver admission wraps the retained C++ participant.
+// @unsafe - Actual receiver admission wraps the retained Rust participant.
 TEST_F(MakoNontxnDistributed, LateTerminalsCannotFinishTheNextParticipant) {
     const std::string key = "__participant_terminal_fence_row__";
     g_server_tbl->put(lcdf::Str(key), "retained");
@@ -968,6 +998,7 @@ struct NativeMixedHosts {
     rusty::Vec<rusty::Box<mako::NativeShardingHost>> hosts;
     // @unsafe - close listeners before joining native jobs and dropping callbacks.
     ~NativeMixedHosts() {
+        stop_rpc_workers();
         for (auto& host : hosts) host->stop_accepting();
         for (auto& host : hosts) mako_sharding_stop_node(host->owner);
     }
@@ -987,7 +1018,7 @@ uint32_t native_admin_call(void* host, uint32_t operation, MakoShardBytes payloa
 // @unsafe - the opaque identity is observed only under a real STO/native guard;
 // its routing and point admission are checked independently of the identity.
 uint64_t native_cache_view(uint32_t owner, uint64_t table, const std::string& point) {
-    const auto epoch = Transaction::epoch_enter();
+    const auto epoch = mako::EpochRuntime::epoch_enter();
     EXPECT_NE(epoch, 0u);
     if (!epoch) return 0;
     const MakoShardRead* read = nullptr;
@@ -1002,7 +1033,7 @@ uint64_t native_cache_view(uint32_t owner, uint64_t table, const std::string& po
         EXPECT_EQ(mako_sharding_read_point(read, table, native_bytes(point), route), MAKO_SHARD_OK);
         mako_sharding_read_end(read);
     }
-    Transaction::epoch_leave();
+    mako::EpochRuntime::epoch_leave();
     return identity;
 }
 
@@ -1027,7 +1058,7 @@ struct NativeMixedRows final : oi_scan_callback {
     }
 };
 
-// @unsafe - real MBTA/STO, production Rust migration, and ordinary srpc scan RPCs.
+// @unsafe - Rust transaction adapter, production Rust migration, and ordinary srpc scan RPCs.
 TEST(NativeMixedScan, LocalAndRemoteSegments) {
     if (!std::getenv("MAKO_NATIVE_MIXED_SCAN"))
         GTEST_SKIP() << "isolated native mode: set MAKO_NATIVE_MIXED_SCAN=1 and filter NativeMixedScan.*";
@@ -1055,7 +1086,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     register_sync_util_ss([]() { return 0; });
     g_native_runtime = SiloRuntime::Current();
     g_native_runtime->BindToCurrentThread();
-    g_db = new mbta_wrapper;
+    g_db = new rust_sto_tpcc_wrapper;
     g_db->init();
     g_db->thread_init(true, 0);
     ASSERT_EQ(mako_sharding_catalog_register(canonical, native_bytes(name), 0, 0), MAKO_SHARD_OK);
@@ -1063,16 +1094,14 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     for (unsigned owner = 0; owner < 2; ++owner) {
         BenchmarkConfig::setThreadLocalShardIndex(owner);
         TThread::set_shard_index(owner);
-        auto* index = dynamic_cast<mbta_ordered_index*>(g_db->open_index(name, int(owner)));
+        auto* index = dynamic_cast<rust_sto_tpcc_ordered_index*>(g_db->open_index(name, int(owner)));
         ASSERT_NE(index, nullptr);
         if (owner == 0) {
             g_client_tbl = index;
-            ASSERT_TRUE(mako::get_table_registry().bind_native(name, canonical, rusty::None));
         } else {
             g_server_tbl = index;
         }
-        ASSERT_EQ(mako_sharding_raw_register(canonical, owner, 0,
-            reinterpret_cast<uintptr_t>(index)), MAKO_SHARD_OK);
+        ASSERT_EQ(mako::rust_sharding_register_raw(canonical, owner, index), MAKO_SHARD_OK);
     }
     BenchmarkConfig::setThreadLocalShardIndex(0);
     TThread::set_shard_index(0);
@@ -1093,8 +1122,9 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     // loading transaction already owns an engine guard. Failed logical begin
     // must release only its extra guard, never that engine announcement.
     TThread::set_mode(0);
-    Sto::start_transaction();
-    const auto failed_bind_cut = Transaction::epoch_cut();
+    const auto loading_epoch = mako::EpochRuntime::epoch_enter();
+    ASSERT_NE(loading_epoch, 0u);
+    const auto failed_bind_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(failed_bind_cut, 0u);
     TThread::in_loading_phase = false;
     mako::ShardingRequest unavailable{};
@@ -1102,14 +1132,15 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     unavailable.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     EXPECT_FALSE(mako::sharding_bind_request(unavailable));
     EXPECT_FALSE(mako::sharding_has_request());
-    EXPECT_FALSE(Transaction::epoch_drained(failed_bind_cut));
-    Sto::silent_abort();
-    EXPECT_TRUE(Transaction::epoch_drained(failed_bind_cut));
+    EXPECT_FALSE(mako::EpochRuntime::epoch_drained(failed_bind_cut));
+    mako::EpochRuntime::epoch_leave();
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(failed_bind_cut));
     TThread::in_loading_phase = false;
     NativeMixedHosts native;
     for (unsigned owner = 0; owner < 2; ++owner) {
         auto host = rusty::make_box<mako::NativeShardingHost>(g_db, owner, 2, g_native_runtime);
         auto callbacks = host->callbacks();
+        g_db->configure_native_sharding(*host, callbacks);
         ASSERT_EQ(mako_sharding_start_node(owner, 2, 1, &callbacks), MAKO_SHARD_OK);
         const auto listening = host->start_service();
         native.hosts.push(std::move(host));
@@ -1128,22 +1159,22 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
         mako::ShardingOperation operation;
         std::string value;
         EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), value, std::string::npos));
-        retry_cut = Transaction::epoch_cut();
+        retry_cut = mako::EpochRuntime::epoch_cut();
         EXPECT_NE(retry_cut, 0u);
-        EXPECT_FALSE(Transaction::epoch_drained(retry_cut));
+        EXPECT_FALSE(mako::EpochRuntime::epoch_drained(retry_cut));
         {
             mako::ShardingOperation nested;
             EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), value, std::string::npos));
         }
-        EXPECT_FALSE(Transaction::epoch_drained(retry_cut));
-        Sto::start_transaction();
-        EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"), value, std::string::npos));
-        Sto::silent_abort();
-        EXPECT_FALSE(Transaction::epoch_drained(retry_cut));
+        EXPECT_FALSE(mako::EpochRuntime::epoch_drained(retry_cut));
+        start_attempt();
+        EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), value, std::string::npos));
+        abort_attempt();
+        EXPECT_FALSE(mako::EpochRuntime::epoch_drained(retry_cut));
         EXPECT_FALSE(g_client_tbl->get(lcdf::Str("epoch-absent"), value, std::string::npos));
-        EXPECT_FALSE(Transaction::epoch_drained(retry_cut));
+        EXPECT_FALSE(mako::EpochRuntime::epoch_drained(retry_cut));
     }
-    EXPECT_TRUE(Transaction::epoch_drained(retry_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(retry_cut));
 
     // @unsafe - immutable table bindings may survive logical completion, but
     // raw-key captures and staged-batch membership may not.
@@ -1225,10 +1256,10 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
         EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), actual, std::string::npos));
         EXPECT_EQ(actual, "last-local");
     }
-    EXPECT_EQ(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
-    const auto cached_cut = Transaction::epoch_cut();
+    EXPECT_EQ(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
+    const auto cached_cut = mako::EpochRuntime::epoch_cut();
     ASSERT_NE(cached_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(cached_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(cached_cut));
     EXPECT_EQ(native_cache_view(0, canonical, "z"), cached_view);
     const auto stale_encoded = mako::Encode("stale-cross-transaction-effect");
     const auto fresh_encoded = mako::Encode("fresh-cross-transaction-effect");
@@ -1238,27 +1269,27 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
         EXPECT_LT(mako::sharding_batch_request(g_client_tbl->get_table_id(), "z", unstaged), 0);
         EXPECT_LT(mako::sharding_batch_request(
             g_client_tbl->get_table_id(), "capture-only-95", unstaged), 0);
-        Sto::start_transaction();
+        start_attempt();
         const auto fresh = mako::sharding_resolve_point(g_client_tbl->get_table_id(), "z", 1);
         mako::ShardingRequest fresh_request{};
         fresh.write_request(fresh_request);
         EXPECT_NE(fresh_request.transaction.sequence, earlier_request.transaction.sequence);
-        g_client_tbl->tx_put(nullptr, lcdf::Str("z"), fresh_encoded);
-        EXPECT_TRUE(Sto::try_commit_no_paxos());
-        EXPECT_NE(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
+        g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), fresh_encoded);
+        EXPECT_TRUE(try_commit_attempt());
+        EXPECT_NE(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
     }
-    EXPECT_EQ(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
+    EXPECT_EQ(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
     std::string cross_transaction_value;
     EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), cross_transaction_value, std::string::npos));
     EXPECT_EQ(cross_transaction_value, "fresh-cross-transaction-effect");
     {
         mako::ShardingOperation operation;
-        Sto::start_transaction();
-        g_client_tbl->tx_put(nullptr, lcdf::Str("z"), stale_encoded);
-        Sto::silent_abort();
-        EXPECT_NE(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
+        start_attempt();
+        g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), stale_encoded);
+        abort_attempt();
+        EXPECT_NE(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
     }
-    EXPECT_EQ(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
+    EXPECT_EQ(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
     EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), cross_transaction_value, std::string::npos));
     EXPECT_EQ(cross_transaction_value, "fresh-cross-transaction-effect");
     EXPECT_EQ(native_cache_view(0, canonical, "z"), cached_view);
@@ -1269,21 +1300,24 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     // cannot release it, while terminal cleanup leaves no dummy helper pin.
     TThread::set_mode(1);
     g_db->shard_reset();
-    const auto idle_cut = Transaction::epoch_cut();
+    const auto idle_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(idle_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(idle_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(idle_cut));
     // @unsafe - physical use can also activate an ordinary local operation on
     // the placeholder. Leaving its logical scope cannot finish a live engine.
+    abort_attempt();
+    TThread::set_mode(0);
     uint64_t activated_cut = 0;
     {
         mako::ShardingOperation operation;
-        TThread::txn->ensure_epoch();
-        activated_cut = Transaction::epoch_cut();
+        start_attempt();
+        activated_cut = mako::EpochRuntime::epoch_cut();
         EXPECT_NE(activated_cut, 0u);
     }
-    EXPECT_FALSE(Transaction::epoch_drained(activated_cut));
-    Sto::silent_abort();
-    EXPECT_TRUE(Transaction::epoch_drained(activated_cut));
+    EXPECT_FALSE(mako::EpochRuntime::epoch_drained(activated_cut));
+    abort_attempt();
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(activated_cut));
+    TThread::set_mode(1);
     g_db->shard_reset();
     MakoShardRoute helper_route{};
     ASSERT_EQ(mako_sharding_route(canonical, native_bytes(std::string("z")),
@@ -1303,14 +1337,14 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     // STO borrows encoded tuples (including its metadata suffix) through cleanup.
     const std::string fresh_payload = "fresh-point-effect";
     const std::string fresh_effect = mako::Encode(fresh_payload);
-    EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                     received_value, std::string::npos));
     EXPECT_EQ(received_value, "last-local");
     auto replacement = helper_request;
     replacement.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     EXPECT_NE(replacement.snapshot_version, helper_request.snapshot_version);
     mako::sharding_set_request(replacement);
-    EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                     received_value, std::string::npos));
     EXPECT_EQ(received_value, "last-local");
     auto forged = replacement;
@@ -1318,53 +1352,53 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     mako::sharding_set_request(forged);
     EXPECT_THROW(mako::sharding_resolve_point(g_client_tbl->get_table_id(), "z", 1),
                  abstract_db::abstract_abort_exception);
-    EXPECT_THROW(g_client_tbl->tx_put(nullptr, lcdf::Str("z"), fresh_effect),
+    EXPECT_THROW(g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), fresh_effect),
                  abstract_db::abstract_abort_exception);
     // Restoring the original envelope must restore access without reviving a
     // forged grant cached by the intervening request.
     mako::sharding_set_request(helper_request);
-    EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                     received_value, std::string::npos));
     EXPECT_EQ(received_value, "last-local");
     forged = helper_request;
     forged.coordinate[0] = 'y';
     mako::sharding_set_request(forged);
-    EXPECT_THROW(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_THROW(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                      received_value, std::string::npos),
                  abstract_db::abstract_abort_exception);
     mako::sharding_set_request(helper_request);
-    EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                     received_value, std::string::npos));
     EXPECT_EQ(received_value, "last-local");
-    g_client_tbl->tx_put(nullptr, lcdf::Str("z"), fresh_effect);
-    const auto request_cut = Transaction::epoch_cut();
+    g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), fresh_effect);
+    const auto request_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(request_cut, 0u);
-    EXPECT_FALSE(Transaction::epoch_drained(request_cut));
+    EXPECT_FALSE(mako::EpochRuntime::epoch_drained(request_cut));
     auto competing = helper_request;
     ++competing.transaction.sequence;
     EXPECT_FALSE(mako::sharding_bind_request(competing));
     mako::sharding_finish_request();
     EXPECT_TRUE(mako::sharding_has_request());
-    EXPECT_FALSE(Transaction::epoch_drained(request_cut));
-    Sto::silent_abort();
+    EXPECT_FALSE(mako::EpochRuntime::epoch_drained(request_cut));
+    abort_attempt();
     // @unsafe - an abort envelope can arrive after an engine-local abort.
     // Rebinding that same identity must not resurrect the stopped helper or
     // drop the logical pin before terminal request cleanup.
-    EXPECT_FALSE(TThread::txn->in_progress());
-    EXPECT_FALSE(Sto::in_progress());
+    EXPECT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
+    EXPECT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
     EXPECT_TRUE(mako::sharding_bind_request(helper_request));
-    EXPECT_FALSE(TThread::txn->has_epoch());
-    EXPECT_FALSE(Transaction::epoch_drained(request_cut));
+    EXPECT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
+    EXPECT_FALSE(mako::EpochRuntime::epoch_drained(request_cut));
     mako::sharding_finish_request();
     EXPECT_FALSE(mako::sharding_has_request());
-    EXPECT_TRUE(Transaction::epoch_drained(request_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(request_cut));
     g_db->shard_reset();
     helper_request.coordinate_length = sizeof(helper_request.coordinate) + 1;
     EXPECT_FALSE(mako::sharding_bind_request(helper_request));
-    const auto rejected_cut = Transaction::epoch_cut();
+    const auto rejected_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(rejected_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(rejected_cut));
-    Sto::silent_abort();
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(rejected_cut));
+    abort_attempt();
     TThread::set_mode(0);
     std::string receiver_rollback;
     EXPECT_TRUE(g_client_tbl->get(lcdf::Str("z"), receiver_rollback, std::string::npos));
@@ -1376,16 +1410,16 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     TThread::set_mode(1);
     g_db->shard_reset();
     helper_request.coordinate_length = 1;
-    const auto receiver_reopen_cut = Transaction::epoch_cut();
+    const auto receiver_reopen_cut = mako::EpochRuntime::epoch_cut();
     EXPECT_NE(receiver_reopen_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(receiver_reopen_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(receiver_reopen_cut));
     EXPECT_EQ(native_cache_view(0, canonical, "z"), cached_view);
     ASSERT_TRUE(mako::sharding_bind_request(helper_request));
-    EXPECT_TRUE(g_client_tbl->tx_get(nullptr, lcdf::Str("z"),
+    EXPECT_TRUE(g_client_tbl->tx_get(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"),
                                     received_value, std::string::npos));
     EXPECT_EQ(received_value, "last-local");
-    g_client_tbl->tx_put(nullptr, lcdf::Str("z"), fresh_effect);
-    EXPECT_TRUE(Sto::try_commit_no_paxos());
+    g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str("z"), fresh_effect);
+    EXPECT_TRUE(try_commit_attempt());
     mako::sharding_finish_request();
     TThread::set_mode(0);
     std::string receiver_committed;
@@ -1403,7 +1437,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     item_micro::key micro_key;
     micro_key.i_id = 700001;
     std::string read_keys[] = {EncodeK(stock_key), EncodeK(micro_key)};
-    // An encoded tuple, as every engine write carries: MassTrans rejects a
+    // An encoded tuple, as every engine write carries: the adapter rejects a
     // value without the metadata footer (std::length_error), which would end
     // the insertion thread before it creates the conflicting rows.
     std::string batch_value = mako::Encode("uncommitted");
@@ -1416,16 +1450,18 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
             TThread::set_shard_index(0);
             TThread::set_mode(0);
             TThread::in_loading_phase = false;
-            Sto::start_transaction();
-            g_client_tbl->tx_put(nullptr, lcdf::Str(batch_keys[1]), batch_value);
+            start_attempt();
+            g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str(batch_keys[1]), batch_value);
             for (const auto& key : read_keys)
-                g_client_tbl->tx_put(nullptr, lcdf::Str(key), batch_value);
+                g_client_tbl->tx_put(rust_sto_tpcc_wrapper::current_transaction_handle(), lcdf::Str(key), batch_value);
+            if (g_db->shard_validate() != mako::ErrorCode::SUCCESS)
+                throw std::runtime_error("conflicting writer could not acquire prepare locks");
             insertion_state.store(1);
             insertion_state.notify_one();
             insertion_state.wait(1);
-            Sto::silent_abort();
+            abort_attempt();
         } catch (...) {
-            Sto::silent_abort();
+            abort_attempt();
             insertion_state.store(3);
             insertion_state.notify_one();
         }
@@ -1433,7 +1469,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     insertion_state.wait(0);
     EXPECT_EQ(insertion_state.load(), 1u);
     std::exception_ptr batch_failure;
-    Transaction::epoch_type batch_cut = 0;
+    mako::EpochRuntime::epoch_type batch_cut = 0;
     if (insertion_state.load() == 1) {
         try {
             TThread::set_mode(1);
@@ -1457,7 +1493,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
             batch.get_request_ptr()->req_nr = 1;
             batch.get_request_ptr()->identity = lane;
             batch.get_request_ptr()->sharding = grant;
-            batch_cut = Transaction::epoch_cut();
+            batch_cut = mako::EpochRuntime::epoch_cut();
             mako::basic_response_t reply{};
             for (unsigned attempt = 0; attempt < 2; ++attempt) {
                 EXPECT_EQ(receiver.ReceiveRequest(mako::batchLockReqType,
@@ -1465,7 +1501,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
                     reinterpret_cast<char*>(&reply)), sizeof(reply));
                 EXPECT_EQ(reply.status, mako::ErrorCode::ABORT);
                 EXPECT_FALSE(mako::sharding_has_request());
-                EXPECT_FALSE(TThread::txn->has_epoch());
+                EXPECT_FALSE(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() != 0);
             }
             mako::basic_request_t abort{};
             abort.req_nr = 2;
@@ -1500,7 +1536,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
                         reinterpret_cast<char*>(&read_reply), length);
                 }
                 EXPECT_EQ(read_reply.status, mako::ErrorCode::ABORT);
-                EXPECT_FALSE(TThread::txn->in_progress());
+                EXPECT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
                 mako::sharding_finish_request();
                 g_db->shard_reset();
                 ++grant.transaction.sequence;
@@ -1526,7 +1562,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
         } catch (...) {
             batch_failure = std::current_exception();
         }
-        Sto::silent_abort();
+        abort_attempt();
         mako::sharding_finish_request();
         TThread::set_mode(0);
     }
@@ -1535,7 +1571,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     insertion.join().unwrap();
     if (batch_failure) std::rethrow_exception(batch_failure);
     EXPECT_NE(batch_cut, 0u);
-    EXPECT_TRUE(Transaction::epoch_drained(batch_cut));
+    EXPECT_TRUE(mako::EpochRuntime::epoch_drained(batch_cut));
     for (const auto& key : batch_keys) {
         std::string value;
         EXPECT_FALSE(g_client_tbl->get(lcdf::Str(key), value, std::string::npos));
@@ -1597,10 +1633,10 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
         cached_receiver.ReceiveRequest(mako::abortReqType,
             reinterpret_cast<char*>(&abort), reinterpret_cast<char*>(&terminal));
         EXPECT_EQ(terminal.status, mako::ErrorCode::SUCCESS);
-        Sto::silent_abort();
+        abort_attempt();
         mako::sharding_finish_request();
         EXPECT_FALSE(mako::sharding_has_request());
-        EXPECT_EQ(Transaction::tinfo[TThread::id()].epoch.load(), 0u);
+        EXPECT_EQ(mako::EpochRuntime::tinfo[TThread::id()].epoch.load(), 0u);
         TThread::set_mode(0);
         BenchmarkConfig::setThreadLocalShardIndex(0);
         TThread::set_shard_index(0);
@@ -1671,13 +1707,13 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
 
     // @unsafe - reuse the existing real transport/helper bootstrap and map ABI.
     auto transport = rusty::thread::spawn([]() { rpc_server_thread("localhost", g_config); });
-    transport.detach();
+    rpc_worker = rusty::Some(std::move(transport));
     sleep(2);
     std::map<int, abstract_ordered_index*> tables{{g_server_tbl->get_table_id(), g_server_tbl}};
     auto helper = rusty::thread::spawn([tables = std::move(tables)]() mutable {
         helper_server_thread(g_config, g_db, std::move(tables));
     });
-    helper.detach();
+    rpc_helper = rusty::Some(std::move(helper));
     sleep(1);
     auto client = rusty::make_box<mako::ShardClient>(g_config->configFile, "localhost", 0, 0);
     TThread::sclient = client.get();
@@ -1721,7 +1757,7 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
                 ASSERT_EQ(shortened.rows.size(), stop);
                 for (size_t i = 0; i < stop; ++i)
                     EXPECT_EQ(shortened.rows[i], expected.rows[reverse ? expected.rows.size() - i - 1 : i]);
-                ASSERT_FALSE(TThread::txn && TThread::txn->in_progress());
+                ASSERT_FALSE(rust_sto_tpcc_wrapper::current_transaction_active());
             }
         }
     }

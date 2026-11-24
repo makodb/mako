@@ -12,7 +12,7 @@
 #include "examples/statistics.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/sharded_ordered_index.hh"
 
 import std;
 
@@ -43,7 +43,7 @@ public:
     }
 
     void executeTransactions() {
-        mbta_sharded_ordered_index *table = db_->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db_->open_sharded_index("customer_0");
         uint64_t key_counter = 0;
 
         const int MAX_KEYS = 100000;
@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
         // pre-declare sharded tables
         mako::setup_rpc_server();
         mako::setup_helper(db, {});
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
     }
 
     mako::NFSSync::mark_shard_up_and_wait();

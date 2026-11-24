@@ -24,23 +24,7 @@
 #include "lib/message.h"
 //#include "lib/memcached_client.h"
 
-class HashWrapper {
-    public:
-    
-    std::map<std::string, int> data;
-    
-    void set_tprops(std::string k, int v) {
-        data[k] = v;
-    }
-
-    int get_tprops(std::string k) {
-        if (data.find(k) != data.end()) {
-            return data[k];
-        } else {
-            return -1;
-        }
-    }
-} ;
+#include "runtime/thread_properties.hh"
 
 // in this implementation, we rely on nfs to sync file
 // running on the shard-0 on the leader datacenter

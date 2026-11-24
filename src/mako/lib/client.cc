@@ -8,7 +8,7 @@
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/common.h"
-#include "sto/Interface.hh"
+#include "runtime/worker_context.hh"
 
 import std;
 

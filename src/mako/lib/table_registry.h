@@ -38,7 +38,7 @@ struct NativeTableBinding {
  * @brief Global registry for table_id ↔ table_name mappings.
  *
  * Used by ShardClient to look up table names for policy-based routing.
- * Tables are registered during open_index() in mbta_wrapper.
+ * Tables are registered during open_index() in the Rust adapter.
  */
 class TableRegistry {
 private:

@@ -53,25 +53,20 @@ transpiler-lowered pure-virtual C++ classes:
 - **`OrderedIndex`** — the non-transactional KV surface every backend
   implements: `get / put / insert / remove / scan / rscan` (+ `size`,
   `clear`, `get_table_id`, `get_is_remote`). Each op is
-  self-contained and immediately visible; on STO/MassTrans-backed tables it is
-  an internal one-op OCC transaction and uses that backend's normal commit
-  machinery. The trait alone does not certify distributed or replicated
-  publication. `put` returns "newly inserted"; `insert` is
-  put-if-absent; `remove` returns "existed". On mbta, `remove` is a one-op OCC
-  delete like the other point ops (`MassTrans::erase` stages `transDelete` and
-  commits it); it is no longer a direct raw MassTrans write. Local mbta point
-  ops retry in place on an OCC conflict. An mbta scan is one attempt: a
-  conflict surfaces as `abstract_abort_exception` instead of replaying
-  callbacks. Must not be called from a thread with an open transaction. The
-  owned attempt is aborted during stack unwinding, including when a scan
-  callback throws, before the exception escapes the operation.
+  self-contained and immediately visible. On Rust-backed tables each operation
+  uses an internal one-operation transaction. The trait alone does not certify
+  distributed or replicated publication. `put` returns "newly inserted";
+  `insert` is put-if-absent; `remove` returns "existed". Local point operations
+  retry conflicts. Scans use one attempt and report conflicts without replaying
+  callbacks. These methods require no open transaction on the calling thread;
+  unwinding aborts their owned attempt before the exception escapes.
 - **`TxnOrderedIndex: OrderedIndex`** — the transactional ops, all
   prefixed: `tx_get / tx_put / tx_insert / tx_remove / tx_scan /
   tx_rscan / tx_scan_remote_one`, taking the opaque txn handle from
   `abstract_db::new_txn`.
 - **`ShardParticipant`** — cross-shard 2PC RPC-handler ops
   (`shard_get / shard_put / shard_scan`) that stage into the serving
-  thread's ambient Sto transaction; the coordinator drives
+  thread's retained Rust participant transaction; the coordinator drives
   commit/abort over later RPCs.
 - **`FullOrderedIndex: TxnOrderedIndex + ShardParticipant`** — the
   full-role combination. `abstract_ordered_index` is an alias for it.
@@ -87,7 +82,7 @@ no `using`-declarations and may carry defaults.
 ## Value conventions
 
 - **Non-txn ops: raw bytes both directions.** Backends apply their
-  storage encoding internally (mbta wraps writes with `mako::Encode`;
+  storage encoding internally (the Rust adapter wraps writes with `mako::Encode`;
   reads/scans come back stripped). This is what makes backends
   interchangeable.
 - **Txn'd ops: caller encodes.** `tx_put`/`tx_insert` store a pointer
@@ -99,8 +94,8 @@ no `using`-declarations and may carry defaults.
 | class | layer | authored | notes |
 |---|---|---|---|
 | `masstree_ordered_index` | plain Masstree (L1) | DSL struct | implements `OrderedIndex` ONLY — "no transactions" is a type fact. Owns value buffers in the RCU arena (`[u32 len][bytes]`), frees RCU-deferred, every op pins a `scoped_rcu_region`. |
-| `mbta_ordered_index` | STO/MassTrans | DSL struct (`mbta_wrapper.hh`) | DSL entrypoints call narrow engine kernels; governed point dispatch borrows canonical native handles, not startup remote flags. Kernels own the exception boundary (`STD_OP` translation, conflict-only retry loops for non-txn point ops, RPC retries) and `UPDATE_VS` bookkeeping. Non-txn `scan`/`rscan` do not retry: they abort the owned attempt and rethrow. Terminal failures such as timestamp exhaustion are not retryable conflicts. MassTrans (non-movable) sits behind a raw pointer; build via `mbta_index_build(name, table_id, is_remote)`. |
-| `mbta_sharded_ordered_index` | Mako routing | DSL struct | FNV-1a per-key routing over `abstract_ordered_index*` shards; txn'd range reads visit every shard; non-txn scans are local-shard-only. |
+| `rust_sto_tpcc_ordered_index` | Rust transactions + Masstree | native bridge (`rust_sto_tpcc_wrapper.hh`) | Uses `sto-tpcc-ffi`; local and participant transaction handles retain observations and intents until terminal cleanup. Native sharding registers canonical physical handles and captures admission independently of startup remote flags. |
+| `sharded_ordered_index` | Mako routing | DSL struct | FNV-1a per-key routing over `abstract_ordered_index*` shards; txn'd range reads visit every shard; non-txn scans are local-shard-only. |
 
 Backends are chosen at construction; callers hold the narrowest
 interface they need (`OrderedIndex*` for KV consumers,
@@ -397,21 +392,15 @@ materializes that row's envelope from its capture; it never performs a fresh
 route lookup or substitutes the last outgoing request. Explicit snapshot-segment
 full scans keep their separate interval admission, and generic raw scans still
 use `NO_SNAPSHOT`.
-A remote delete stages `MassTrans::transDelete` at the participant, including
-the absent-key read when no row exists; it is not encoded as an empty put.
-Absent transactional reads return `NOT_FOUND` without dropping their read set.
-Read, write, and absent-key native epoch guards remain held through actual engine
-install/unlock/cleanup. Terminal reply retries replay retained results rather
-than executing again, and abort/unlock also retry uncertain transport outcomes.
-The origin uses `transDeleteRemote` to stage an initialized delete carrier even
-with `READ_MY_WRITES` disabled. Aborted carriers are removed; put-then-delete
-keeps delete write-data instead of transmitting an empty value as a put.
-A later write over the transaction's own remote proxy intent is re-staged
-(`MassTrans::restageRemoteWrite`) rather than aborted: a put over an own staged
-put or delete replaces it, so the last write is the one sent; an insert-if-absent
-over an own staged put keeps the first payload; an update-only write after an
-own delete is a no-op. Remote tables have no read-your-writes overlay: the
-staged intent is never read back locally.
+A remote delete stages a Rust participant delete, including the absent-key
+observation when no row exists; it is not encoded as an empty put. Absent reads
+return `NOT_FOUND` without dropping their observations. Read, write, and
+absent-key native epoch guards remain held through engine cleanup. Terminal
+reply retries replay retained results; abort/unlock also retry uncertain
+transport outcomes. The origin retains an explicit pending put/delete intent.
+A later put replaces an earlier intent, insert-if-absent preserves an existing
+staged put, and an update after an own delete is a no-op. Remote proxies do not
+read staged values back locally.
 
 Governed same-process peers use the same SRPC envelope and participant engine
 path as separate processes. Their helper queues, transports, allocator/RCU
@@ -462,7 +451,7 @@ exact range validation, including absent keys and ownership gaps.
 Native-enabled scans use that one retained snapshot for both execution paths:
 
 - A segment owned by the current transaction participant resolves the canonical
-  local physical index, admits its **complete interval**, then calls MassTrans
+  local physical index, admits its **complete interval**, then calls the Rust transaction
   directly. Fixed-coordinate indexes admit their warehouse coordinate, not a
   range of physical row keys. No local cursor, transport page, encoding or
   decoding is created. The epoch guard remains held through transaction cleanup.
@@ -480,7 +469,7 @@ use direct execution for physically local segments.
 Direct execution retains forward `[start, end)` and reverse `(end, start]`
 bounds, binary and empty keys, caller-arena value lifetime, metadata stripping,
 and callback exception cleanup. Public scans avoid incidental transport-page
-read-ahead and retain MassTrans's OCC observations. The internal normalized
+read-ahead and retain the Rust transaction's OCC observations. The internal normalized
 reverse adapter also accepts an unbounded upper end: it discovers an actual
 maximum in the same transaction, retains that forward traversal's observations,
 then scans backwards. It does not invent an infinity key. OCC failure aborts
@@ -616,57 +605,33 @@ See [the proof scopes and interfaces](../tla/mako/README.md).
 
 ## Bounded facade and catalog profile
 
-The RocksDB-shaped local `mako::DB` facade selects only the C++
-STO/MassTrans backend: `DB::Open` rejects any `Options::storage_engine` other
-than `"cpp"`. Rust STO is reachable only through the closed TPC-C comparison
-adapter. The `sto_tpcc_bench` target compiles `dbtest.cc` with
-`MAKO_RUST_STO_TPCC=1` and links `sto-tpcc-ffi`; there `--storage-engine rust`
-constructs `rust_sto_tpcc_wrapper` in place of `mbta_wrapper`. The ordinary
-`dbtest` binary rejects `rust`. The adapter is an `abstract_db` for that
-benchmark, not an `IDatabase` backend.
+The RocksDB-shaped local `mako::DB` facade, ordinary `dbtest`, examples and
+TPC-C runner all use Rust. `Options::storage_engine` and the command-line
+selection default to `rust`; explicit `cpp` selection fails before opening.
+The Rust adapter supports static local/remote shards, replication and native
+sharding with migration. It registers physical handles and supplies the native
+host's storage callbacks. Empty receiver frames acquire their engine epoch pin
+on first physical access; request cleanup cannot discard that pin before
+terminal engine cleanup.
 
-The adapter is no longer limited to one local, non-replicated shard. With more
-than one configured shard, or with replication, it switches to its participant
-protocol mode: remote proxies, shard-RPC participants and replay tables. It is
-not a native-sharding participant. `sharding_mark_proxy` accepts only an
-`mbta_ordered_index`, the adapter registers its tables without an engine handle,
-and native admission reads the C++ STO transaction state, so run the Rust
-adapter without `MAKO_CLUSTER_CONFIG`. Its `open_index` throws on a bad shard
-index or an exhausted ID window instead of returning null. See
-[Rust STO](architecture/rust-sto.md) for its scope and qualification status.
+Static catalogs allocate up to `NUM_TABLES_PER_SHARD` (200) IDs per shard.
+`open_sharded_index` preflights every shard before creating a logical table.
+Invalid shard indexes and exhausted windows throw typed standard exceptions.
+The historical size-hint overload returns null. The catalog mutex serializes
+opens, and an attached worker can create a local table without attaching a
+second worker with the same ID.
 
-`mbta_wrapper` has a fixed catalog budget of `NUM_TABLES_PER_SHARD` (currently
-200) table IDs per shard, preallocated by `init()` and never reclaimed. Opening
-a new `(name, shard)` pair with `open_index(name, shard)` takes the next ID in
-that shard's window `[shard * N + 1, shard * N + N]`. `open_sharded_index`
-takes one ID on every configured shard and preflights all of them first, so a
-capacity failure cannot leave a partially registered logical table. A catalog
-mutex serializes both. Callers must treat a null open result as ordinary
-capacity or backend failure: the window is exhausted, the shard index is out of
-range, or the caller used the retired hint-based `open_index` overload.
-
-Two profiles draw on that budget:
-
-- **Static profile (no `MAKO_CLUSTER_CONFIG`).** Peers address a table by its
-  numeric ID, and IDs follow open order. In sharded or replicated use, every
-  process must therefore construct the complete identical schema in
-  deterministic order before helper, transport-serving, or worker threads
-  start. There is no synchronized cross-process ID protocol, so live schema
-  mutation is unsupported in this profile.
-- **Native sharding (`MAKO_CLUSTER_CONFIG=1`).** Governed indexes are opened
-  lazily at run time, as [TPC-C warehouse handles](#tpc-c-warehouse-handles)
-  describes: one physical index per `(table, warehouse, physical owner)` and
-  one proxy on each origin participant that reaches a remote owner, including
-  while a migration adopts destination storage. Each open takes one ID from
-  the window of the shard index passed to `open_index`: the physical owner for
-  bytes, the origin for a proxy. The native warehouse directory's exclusive
-  guard and then the catalog mutex serialize these opens. On the shard-RPC
-  path a receiver resolves its own canonical binding rather than a peer's
-  numeric ID, so that path does not depend on cross-process open order. Replay
-  still resolves each log record by its numeric table ID
-  (`get_index_by_table_id`). The budget is still 200 IDs per shard and nothing
-  returns an ID, so it bounds how many governed `(table, warehouse)` handles
-  one participant can open.
+- **Static profile (no `MAKO_CLUSTER_CONFIG`).** Peers address tables by numeric
+  ID. Every process must create the same schema in deterministic order before
+  serving requests; cross-process live schema mutation is unsupported.
+- **Native sharding (`MAKO_CLUSTER_CONFIG=1`).** Governed warehouse indexes
+  are provisioned lazily for each physical owner, including destination
+  adoption during migration. Their selectors use a separate process-wide
+  15-bit namespace, so they are not limited to the static 200-ID windows.
+  The warehouse directory and catalog serialize publication. Receivers resolve
+  canonical bindings from table and warehouse identities; cross-process open
+  order does not determine the physical target. Replay retains its numeric-ID
+  contract. Selectors are not recycled after publication.
 
 `mako::setup_update_table` publishes a newly opened index to the helper
 receivers that already run for the calling thread's shard. It holds the helper
@@ -702,7 +667,7 @@ has not yet learned fails as an aborted request.
   style aliases; opaque C++ types (e.g. `oi_stats_map`,
   `shard_table_vec`) pass through single-ident aliases; DSL structs
   are move-only with a synthesized fieldwise ctor, so non-movable
-  fields (masstree trees, MassTrans) live behind raw pointers.
+  fields (native Masstree trees) live behind raw pointers.
 - `oi_scan_callback` is the shared scan callback type (namespace
   scope, so traits can name it).
 

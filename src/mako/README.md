@@ -1,10 +1,10 @@
 ## Mako: Speculative Distributed Transactions with Geo-Replication (OSDI'25)
 
-> **Storage status:** Production Mako uses STO `Transaction` with MassTrans
-> through `storage/mbta_wrapper.hh`. The original Silo
-> `txn`/`txn_btree`/`txn_proto2` engine has been removed (last present at
-> commit fd3ed37e1). `SiloRuntime`, allocator, RCU, and Masstree
-> support remain live; see [`RETIRED_SILO_ENGINE.md`](RETIRED_SILO_ENGINE.md).
+> **Storage status:** Rust is the default and sole transaction backend.
+> Applications use `storage/rust_sto_tpcc_wrapper.hh`; transaction execution
+> is in `sto-core` and `sto-masstree`. The C++ transaction engines and FFI
+> facade have been removed. Masstree and shared runtime support remain; see
+> [`RETIRED_SILO_ENGINE.md`](RETIRED_SILO_ENGINE.md).
 
 ### How to setup environment step by step
 https://aju9mlkupe.feishu.cn/docx/SafudaEdzostF6xFXr2cGgxBnpg?from=from_copylink

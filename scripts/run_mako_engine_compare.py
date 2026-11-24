@@ -434,12 +434,12 @@ def run_comparison(parser, args, binaries, expected_engines, label_key):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--c-abi", type=Path, required=True)
-    parser.add_argument("--sto", type=Path, required=True)
+    parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--candidate", type=Path, required=True)
     add_measurement_arguments(parser)
     args = parser.parse_args()
-    binaries = {"c-abi": args.c_abi.resolve(strict=True), "sto": args.sto.resolve(strict=True)}
-    run_comparison(parser, args, binaries, {"c-abi": "mako-local/sto-masstrans", "sto": "sto"}, "arm")
+    binaries = {"baseline": args.baseline.resolve(strict=True), "candidate": args.candidate.resolve(strict=True)}
+    run_comparison(parser, args, binaries, {"baseline": "sto", "candidate": "sto"}, "arm")
 
 
 if __name__ == "__main__":

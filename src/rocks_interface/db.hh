@@ -124,10 +124,8 @@ struct Options {
     int num_shards = 1;
     int shard_index = 0;
 
-    // The Rocks-compatible local facade accepts exactly "cpp". Open rejects
-    // every other value before consuming process-lifetime open admission. Rust
-    // STO is selected only by the dedicated closed TPC-C adapter.
-    std::string storage_engine = "cpp";
+    // Rust is the sole backend. Invalid selection does not consume open admission.
+    std::string storage_engine = "rust";
 
     // Mako-specific: sharding
     // Empty vector = single shard mode (shard 0)
@@ -175,7 +173,7 @@ public:
      * - Sharded: non-empty shards vector
      * - Replicated: replication.enabled = true
      *
-     * The facade opens only the C++ STO/MassTrans backend. Validation completed
+     * The facade opens the Rust transaction backend. Validation completed
      * before process-global initialization begins is retryable. Once native
      * initialization starts, a later failure consumes this process's only open
      * admission because the native services are not restartable.
@@ -276,8 +274,7 @@ public:
 
     /**
      * Begin a new transaction. The local facade returns its non-null,
-     * thread-affine compatibility token; mbta_wrapper::new_txn() itself
-     * initializes ambient state and always returns null by design. A token is
+     * thread-affine token bound to the underlying Rust attempt. A token is
      * valid only for that unresolved attempt. A backend abort leaves it valid
      * for one cleanup Rollback. Its address may be reused, so retaining or
      * reusing a resolved token is an unchecked caller error.
@@ -300,7 +297,7 @@ public:
 
     /**
      * Get a table by name (implements IDatabase interface)
-     * Returns LocalTable wrapper around mbta_sharded_ordered_index. This is a
+     * Returns LocalTable wrapper around sharded_ordered_index. This is a
      * metadata operation and does not require InitThread(), but all callers
      * and returned DB-owned pointers must be quiesced before Close(). The fixed
      * catalog admits at most NUM_TABLES_PER_SHARD (currently 200) logical names;
@@ -347,7 +344,7 @@ private:
     // Internal state
     abstract_db* db_ = nullptr;
     std::atomic<bool> is_open_{false};
-    bool owns_db_ = true;  // Whether we should delete db_ on close
+    bool owns_db_ = true;  // Local Rust wrapper; replication owns its callbacks.
     bool thread_context_required_ = false;
     SiloRuntime* runtime_ = nullptr;
     std::atomic<size_t> active_thread_contexts_{0};
@@ -367,6 +364,7 @@ private:
         kActive,
         kRollbackPending,
     };
+    inline static thread_local void* tls_txn_handle_ = nullptr;
     inline static thread_local FacadeTxnState tls_txn_state_ =
         FacadeTxnState::kResolved;
 
@@ -404,9 +402,9 @@ inline Status DB::Open(const Options& options,
     }
     *dbptr = nullptr;
 
-    if (options.storage_engine != "cpp") {
+    if (options.storage_engine != "rust") {
         return Status::NotSupported(
-            "the local DB facade supports only the cpp storage engine");
+            "the local DB facade supports only the rust storage engine");
     }
 
     try {
@@ -502,12 +500,7 @@ inline Status DB::Open(const Options& options,
         return Status::InvalidArgument(
             "the local DB facade requires the global SiloRuntime");
     }
-    if (mbta_table::mythreadinfo.ti != nullptr &&
-        mbta_table::mythreadinfo.ti->context() !=
-            facade_runtime->masstree_context()) {
-        return Status::InvalidArgument(
-            "the current thread already belongs to another Masstree context");
-    }
+
 
     // From this point, initialization mutates process-global state and may
     // start process-lived native services. Even a later failure cannot safely
@@ -517,7 +510,7 @@ inline Status DB::Open(const Options& options,
 
     // 1. Configure BenchmarkConfig from Options
     auto& benchConfig = BenchmarkConfig::getInstance();
-    benchConfig.setStorageEngine("cpp");
+    benchConfig.setStorageEngine("rust");
 
     // Set basic configuration
     if (options.num_threads > 0) {
@@ -573,16 +566,18 @@ inline Status DB::Open(const Options& options,
 
     // IMPORTANT: initWithDB() must ALWAYS be called (even for followers)
     // This matches the original pattern in simpleTransactionRep.cc
-    abstract_db* main_db = initWithDB();
+    std::unique_ptr<abstract_db> main_db(initWithDB());
 
     // Determine which db to return based on role
     if (options.replication.enabled && !options.replication.is_leader) {
         // Follower/learner: use the replicated db from init_env()
         db->db_ = replicated_db;
+        db->owns_db_ = false;
         db->thread_context_required_ = false;
     } else {
         // Leader or non-replicated: use initWithDB()'s result
-        db->db_ = main_db;
+        db->db_ = main_db.release();
+        db->owns_db_ = !options.replication.enabled;
         db->thread_context_required_ = true;
     }
 
@@ -611,6 +606,10 @@ inline DB::~DB() {
             std::terminate();
         }
     }
+    // Close requires external quiescence. Local wrappers and routing facades
+    // can now be released; the shared native runtime remains process-lived.
+    tables_.clear();
+    if (owns_db_) delete db_;
 }
 
 inline Status DB::Close() {
@@ -622,12 +621,6 @@ inline Status DB::Close() {
         return Status::Busy("database thread contexts are still active");
     }
 
-    // Note: The ownership model for abstract_db is complex in Mako.
-    // For now, we don't delete the db_ pointer as it may be managed
-    // by other parts of the system (e.g., replicated_db static variable).
-    // This matches the existing behavior where db pointers are not typically
-    // deleted after init.
-
     {
         std::lock_guard<std::mutex> process_lock(process_database_mutex_);
         if (process_database_owner_ != this) {
@@ -638,7 +631,8 @@ inline Status DB::Close() {
         // set because the process-global native state is not restartable.
         process_database_owner_ = nullptr;
     }
-    // The native database is retained for process lifetime. Keep the immutable
+    // Keep the wrapper until facade destruction (or process exit when shared
+    // with replication callbacks). Retain the immutable
     // pointer internally so a facade call that observed the open state just
     // before this release can finish safely; GetDB() stops publishing it once
     // the atomic open flag becomes false.
@@ -659,6 +653,9 @@ inline void DB::InitThread() {
             throw std::logic_error(
                 "follower and learner local facades are replay-only");
         }
+        if (rust_sto_tpcc_wrapper::current_transaction_active()) {
+            throw std::logic_error("cannot attach a facade during a raw transaction");
+        }
         if (tls_thread_context_owner_ != nullptr) {
             throw std::logic_error(
                 "the current thread already owns a database context");
@@ -666,12 +663,6 @@ inline void DB::InitThread() {
         if (runtime_ == nullptr || SiloRuntime::Current() != runtime_) {
             throw std::logic_error(
                 "the current thread is bound to another SiloRuntime");
-        }
-        if (mbta_table::mythreadinfo.ti != nullptr &&
-            mbta_table::mythreadinfo.ti->context() !=
-                runtime_->masstree_context()) {
-            throw std::logic_error(
-                "the current thread belongs to another Masstree context");
         }
         // Current() falls back to the global runtime for an unbound thread;
         // bind it explicitly so Masstree uses that runtime's epoch domain
@@ -728,7 +719,7 @@ inline bool DB::HasUnresolvedTransaction() const {
 inline bool DB::OwnsActiveTransaction(void* txn) const {
     return tls_thread_context_owner_ == this &&
         tls_txn_state_ == FacadeTxnState::kActive &&
-        txn != nullptr && txn == static_cast<void*>(TThread::txn);
+        txn != nullptr && txn == tls_txn_handle_;
 }
 
 inline str_arena& DB::get_arena() {
@@ -754,27 +745,19 @@ inline void* DB::BeginTransaction() {
             "BeginTransaction requires an active database thread context");
     }
     if (tls_txn_state_ != FacadeTxnState::kResolved ||
-        (TThread::txn != nullptr && TThread::txn->has_active_state())) {
+        rust_sto_tpcc_wrapper::current_transaction_active()) {
         throw std::logic_error(
             "BeginTransaction cannot nest inside an active transaction");
     }
     str_arena& arena = get_arena();
     std::string& txn_buf = get_txn_buf();
-    // mbta_wrapper::new_txn() uses ambient TLS and returns null. The facade
-    // exposes the actual TLS Transaction address as a non-null opaque local
-    // token. It is valid only for this active attempt and remains
-    // thread-affine; callers must not retain it past Commit or Rollback.
-    db_->new_txn(0, arena, txn_buf.data());
-    if (TThread::txn == nullptr) {
-        throw std::runtime_error(
-            "native database did not create a transaction context");
-    }
-    if (!TThread::txn->has_active_state()) {
-        throw std::runtime_error(
-            "native database did not start a transaction");
+    tls_txn_handle_ = db_->new_txn(0, arena, txn_buf.data());
+    if (tls_txn_handle_ == nullptr ||
+        !rust_sto_tpcc_wrapper::current_transaction_active()) {
+        throw std::runtime_error("Rust database did not start a transaction");
     }
     tls_txn_state_ = FacadeTxnState::kActive;
-    return static_cast<void*>(TThread::txn);
+    return tls_txn_handle_;
 }
 
 inline void DB::Commit(void* txn) {
@@ -782,21 +765,22 @@ inline void DB::Commit(void* txn) {
         throw std::logic_error(
             "Commit requires an active database thread context");
     }
-    if (txn == nullptr || txn != static_cast<void*>(TThread::txn)) {
+    if (txn == nullptr || txn != tls_txn_handle_) {
         throw std::logic_error("Commit received a foreign transaction token");
     }
     if (tls_txn_state_ != FacadeTxnState::kActive) {
         throw std::logic_error("Commit received an inactive transaction token");
     }
-    if (!TThread::txn->has_active_state()) {
+    if (!rust_sto_tpcc_wrapper::current_transaction_active()) {
         tls_txn_state_ = FacadeTxnState::kRollbackPending;
         throw abstract_db::abstract_abort_exception();
     }
     try {
-        db_->commit_txn(txn);
+        if (!db_->commit_txn(txn))
+            throw abstract_db::abstract_abort_exception();
         tls_txn_state_ = FacadeTxnState::kResolved;
     } catch (const abstract_db::abstract_abort_exception&) {
-        if (!TThread::txn->has_active_state()) {
+        if (!rust_sto_tpcc_wrapper::current_transaction_active()) {
             tls_txn_state_ = FacadeTxnState::kRollbackPending;
         }
         throw;
@@ -804,7 +788,7 @@ inline void DB::Commit(void* txn) {
         // Some native aborts report a typed failure after stop(false) has
         // already resolved the STO attempt, for example timestamp exhaustion.
         // Preserve facade ownership until one cleanup Rollback consumes it.
-        if (!TThread::txn->has_active_state()) {
+        if (!rust_sto_tpcc_wrapper::current_transaction_active()) {
             tls_txn_state_ = FacadeTxnState::kRollbackPending;
         }
         throw;
@@ -816,15 +800,14 @@ inline void DB::Rollback(void* txn) {
         throw std::logic_error(
             "Rollback requires an active database thread context");
     }
-    if (txn == nullptr || txn != static_cast<void*>(TThread::txn)) {
+    if (txn == nullptr || txn != tls_txn_handle_) {
         throw std::logic_error("Rollback received a foreign transaction token");
     }
     if (tls_txn_state_ == FacadeTxnState::kResolved) {
         throw std::logic_error("Rollback received an inactive transaction token");
     }
-    if (TThread::txn->has_active_state()) {
-        db_->abort_txn(txn);
-    }
+    // A completed local abort can still owe remote participant cleanup.
+    db_->abort_txn(txn);
     tls_txn_state_ = FacadeTxnState::kResolved;
 }
 
@@ -839,9 +822,9 @@ inline ITable* DB::GetTable(const std::string& name) {
         return it->second.get();
     }
 
-    // Create new LocalTable wrapper around mbta_sharded_ordered_index
+    // Create new LocalTable wrapper around sharded_ordered_index
     // @unsafe { Calls open_sharded_index which uses raw pointers }
-    mbta_sharded_ordered_index* index = db_->open_sharded_index(name);
+    sharded_ordered_index* index = db_->open_sharded_index(name);
     if (!index) {
         return nullptr;
     }

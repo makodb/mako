@@ -1,4 +1,4 @@
-// Real MBTA/STO + native Rust + srpc fixture. The stdin protocol is test control,
+// Rust transaction engine + native sharding + srpc fixture. The stdin protocol is test control,
 // never a replacement storage/RPC implementation. Production methods do all I/O.
 #include <cstdio>
 #include <chrono>
@@ -11,7 +11,9 @@
 #include "native_sharding_host.h"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/tpcc_warehouse_bridge.h"
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
+#include "storage/rust_sto_sharding_host.hh"
+#include "runtime/epoch.hh"
 #include "lib/table_registry.h"
 #include "lib/server.h"
 #include "lib/sharding_admission.h"
@@ -30,15 +32,38 @@ uint64_t warehouse_id = 0;
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
+rust_sto_tpcc_wrapper* fixture_db = nullptr;
+thread_local void* attempt = nullptr;
+MakoShardHost storage_callbacks[2]{};
+
+void start_attempt() {
+    thread_local str_arena arena;
+    attempt = fixture_db->new_txn(0, arena, nullptr);
+}
+void abort_attempt() {
+    rust_sto_tpcc_wrapper::abort_current_thread_transaction();
+    attempt = nullptr;
+}
+bool try_commit_attempt() {
+    try {
+        const bool committed = fixture_db->commit_txn_no_paxos(attempt);
+        attempt = nullptr;
+        return committed;
+    } catch (const abstract_db::abstract_abort_exception&) {
+        abort_attempt();
+        return false;
+    }
+}
+
 // @unsafe - bytes borrowed only for synchronous native ABI calls.
 MakoShardBytes bytes(const std::string& value) {
     return {reinterpret_cast<const uint8_t*>(value.data()), value.size()};
 }
 
-// @unsafe - one thread-bound native read, paired with the real STO announcement.
+// @unsafe - one thread-bound native read, paired with the native announcement.
 struct EpochRead {
     const MakoShardRead* value = nullptr;
-    Transaction::epoch_type epoch = 0;
+    mako::EpochRuntime::epoch_type epoch = 0;
     // @safe - no guard until acquire succeeds.
     EpochRead() = default;
     EpochRead(const EpochRead&) = delete;
@@ -48,12 +73,12 @@ struct EpochRead {
     // @unsafe - failed admission still releases its already-announced STO guard.
     uint32_t acquire(unsigned owner) {
         require(value == nullptr && epoch == 0, "read context already active");
-        epoch = Transaction::epoch_enter();
+        epoch = mako::EpochRuntime::epoch_enter();
         require(epoch != 0, "STO epoch exhausted");
         const auto status = mako_sharding_read_begin(owner, epoch, &value);
         if (status != MAKO_SHARD_OK) {
             require(value == nullptr, "failed begin returned a read context");
-            Transaction::epoch_leave();
+            mako::EpochRuntime::epoch_leave();
             epoch = 0;
         }
         return status;
@@ -62,12 +87,12 @@ struct EpochRead {
     void release() {
         if (value) mako_sharding_read_end(value);
         value = nullptr;
-        if (epoch) Transaction::epoch_leave();
+        if (epoch) mako::EpochRuntime::epoch_leave();
         epoch = 0;
     }
 };
 
-// @unsafe - inspect the identity only while a real STO/native read protects it.
+// @unsafe - inspect the identity only while a native read protects it.
 // Routing/admission assertions keep the opaque ID from substituting for authority.
 uint64_t read_view(unsigned owner, uint64_t table, const std::string& point,
                    uint32_t admission = MAKO_SHARD_OK) {
@@ -99,14 +124,14 @@ struct FixtureWorker {
     EpochRead read;
     rusty::Option<rusty::Box<mako::ShardingOperation>> operation;
     int slot = -1;
-    Transaction::epoch_type cut = 0;
+    mako::EpochRuntime::epoch_type cut = 0;
     bool conflict = false;
     mako::ShardingPreparedRoute prepared{warehouse_id, 1};
     mako::ShardingPreparedRoute interleaved{warehouse_id, 2};
     // @unsafe - host outlives worker; native thread_enter assigns a unique STO slot.
     explicit FixtureWorker(mako::NativeShardingHost& host) {
         thread = rusty::Some(rusty::thread::spawn([this, &host]() {
-            const auto callbacks = host.callbacks();
+            const auto callbacks = storage_callbacks[host.owner];
             bool entered = false;
             try {
                 require(callbacks.thread_enter(&host, host.owner) == MAKO_SHARD_OK,
@@ -143,7 +168,7 @@ struct FixtureWorker {
                 changed.notify_all();
             }
             if (entered) {
-                if (TThread::txn && TThread::txn->in_progress()) TThread::txn->silent_abort();
+                if (rust_sto_tpcc_wrapper::current_transaction_active()) abort_attempt();
                 operation = rusty::None;
                 read.release();
                 callbacks.thread_leave(&host);
@@ -411,18 +436,6 @@ void select_owner(unsigned owner) {
     BenchmarkConfig::setThreadLocalShardIndex(owner);
     TThread::set_shard_index(owner);
 }
-// @unsafe - physical aliases are preloaded; proxy selection uses the production
-// opener so interleaved warehouse descriptors exercise real engine wrappers.
-uint32_t open_warehouse(void* context, uint64_t table, uint32_t wh, uint32_t owner,
-                        uint32_t proxy, uintptr_t* output) {
-    if (table != warehouse_id || wh < 1 || wh > 2 || owner > 1 || !output)
-        return MAKO_SHARD_INVALID;
-    if (proxy) return mako::tpcc_open_warehouse(context, table, wh, owner, proxy, output);
-    if (!physical_warehouse[owner][wh - 1]) return MAKO_SHARD_INVALID;
-    *output = reinterpret_cast<uintptr_t>(physical_warehouse[owner][wh - 1]);
-    return MAKO_SHARD_OK;
-}
-
 struct Hosts {
     rusty::Vec<rusty::Box<mako::NativeShardingHost>> items;
     bool stopped = false;
@@ -451,12 +464,12 @@ struct NativeRow {
     }
 };
 
-// @unsafe - inspect real private MBTA bytes only after the synchronous precopy
+// @unsafe - inspect real private Rust index bytes only after the synchronous precopy
 // callback has completed. This is not an ordinary-admission/storage substitute.
 void check_private_precopy(FixtureWorker& worker, mako::NativeShardingHost& host,
                            uint64_t table, bool warehouse) {
     worker.run([&]() {
-        const auto callbacks = host.callbacks();
+        const auto callbacks = storage_callbacks[host.owner];
         const auto lo = warehouse ? coordinate(1) : std::string("m");
         const auto hi = warehouse ? coordinate(2) : std::string("n");
         NativeRow previous;
@@ -503,39 +516,24 @@ void check_private_precopy(FixtureWorker& worker, mako::NativeShardingHost& host
 // @unsafe - no migration cuts here: observe the running production timer advance
 // while a real write transaction stays open, then commit through normal cleanup.
 void check_periodic_epoch_commit(FullOrderedIndex* index) {
-    bool cleanup_pinned = false;
     {
         mako::ShardingOperation operation;
-        Sto::start_transaction();
+        start_attempt();
         const auto k = key(0);
         const auto encoded = mako::Encode("committed-across-timer-ticks");
-        index->tx_put(nullptr, lcdf::Str(k), encoded);
-        const auto start = Transaction::epoch_current();
+        index->tx_put(attempt, lcdf::Str(k), encoded);
+        const auto start = mako::EpochRuntime::epoch_current();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (Transaction::epoch_current() < start + 2) {
+        while (mako::EpochRuntime::epoch_current() < start + 2) {
             require(std::chrono::steady_clock::now() < deadline, "production epoch timer did not advance");
             rusty::thread::yield_now();
         }
-        const auto cut = Transaction::epoch_current();
-        require(!Transaction::epoch_drained(cut), "timer advanced past an active engine guard");
-        auto& callback = Transaction::tinfo[TThread::id()].trans_end_callback;
-        auto original = std::move(callback);
-        callback = [&]() {
-            if (original) original();
-            cleanup_pinned = !Transaction::epoch_drained(cut);
-        };
-        bool committed = false;
-        try {
-            committed = Sto::try_commit_no_paxos();
-        } catch (...) {
-            callback = std::move(original);
-            throw;
-        }
-        callback = std::move(original);
-        require(committed && cleanup_pinned, "timer aborted old commit or cleanup lost its pin");
-        require(!Transaction::epoch_drained(cut), "commit released retained logical context");
+        const auto cut = mako::EpochRuntime::epoch_current();
+        require(!mako::EpochRuntime::epoch_drained(cut), "timer advanced past an active engine guard");
+        require(try_commit_attempt(), "timer aborted an admitted old commit");
+        require(!mako::EpochRuntime::epoch_drained(cut), "commit released retained logical context");
     }
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0, "completed operation leaked epoch");
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0, "completed operation leaked epoch");
     std::string actual;
     require(index->get(lcdf::Str(key(0)), actual, SIZE_MAX)
                 && actual == "committed-across-timer-ticks", "old commit lost its actual engine effect");
@@ -657,7 +655,7 @@ void check_direct_scans(FullOrderedIndex* index, unsigned changed) {
                 } catch (const ScanCallbackFailure&) { caught = true; }
                 require(caught == fail, "scan swallowed/replaced callback exception");
                 require_scan_rows(short_scan.observed, expected, reverse, stop);
-                require(!TThread::txn || !TThread::txn->in_progress(),
+                require(!rust_sto_tpcc_wrapper::current_transaction_active(),
                         "scan callback stop/exception left engine transaction live");
             }
         }
@@ -680,28 +678,20 @@ void check_direct_scans(FullOrderedIndex* index, unsigned changed) {
 // @unsafe - replays a previously captured native segment route through the same
 // production engine adapter. No new grant or fake storage response is supplied.
 void check_scan_fenced(FullOrderedIndex* index, bool warehouse, MakoShardRoute route) {
-    auto* concrete = dynamic_cast<mbta_ordered_index*>(index);
-    require(concrete != nullptr, "fenced scan requires real MBTA");
     const std::string lo = "m", hi = "n";
-    const auto segment_lo = warehouse ? coordinate(1) : lo;
-    const auto segment_hi = warehouse ? coordinate(2) : hi;
     Rows observed;
     bool rejected = false;
     mako::ShardingOperation operation;
     try {
-        Sto::start_transaction();
-        oi_mbta_scan_delivery delivery{observed, nullptr, true};
-        oi_mbta_scan_dispatch dispatch{concrete->mbta, lo, &hi, false, warehouse, delivery};
-        const auto status = oi_mbta_scan_dispatch::segment(&dispatch, bytes(segment_lo),
-            1, bytes(segment_hi), route);
-        if (dispatch.exception) std::rethrow_exception(dispatch.exception);
-        require(status == 0, "unexpected captured scan segment status");
-        Sto::commit();
+        start_attempt();
+        mako::sharding_require_interval(index->get_table_id(), bytes(lo), true, bytes(hi), route);
+        index->tx_scan(attempt, lo, &hi, observed, nullptr);
+        require(try_commit_attempt(), "fixture transaction aborted");
     } catch (const abstract_db::abstract_abort_exception&) {
         rejected = true;
-        if (TThread::txn && TThread::txn->in_progress()) TThread::txn->silent_abort();
+        if (rust_sto_tpcc_wrapper::current_transaction_active()) abort_attempt();
     } catch (...) {
-        if (TThread::txn && TThread::txn->in_progress()) TThread::txn->silent_abort();
+        if (rust_sto_tpcc_wrapper::current_transaction_active()) abort_attempt();
         throw;
     }
     require(rejected && observed.rows.is_empty(), "fenced scan delivered rows before full admission");
@@ -729,18 +719,18 @@ void check_stop_before_remote(FullOrderedIndex* index) {
                     "local stop/exception traversed unavailable remote segment");
             require(probe.observed.rows[0].first == (reverse ? hi : lo),
                     "mixed snapshot started from wrong local endpoint");
-            require(!TThread::txn || !TThread::txn->in_progress(),
+            require(!rust_sto_tpcc_wrapper::current_transaction_active(),
                     "local stop before remote retained engine transaction");
         }
     }
 }
 
 struct ConflictScan final : oi_scan_callback {
-    mbta_wrapper& db;
+    rust_sto_tpcc_wrapper& db;
     FullOrderedIndex* index;
     unsigned calls = 0;
     // @safe - caller retains DB/index ownership until the joined writer finishes.
-    ConflictScan(mbta_wrapper& database, FullOrderedIndex* table) : db(database), index(table) {}
+    ConflictScan(rust_sto_tpcc_wrapper& database, FullOrderedIndex* table) : db(database), index(table) {}
     // @unsafe - callback ABI requires a nonthrowing destructor.
     ~ConflictScan() noexcept override = default;
     // @unsafe - a real independent OCC writer commits after this scan observes
@@ -773,14 +763,14 @@ struct ConflictScan final : oi_scan_callback {
 };
 
 // @unsafe - public scan must propagate OCC abort, not replay visible callbacks.
-void check_scan_conflict(mbta_wrapper& db, FullOrderedIndex* index) {
+void check_scan_conflict(rust_sto_tpcc_wrapper& db, FullOrderedIndex* index) {
     ConflictScan callback(db, index);
     const std::string lo = "a", hi = "b";
     bool aborted = false;
     try { index->scan(lo, &hi, callback, nullptr); }
     catch (const abstract_db::abstract_abort_exception&) { aborted = true; }
     require(aborted && callback.calls == 1, "scan OCC conflict was hidden or callbacks replayed");
-    require(!TThread::txn || !TThread::txn->in_progress(), "conflicting scan left transaction live");
+    require(!rust_sto_tpcc_wrapper::current_transaction_active(), "conflicting scan left transaction live");
     std::string actual;
     require(index->get(lcdf::Str(lo), actual, SIZE_MAX) && actual == "concurrent-replacement",
             "conflicting writer did not actually commit");
@@ -792,23 +782,19 @@ void check_scan_conflict(mbta_wrapper& db, FullOrderedIndex* index) {
 void check_warehouse_all(FullOrderedIndex* index, unsigned changed) {
     const std::string empty, high("\xff\0\xff", 3);
     Rows forward, reverse;
-    index->scan(empty, nullptr, forward, nullptr);
-    auto* concrete = dynamic_cast<mbta_ordered_index*>(index);
-    require(concrete != nullptr, "unbounded scan requires real MBTA");
     {
         mako::ShardingOperation operation;
         try {
-            Sto::start_transaction();
-            oi_mbta_scan_delivery delivery{reverse, nullptr, true};
-            oi_mbta_scan_dispatch dispatch{concrete->mbta, empty, nullptr, true, true, delivery};
-            const auto lo = coordinate(1), hi = coordinate(2);
-            const auto status = mako_sharding_scan_segments(warehouse_id, bytes(lo),
-                1, bytes(hi), 1, oi_mbta_scan_dispatch::segment, &dispatch);
-            if (dispatch.exception) std::rethrow_exception(dispatch.exception);
-            require(status == MAKO_SHARD_OK, "unbounded reverse segment traversal");
-            Sto::commit();
+            start_attempt();
+            // The forward predicate protects the discovered maximum against
+            // concurrent insertion. The reverse pass uses that exact binary key.
+            index->tx_scan(attempt, empty, nullptr, forward, nullptr);
+            require(!forward.rows.is_empty(), "warehouse unexpectedly empty");
+            index->tx_rscan(attempt, forward.rows[forward.rows.size() - 1].first,
+                           nullptr, reverse, nullptr);
+            require(try_commit_attempt(), "warehouse scan transaction aborted");
         } catch (...) {
-            if (TThread::txn && TThread::txn->in_progress()) TThread::txn->silent_abort();
+            abort_attempt();
             throw;
         }
     }
@@ -857,7 +843,7 @@ void check_received_point(FullOrderedIndex* index, mako::ShardingRequest request
     if (admitted)
         require(found == (expected != nullptr) && (!expected || actual == *expected),
                 "canonical receiver read another binding's rows");
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
             "completed receiver cache probe retained an epoch");
 }
 
@@ -881,7 +867,7 @@ void check_prepared_frozen(FullOrderedIndex* index, unsigned owner,
             } catch (const abstract_db::abstract_abort_exception&) { rejected = true; }
         }
         require(rejected, "failed Frozen authorization became a reusable success");
-        require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                 "rejected Frozen prepared operation retained an idle pin");
     }
 }
@@ -897,7 +883,7 @@ void check_operation_resolution(FullOrderedIndex* index, bool warehouse, unsigne
     // The preceding replay command may have published a conservative new view
     // without changing routing labels. Refresh before establishing the stable
     // interval whose cross-epoch reuse this scenario measures.
-    require(Transaction::epoch_cut() != 0, "refresh post-control admission view");
+    require(mako::EpochRuntime::epoch_cut() != 0, "refresh post-control admission view");
     const auto view = read_view(owner, warehouse ? warehouse_id : raw_id, routing_key);
     auto copied = prepared;
     const auto original = [&]() {
@@ -999,10 +985,10 @@ void check_operation_resolution(FullOrderedIndex* index, bool warehouse, unsigne
             require(mako::sharding_batch_request(index->get_table_id(), key(999), row) < 0,
                     "batch performed a fresh route capture for an unresolved row");
     }
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
             "cached descriptor retained an idle engine pin");
-    const auto cut = Transaction::epoch_cut();
-    require(cut && Transaction::epoch_drained(cut),
+    const auto cut = mako::EpochRuntime::epoch_cut();
+    require(cut && mako::EpochRuntime::epoch_drained(cut),
             "persistent fixed cache prevented an idle engine epoch cut");
     require(read_view(owner, warehouse ? warehouse_id : raw_id, routing_key) == view,
             "unchanged metadata lost its cache incarnation across an engine epoch");
@@ -1026,13 +1012,13 @@ void check_operation_resolution(FullOrderedIndex* index, bool warehouse, unsigne
         require(index->get(lcdf::Str(first_key), actual, SIZE_MAX),
                 "fresh transaction point could not read the engine row");
         const auto encoded = mako::Encode("cross-transaction-prepared-commit");
-        Sto::start_transaction();
-        index->tx_put(nullptr, lcdf::Str(first_key), encoded);
-        require(Sto::try_commit_no_paxos(), "persistent descriptor write could not commit");
-        require(Transaction::tinfo[TThread::id()].epoch.load() != 0,
+        start_attempt();
+        index->tx_put(attempt, lcdf::Str(first_key), encoded);
+        require(try_commit_attempt(), "persistent descriptor write could not commit");
+        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() != 0,
                 "engine commit released the enclosing prepared operation pin");
     }
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
             "prepared commit retained an idle engine pin");
     std::string committed;
     require(index->get(lcdf::Str(first_key), committed, SIZE_MAX)
@@ -1046,13 +1032,13 @@ void check_operation_resolution(FullOrderedIndex* index, bool warehouse, unsigne
                     "interleaved descriptor copy lost its cross-transaction coordinate");
         }
         const auto encoded = mako::Encode("cross-transaction-prepared-abort");
-        Sto::start_transaction();
-        index->tx_put(nullptr, lcdf::Str(first_key), encoded);
-        Sto::silent_abort();
-        require(Transaction::tinfo[TThread::id()].epoch.load() != 0,
+        start_attempt();
+        index->tx_put(attempt, lcdf::Str(first_key), encoded);
+        abort_attempt();
+        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() != 0,
                 "engine abort released the enclosing prepared operation pin");
     }
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
             "prepared abort retained an idle engine pin");
     require(index->get(lcdf::Str(first_key), committed, SIZE_MAX)
             && committed == "cross-transaction-prepared-commit",
@@ -1165,7 +1151,8 @@ int main(int argc, char** argv) {
         bench.setPaxosProcName("localhost");
         bench.setPinCpus(0);
         SiloRuntime::Current()->BindToCurrentThread();
-        mbta_wrapper db;
+        rust_sto_tpcc_wrapper db;
+        fixture_db = &db;
         db.init();
         db.thread_init(true, 0);
         require(mako_sharding_catalog_tpcc(0) == MAKO_SHARD_OK, "TPC-C catalog init");
@@ -1180,25 +1167,17 @@ int main(int argc, char** argv) {
             raw[owner] = db.open_index("smoke_raw", int(owner));
             // open_index reports catalog exhaustion as null instead of exiting.
             require(raw[owner] != nullptr, "raw physical index open");
-            if (owner == first)
-                require(mako::get_table_registry().bind_native("smoke_raw", raw_id, rusty::None),
-                        "raw physical binding");
-            require(mako_sharding_raw_register(raw_id, owner, 0,
-                    reinterpret_cast<uintptr_t>(raw[owner])) == MAKO_SHARD_OK, "raw handle registration");
+            require(mako::rust_sharding_register_raw(raw_id, owner, raw[owner]) == MAKO_SHARD_OK,
+                    "Rust raw handle registration");
             for (unsigned wh = 1; wh <= 2; ++wh) {
                 const auto name = "smoke_warehouse_" + std::to_string(wh);
                 physical_warehouse[owner][wh - 1] = db.open_index(name, int(owner));
                 require(physical_warehouse[owner][wh - 1] != nullptr,
                         "warehouse physical index open");
-                if (owner == first)
-                    require(mako::get_table_registry().bind_native(name, warehouse_id,
-                            rusty::Some(coordinate(wh))), "warehouse physical binding");
-                require(mako_sharding_warehouse_register(warehouse_id, wh, owner, 0,
-                        reinterpret_cast<uintptr_t>(physical_warehouse[owner][wh - 1])) == MAKO_SHARD_OK,
-                        "warehouse handle registration");
+                require(mako::rust_sharding_register_warehouse(warehouse_id, owner, wh,
+                        physical_warehouse[owner][wh - 1]) == MAKO_SHARD_OK,
+                        "Rust warehouse handle registration");
             }
-            require(mako_sharding_warehouse_opener(owner, &db, open_warehouse) == MAKO_SHARD_OK,
-                    "warehouse opener registration");
             if (owner == 0) {
                 for (unsigned i = 0; i < row_count; ++i) {
                     const auto k = key(i), v = value(i, 0);
@@ -1216,14 +1195,16 @@ int main(int argc, char** argv) {
             }
         }
         TThread::in_loading_phase = false;
-        const auto descriptor_epoch = Transaction::tinfo[TThread::id()].epoch.load();
+        const auto descriptor_epoch = mako::EpochRuntime::tinfo[TThread::id()].epoch.load();
         mako::ShardingPreparedRoute prepared(warehouse_id, 1);
-        require(Transaction::tinfo[TThread::id()].epoch.load() == descriptor_epoch,
+        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == descriptor_epoch,
                 "constructing a workload descriptor announced an engine epoch");
         Hosts hosts;
         for (unsigned owner = first; owner < limit; ++owner) {
             auto host = rusty::make_box<mako::NativeShardingHost>(&db, owner, 2, SiloRuntime::Current());
             auto callbacks = host->callbacks();
+            db.configure_native_sharding(*host, callbacks);
+            storage_callbacks[owner] = callbacks;
             require(callbacks.peer_call == mako::native_sharding_peer_call, "unexpected production RPC callback");
             callbacks.peer_call = fault_peer_call;
             require(mako_sharding_start_node(owner, 2, 1, &callbacks) == MAKO_SHARD_OK, "start native node");
@@ -1354,11 +1335,11 @@ int main(int argc, char** argv) {
                 worker.run([&]() {
                     require(!mako::sharding_has_request(), "idle helper unexpectedly owns request");
                     TThread::set_mode(1);
-                    Sto::start_transaction();
-                    const auto cut = Transaction::epoch_cut();
-                    require(cut && !TThread::txn->has_epoch() && Transaction::epoch_drained(cut),
+                    start_attempt();
+                    const auto cut = mako::EpochRuntime::epoch_cut();
+                    require(cut && mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0 && mako::EpochRuntime::epoch_drained(cut),
                             "idle mode-1 reset blocked a process cut");
-                    TThread::txn->silent_abort();
+                    abort_attempt();
                     TThread::set_mode(0);
                 });
                 std::cout << "SMOKE OK idle helper leaves cut drained" << std::endl;
@@ -1388,8 +1369,8 @@ int main(int argc, char** argv) {
                             "foreign worker read handle exposed a view");
                 });
                 require(left_view != right_view, "independent worker caches share an incarnation");
-                const auto zero = hosts.items[0]->callbacks();
-                const auto one = hosts.items[1]->callbacks();
+                const auto zero = storage_callbacks[0];
+                const auto one = storage_callbacks[1];
                 const auto cut = zero.epoch_cut(hosts.items[0].get());
                 require(cut && zero.epoch_drained(hosts.items[0].get(), cut) == MAKO_SHARD_BUSY
                         && one.epoch_drained(hosts.items[1].get(), cut) == MAKO_SHARD_BUSY,
@@ -1415,7 +1396,7 @@ int main(int argc, char** argv) {
                     worker.run([&]() {
                         require(worker.operation.is_none(), "prepared precopy context already held");
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index
-                                && Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                                && mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                                 "idle prepared lookup pinned or redirected the source");
                         {
                             mako::ShardingOperation warmup;
@@ -1425,20 +1406,20 @@ int main(int argc, char** argv) {
                             require(index->get(lcdf::Str(key(0)), actual, SIZE_MAX),
                                     "precopy warmup did not read the real source");
                         }
-                        require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                                 "precopy cached descriptor retained an idle pin");
                         worker.operation = rusty::Some(rusty::make_box<mako::ShardingOperation>());
                         mako::ShardingRequest unstaged{};
                         require(mako::sharding_batch_request(index->get_table_id(), key(0), unstaged) < 0,
                                 "precopy reused a batch coordinate from its completed warmup");
-                        Sto::start_transaction();
+                        start_attempt();
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                 "precopy prepared access selected another owner");
                         std::string actual;
-                        require(index->tx_get(nullptr, lcdf::Str(key(0)), actual, SIZE_MAX),
+                        require(index->tx_get(attempt, lcdf::Str(key(0)), actual, SIZE_MAX),
                                 "prepared precopy source engine read");
-                        worker.cut = Transaction::epoch_cut();
-                        require(worker.cut && !Transaction::epoch_drained(worker.cut),
+                        worker.cut = mako::EpochRuntime::epoch_cut();
+                        require(worker.cut && !mako::EpochRuntime::epoch_drained(worker.cut),
                                 "prepared precopy read did not retain its logical epoch");
                     });
                 }
@@ -1490,29 +1471,29 @@ int main(int argc, char** argv) {
                     worker.run([&]() {
                         require(worker.operation.is_some() && worker.conflict,
                                 "prepared Frozen retry lost its real conflicting reader");
-                        require(!Sto::try_commit_no_paxos(),
+                        require(!try_commit_attempt(),
                                 "prepared source read missed the real OCC version conflict");
-                        require(!Transaction::epoch_drained(worker.cut),
+                        require(!mako::EpochRuntime::epoch_drained(worker.cut),
                                 "prepared OCC abort released the logical migration pin");
-                        Sto::start_transaction();
+                        start_attempt();
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                 "prepared OCC retry discarded its captured Frozen owner");
                         mako::sharding_warehouse_handle(worker.interleaved, owner);
                         std::string actual;
-                        require(index->tx_get(nullptr, lcdf::Str(key(1)), actual, SIZE_MAX)
+                        require(index->tx_get(attempt, lcdf::Str(key(1)), actual, SIZE_MAX)
                                 && actual == value(1, 1),
                                 "interleaved Frozen hint redirected the first retry engine read");
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                 "repeated prepared Frozen access changed the source handle");
-                        require(index->tx_get(nullptr, lcdf::Str(key(1)), actual, SIZE_MAX)
+                        require(index->tx_get(attempt, lcdf::Str(key(1)), actual, SIZE_MAX)
                                 && actual == value(1, 1),
                                 "repeated prepared Frozen storage access lost the current tuple");
-                        require(Sto::try_commit_no_paxos(), "prepared Frozen retry could not commit");
-                        require(!Transaction::epoch_drained(worker.cut),
+                        require(try_commit_attempt(), "prepared Frozen retry could not commit");
+                        require(!mako::EpochRuntime::epoch_drained(worker.cut),
                                 "prepared engine completion released its logical migration pin");
                         worker.operation = rusty::None;
                         worker.conflict = false;
-                        require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                        require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                                 "prepared terminal cleanup leaked its source epoch");
                     });
                 }
@@ -1712,30 +1693,30 @@ int main(int argc, char** argv) {
                     auto& worker = *workers[owner].as_mut().unwrap();
                     worker.run([&]() {
                         require(worker.operation.is_some(), "missing retained logical context");
-                        require(!Transaction::epoch_drained(worker.cut), "old context lost its epoch");
+                        require(!mako::EpochRuntime::epoch_drained(worker.cut), "old context lost its epoch");
                         if (worker.conflict) {
-                            require(!Sto::try_commit_no_paxos(), "forced OCC conflict unexpectedly committed");
-                            require(!Transaction::epoch_drained(worker.cut),
+                            require(!try_commit_attempt(), "forced OCC conflict unexpectedly committed");
+                            require(!mako::EpochRuntime::epoch_drained(worker.cut),
                                     "OCC abort/cleanup released logical epoch");
-                            Sto::start_transaction();
+                            start_attempt();
                             worker.conflict = false;
                         }
                         // The captured view covers the whole partition, not just
                         // the point touched before Freeze. This is a real first
-                        // access to key(1) through the production MBTA bridge.
+                        // access to key(1) through the production Rust index bridge.
                         std::string actual;
                         if (table == "warehouse") {
                             require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                     "Frozen or OCC retry revoked the prepared old-view owner");
                             mako::sharding_warehouse_handle(worker.interleaved, owner);
                         }
-                        require(index->tx_get(nullptr, lcdf::Str(key(1)), actual, SIZE_MAX),
+                        require(index->tx_get(attempt, lcdf::Str(key(1)), actual, SIZE_MAX),
                                 "Freeze revoked a newly accessed old-view coordinate");
                         if (table == "warehouse") {
                             const auto before = actual;
                             require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                     "repeated Frozen prepared access changed physical owner");
-                            require(index->tx_get(nullptr, lcdf::Str(key(1)), actual, SIZE_MAX)
+                            require(index->tx_get(attempt, lcdf::Str(key(1)), actual, SIZE_MAX)
                                     && actual == before,
                                     "repeated Frozen prepared storage verb changed engine row");
                         }
@@ -1743,8 +1724,8 @@ int main(int argc, char** argv) {
                         const auto hi = table == "raw" ? std::string("n") : coordinate(2);
                         mako::sharding_require_interval(index->get_table_id(),
                             bytes(lo), true, bytes(hi), remembered[owner]);
-                        require(Sto::try_commit_no_paxos(), "old view could not commit after Freeze");
-                        require(!Transaction::epoch_drained(worker.cut),
+                        require(try_commit_attempt(), "old view could not commit after Freeze");
+                        require(!mako::EpochRuntime::epoch_drained(worker.cut),
                                 "engine completion released retained logical context");
                     });
                 }
@@ -1802,17 +1783,17 @@ int main(int argc, char** argv) {
                     if (table == "warehouse")
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                 "idle prepared lookup selected the wrong source");
-                    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                             "idle prepared lookup pinned the migration source");
                     worker.operation = rusty::Some(rusty::make_box<mako::ShardingOperation>());
-                    Sto::start_transaction();
+                    start_attempt();
                     if (table == "warehouse")
                         require(mako::sharding_warehouse_handle(worker.prepared, owner) == index,
                                 "held prepared lookup selected the wrong source");
                     std::string actual;
-                    require(index->tx_get(nullptr, lcdf::Str(key(0)), actual, SIZE_MAX), "hold engine read");
-                    worker.cut = Transaction::epoch_cut();
-                    require(worker.cut && !Transaction::epoch_drained(worker.cut), "hold did not pin cut");
+                    require(index->tx_get(attempt, lcdf::Str(key(0)), actual, SIZE_MAX), "hold engine read");
+                    worker.cut = mako::EpochRuntime::epoch_cut();
+                    require(worker.cut && !mako::EpochRuntime::epoch_drained(worker.cut), "hold did not pin cut");
                 });
             } else if (command == "hold-conflict") {
                 // Two real main-thread commits change then restore the bytes.
@@ -1828,11 +1809,11 @@ int main(int argc, char** argv) {
                 auto& worker = *workers[owner].as_mut().unwrap();
                 worker.run([&]() {
                     require(worker.operation.is_some(), "no retained logical context");
-                    if (TThread::txn && TThread::txn->in_progress()) TThread::txn->silent_abort();
-                    require(!Transaction::epoch_drained(worker.cut), "cleanup lost logical pin");
+                    if (rust_sto_tpcc_wrapper::current_transaction_active()) abort_attempt();
+                    require(!mako::EpochRuntime::epoch_drained(worker.cut), "cleanup lost logical pin");
                     worker.operation = rusty::None;
                     worker.conflict = false;
-                    require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                             "logical completion leaked the worker epoch");
                 });
             } else if (command == "stale") {
@@ -1850,7 +1831,7 @@ int main(int argc, char** argv) {
         }
         // @unsafe - each retained read stays active on its own physical worker.
         // Logical service stop must not revoke their protected immutable views.
-        require(!TThread::txn || !TThread::txn->in_progress(),
+        require(!rust_sto_tpcc_wrapper::current_transaction_active(),
                 "normal stop with a live engine transaction");
         MakoShardRoute stopped_read_routes[2]{};
         uint64_t stopped_read_views[2]{};
@@ -1859,7 +1840,7 @@ int main(int argc, char** argv) {
             auto& worker = *workers[owner].as_mut().unwrap();
             worker.run([&]() {
                 require(worker.operation.is_none(), "normal stop with unsettled logical hold");
-                require(!TThread::txn || !TThread::txn->in_progress(), "worker engine still active");
+                require(!rust_sto_tpcc_wrapper::current_transaction_active(), "worker engine still active");
                 const auto status = worker.read.acquire(owner);
                 require(status == (mako_sharding_ready(owner) ? MAKO_SHARD_OK : MAKO_SHARD_RETRY),
                         "shutdown read readiness mismatch");
@@ -1884,7 +1865,7 @@ int main(int argc, char** argv) {
         const auto stopped_key = key(0);
         std::string stopped_before;
         bool stopped_found = false;
-        Transaction::epoch_type stopped_cut = 0;
+        mako::EpochRuntime::epoch_type stopped_cut = 0;
         mako::ShardingPreparedRoute stopped_route(warehouse_id, first + 1);
         if (mako_sharding_ready(first)) {
             select_owner(first);
@@ -1894,36 +1875,36 @@ int main(int argc, char** argv) {
                 std::string actual;
                 index->get(lcdf::Str(stopped_key), actual, SIZE_MAX);
             }
-            require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+            require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                     "warm ownership decision retained an idle pin");
             stopped_operation = rusty::Some(rusty::make_box<mako::ShardingOperation>());
             stopped_index = mako::sharding_warehouse_handle(stopped_route, first);
-            Sto::start_transaction();
-            stopped_found = stopped_index->tx_get(nullptr, lcdf::Str(stopped_key),
+            start_attempt();
+            stopped_found = stopped_index->tx_get(attempt, lcdf::Str(stopped_key),
                                                   stopped_before, SIZE_MAX);
-            stopped_cut = Transaction::epoch_cut();
-            require(stopped_cut && !Transaction::epoch_drained(stopped_cut),
+            stopped_cut = mako::EpochRuntime::epoch_cut();
+            require(stopped_cut && !mako::EpochRuntime::epoch_drained(stopped_cut),
                     "admitted shutdown transaction lost its guard");
         }
         hosts.shutdown();
         if (stopped_operation.is_some()) {
-            require(!Transaction::epoch_drained(stopped_cut),
+            require(!mako::EpochRuntime::epoch_drained(stopped_cut),
                     "service stop revoked the admitted epoch guard");
             std::string actual;
-            require(stopped_index->tx_get(nullptr, lcdf::Str(stopped_key), actual, SIZE_MAX)
+            require(stopped_index->tx_get(attempt, lcdf::Str(stopped_key), actual, SIZE_MAX)
                         == stopped_found && (!stopped_found || actual == stopped_before),
                     "service stop revoked the admitted engine read");
             const auto encoded = mako::Encode("committed-after-service-stop");
-            stopped_index->tx_put(nullptr, lcdf::Str(stopped_key), encoded);
-            require(Sto::try_commit_no_paxos(),
+            stopped_index->tx_put(attempt, lcdf::Str(stopped_key), encoded);
+            require(try_commit_attempt(),
                     "service stop revoked the admitted engine write");
             require(stopped_index->get(lcdf::Str(stopped_key), actual, SIZE_MAX)
                         && actual == "committed-after-service-stop",
                     "admitted context lost its committed write after stop");
-            require(Transaction::tinfo[TThread::id()].epoch.load() != 0,
+            require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() != 0,
                     "engine commit released the admitted logical guard");
             stopped_operation = rusty::None;
-            require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+            require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                     "stopped authorized context retained its terminal pin");
             bool rejected = false;
             try {
@@ -1931,7 +1912,7 @@ int main(int argc, char** argv) {
                 stopped_index->get(lcdf::Str(stopped_key), actual, SIZE_MAX);
             } catch (const abstract_db::abstract_abort_exception&) { rejected = true; }
             require(rejected, "stopped service admitted fresh engine work");
-            require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+            require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                     "rejected fresh engine work leaked an idle pin");
         }
         for (unsigned owner = first; owner < limit; ++owner) {
@@ -1959,15 +1940,16 @@ int main(int argc, char** argv) {
                     worker.read.release();
                 }
                 require(worker.read.acquire(owner) != MAKO_SHARD_OK, "stopped node admitted fresh read");
-                require(Transaction::tinfo[TThread::id()].epoch.load() == 0,
+                require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0,
                         "stopped native read leaked its terminal pin");
             });
             workers[owner] = rusty::None;
         }
         if (stopped_cut)
-            require(Transaction::epoch_drained(stopped_cut),
+            require(mako::EpochRuntime::epoch_drained(stopped_cut),
                     "shutdown contexts prevented terminal epoch drain");
         db.thread_end();
+        mako::rust_sharding_release();
         std::cout << "SMOKE STOPPED" << std::endl;
         return 0;
     } catch (const std::exception& error) {

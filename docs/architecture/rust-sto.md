@@ -1,11 +1,12 @@
 # Rust STO (STO-rs): Type-Aware Transactions for Concurrent Data Structures
 
-> **Updated:** 2026-10-24. This is the paper-style narrative and implementation
-> reference for the `masstree-rocks` worktree, not a production-default approval.
+> **Updated:** 2026-11-23. Rust is now the default and sole transaction backend.
+> The C++ transaction implementation and its FFI crates have been removed.
 > Native Rust STO implements synchronous, strictly serializable **non-opaque**
 > local transactions and a worker-affine retained participant. The native
 > `sto-tpcc-ffi` coordinator integrates with existing SRPC, replication, and replay;
-> the separate Rust cache selects `mako-engine-sto`. C++ remains the default.
+> the separate Rust cache uses `mako-engine-sto`. Native sharding and migration
+> use the Rust storage host and retained admission/engine pins.
 >
 > **Still deferred:** core opacity, native Masstree root/worker reclamation,
 > async or migrating transactions, and general-purpose MVCC. Distributed history
@@ -89,8 +90,8 @@ heterogeneous item composition, certification, and failure handling. Datatype
 adapters own the conflict model and payload representation. `sto-masstree`
 keeps transactional records, versions, liveness, and values in Rust, while
 using the native C++ Masstree only as a structural directory behind a narrow
-C ABI. The upper cache drives either this Rust engine or the C++ reference
-through a common Rust interface.
+C ABI. The upper cache drives this Rust engine through `mako-engine-api`.
+The former C++ transaction backend has been removed.
 
 The implementation supports point operations, read-your-writes, logical
 deletes, conservative range validation, and optimized homogeneous commit and
@@ -132,9 +133,9 @@ The current stack has three distinct integration boundaries:
 | --- | --- | --- |
 | `sto-core` and reference adapters | Implemented native Rust transaction protocol | A complete port of the paper's datatype library |
 | `sto-masstree` over `masstree`/`mtree-sys` | Implemented transactional point and range operations | A Rust rewrite of the native index or native-state reclamation |
-| `mako-engine-sto` through `mako-engine` into `mako-cache` | Implemented, selectable Rust backend | A default switch or acceptance of every cache workload |
+| `mako-engine-sto` through `mako-engine` into `mako-cache` | Default and sole transaction backend | Performance acceptance of every cache workload |
 | `sto-tpcc-ffi` and `rust_sto_tpcc_wrapper` | Native local/distributed coordinator, retained participants, replication/replay integration | Production qualification, arbitrary remote range scans, or a generated C++ STO backend |
-| Generic C++ Rocks-compatible `mako::DB` | Separate C++ MassTrans surface | Runtime selection of the Rust STO backend |
+| Generic C++ Rocks-compatible `mako::DB` | Implemented over the Rust transaction adapter | Restartable native runtime or durable foreground writes |
 
 The local OCC contract is strict serializability: committed transactions admit
 one legal serial history respecting real-time precedence. Active or aborted
@@ -145,9 +146,9 @@ Conflict, resource exhaustion, definite committed cleanup failure, and uncertain
 publication must not be collapsed into one retryable Boolean.
 
 The scope and exact outcome contract are retained in
-[the scope/semantics reference](#a2-semantic-contract). Default-engine changes
-remain governed by [rollout gates](#o2-cutover-gates), not by the presence of
-a Cargo feature or a successful microbenchmark.
+[the scope/semantics reference](#a2-semantic-contract). The owner-authorized default switch is recorded in the
+[retirement handover](../plans/sharding-on-rust-engine-handover.md);
+[rollout gates](#o2-cutover-gates) retain the operational qualification limits.
 
 ## 2. Related work
 
@@ -161,14 +162,12 @@ comparative performance claims for this repository.
 | Object-copying STM / MVCC | Preserve shadow objects or multiple versions | Owned snapshots are used where Rust memory safety requires them, but that is not a general MVCC implementation. |
 | Transactional boosting | Acquire abstract locks around concurrent operations and undo eager changes | The paper can express this strategy. Rust's general adapter contract currently standardizes deferred OCC, not a ready-made boosting library. |
 | Predication / semantic versioning | Track logical conditions rather than exact values | Rust exposes predicate upgrade and final validation; datatype-specific proofs still determine the conflict graph. |
-| Silo-style database OCC | Specialize records and commit for one database | The C++ MassTrans lineage is the local compatibility/performance oracle; the Rust core separates generic certification from database policy. |
+| Silo-style database OCC | Specialize records and commit for one database | The retired C++ MassTrans lineage supplies historical compatibility/performance evidence; the Rust core separates generic certification from database policy. |
 | Hardware TM | Execute suitably bounded operations speculatively in hardware | Orthogonal to the interface; no HTM capability is claimed here. |
 
-The historical C++ seam is
-[`TObject`](../../src/mako/sto/Interface.hh),
-[`TransItem`](../../src/mako/sto/TransItem.hh), and
-[`Transaction::try_commit`](../../src/mako/sto/Transaction.cc).
-Mako's C++ implementation also carries logging, RPC, replication timestamps,
+The historical C++ seam comprised `TObject`, `TransItem`, and
+`Transaction::try_commit` under `src/mako/sto/` at revision `0d26e2e0b`.
+That implementation also carried logging, RPC, replication timestamps,
 and MassTrans-specific policy. Those concerns are not requirements of the STO
 abstraction and do not belong in `sto-core`. The
 [Masstree book](../masstree-book.md) describes that native lineage; the
@@ -208,10 +207,10 @@ The platform divides responsibility as follows:
 application / mako-cache
           |
       mako-engine -- common contract in mako-engine-api
-        /      \
- C ABI engine   mako-engine-sto
- mako-local       |         \
- C++ MassTrans   sto-core   sto-masstree
+          |
+      mako-engine-sto
+          |             \
+       sto-core       sto-masstree
                                |
                             masstree
                                |
@@ -230,8 +229,7 @@ C++ TPC-C/dbtest -> rust_sto_tpcc_wrapper -> sto-tpcc-ffi coordinator
                                          mako-clock::distributed
 ```
 
-Both local engine choices implement one upper interface. They do not operate
-on the same live physical table at the same time. The native directory stores
+The Rust engine implements the upper interface. The native directory stores
 immutable nonzero scalar tokens; the Rust adapter interprets them as registry
 IDs or, for a private direct table, certified opaque record-address tokens.
 The public ABI does not expose a native cursor or dereferenceable node pointer.
@@ -981,7 +979,8 @@ Rust STO MUST:
 7. Provide read-your-writes and deterministic same-item mutation composition.
 8. Provide strict serializability for every committed transaction.
 9. Reject unavailable isolation profiles rather than silently weakening them.
-10. Be differentially testable against the current C++ STO/MassTrans engine.
+10. Be differentially testable against an independent ordered-map model.
+    The retained C++ comparison results are historical evidence.
 
 #### A.1.2 Non-goals
 
@@ -1037,7 +1036,7 @@ range operations; its exact restrictions are normative in
 [Appendix J.7](#j7-optional-fixed-u64-specialization).
 
 The optional upper cache engine and its logging/recovery integration remain
-outside core; C++ remains the default. Separately, native Mako integration uses
+outside core; Rust is the sole backend. Native Mako integration uses
 the implemented retained participant, distributed authority, histories, SRPC,
 and backend-routed replay described in Appendix M. Core crash durability and
 native reclamation are not implied by either integration.
@@ -1170,9 +1169,8 @@ transaction and Masstree layers.
 | `masstree` | Safe thread-affine native runtime/worker/tree and copied point/scan facade |
 | `mtree-sys` | Raw `no_std` C11 ABI declarations; no independent C++ build |
 | `mako-engine-api` | Common engine operations, outcomes, limits, features, and record contracts |
-| `mako-local` | Safe Rust ownership facade over the C++ MassTrans `mako_local_*` ABI |
 | `mako-engine-sto` | Native Rust implementation of the common local engine contract |
-| `mako-engine` | Compile-time selection/reexports for one local engine |
+| `mako-engine` | Public reexports of the sole Rust transaction engine |
 | `mako-clock` | Separate distributed decimal base/term authority and local cache HLC/order coordination |
 | `mako-cache` | Foreground API, log lanes, writeback, checkpoint/recovery, and health |
 | `mako-differential` / `mako-history` | Shared operation corpus and independent bounded isolation oracle |
@@ -4688,34 +4686,27 @@ path bypasses the Rust record/directory-generation protocol.
 
 ### M.1 Reference backend
 
-The current Rust upper interface is implemented by two backends:
+The upper interface uses the Rust engine:
 
 ```text
-mako-cache -> mako-engine -> mako-local -> mako_local_* -> C++ MassTrans
-                        \-> mako-engine-sto -> sto-core / sto-masstree
+mako-cache -> mako-engine -> mako-engine-sto -> sto-core / sto-masstree
 ```
 
-`mako-engine-api` owns the shared `LocalEngine`, `EngineDb`,
-`EngineTransaction`, holder/control, feature, error, and commit-report contracts.
-`mako-engine` reexports exactly one implementation. Its default feature is
-`c-abi`; `sto` selects Rust. Selecting both or neither is a compile error.
-`mako-local` still means the safe C++-ABI facade, not the Rust STO backend.
-Pull request 86 at `a3ede48859a4` is historical lineage; current checked-in
-source and the shared corpus are the operative behavioral reference.
+`mako-engine-api` owns the `LocalEngine`, `EngineDb`, `EngineTransaction`,
+holder/control, feature, error, and commit-report contracts. `mako-engine`
+reexports the sole implementation. `sto` and `engine-sto` remain the default
+feature spellings for existing Rust callers; the C ABI backend features and
+`mako-local` crates have been removed. Test-hook features remain nonproduction.
 
-The Rust cache defaults to `engine-c-abi`. Selecting
-`--no-default-features --features engine-sto` changes the engine without
-changing the ordinary application API. The engines are tested separately;
-workspace `--all-features` is not a valid universal configuration. Test-hook
-features are not production profiles. Neither this selection nor its passing
-library gates changes native Mako's default.
+Native `dbtest`, the TPC-C runner, examples, replay, and the RocksDB-compatible
+facade all default to Rust and reject `cpp`. Native sharding and migration use
+registered Rust storage handles. Transaction algorithms run independent
+in-memory datatype tests, while Masstree and native integration have separate
+targets. The binary-key and composition corpus now compares Rust with an
+independent ordered-map model; cache recovery uses fresh Rust processes.
 
-Native `dbtest` remains C++; the opt-in, `EXCLUDE_FROM_ALL` target
-`sto_tpcc_bench` enables the Rust selection through `--storage-engine rust`.
-The separate C++ Rocks-compatible `mako::DB::Open` rejects a non-`cpp`
-`storage_engine`. It does not consume the Rust cache feature flag.
+The native application bridge is:
 
-The current C++ TPC-C comparison uses a narrower transitional bridge:
 
 ```text
 C++ abstract_db / rust_sto_tpcc_wrapper
@@ -5373,9 +5364,9 @@ payload or recover foreground ACKs that never reached persistence. Tombstone
 and lane metadata survive log GC. Five-minute retention and ten-second GC
 interval defaults are policies, not hard bounds on resident data or history.
 
-The shared record/checkpoint format supports cross-engine reopen. The driver in
-[`mako_cache_cross_engine_reopen.py`](../../scripts/mako_cache_cross_engine_reopen.py)
-covers both directions and checks checksum modes, concurrent/single-producer
+The shared record/checkpoint format is unchanged by backend retirement. The driver in
+[`mako_cache_reopen.py`](../../scripts/mako_cache_reopen.py)
+checks same-build or cross-revision Rust reopen, checksum modes, concurrent/single-producer
 profiles, retained-log and checkpoint-only recovery, deletes/scans, further
 writes, and negative wrong-checksum cases. A successful process exit alone is
 not the equivalence criterion. Recorded results belong to their exact candidate;
@@ -5536,13 +5527,9 @@ Compile-fail tests prove worker and active transaction types are `!Send` and
 
 ### N.4 Differential histories
 
-Run the same operation corpus through:
-
-1. a sequential `BTreeMap` reference model;
-2. direct C++ MassTrans;
-3. raw `mako_local_*`;
-4. the existing safe upper Rust wrapper; and
-5. native Rust STO over the Masstree C ABI.
+Run the same operation corpus through the sequential `BTreeMap` reference
+model and native Rust STO over the Masstree C ABI. The C++ executors have been
+removed; the retained corpus still covers binary bounds and operation composition.
 
 Sequential traces compare exact observations and final states. Controlled
 concurrent schedules cover read/write, write/write, point-miss, phantom,
@@ -5596,12 +5583,9 @@ in the committed projection. The
 process after the lower Masstree and transactional-adapter suites.
 
 Aborted observations are excluded from these serial-order searches because the
-implemented Serializable profile is nonopaque. The shared sequential operation
-corpus now runs through direct C++ MassTrans, raw `mako_local_*`, the safe C ABI
-wrapper, and Rust STO. The forced concurrent history oracle is separate from
-that transcript comparison; do not label the combination a fully accepted
-five-backend concurrent differential ladder. Required-driver gates must fail
-rather than skip when the reference executable is missing.
+implemented Serializable profile is nonopaque. The shared sequential corpus
+compares Rust against the ordered-map model; the forced concurrent history
+oracle is a separate check of serializability.
 
 ### N.5 Performance ladder
 
@@ -5694,30 +5678,27 @@ follows:
 | Pure-Rust reference adapters and bounded isolation checks | [`crates/sto-test-datatypes`](../../crates/sto-test-datatypes) | Implemented for map, vector, and queue composition, deterministic isolation litmus tests, and model-checked strict-serializability histories. |
 | Independent binary-safe transaction-history oracle | [`crates/mako-history`](../../crates/mako-history) | Implemented with exact interval and result validation, bounded strict-serializability and opacity search, final-state checking, negative fixtures, and hexadecimal replay diagnostics. |
 | Orderly Rust benchmark teardown | [`bench.cc`](../../src/mako/benchmarks/bench.cc), [`dbtest.cc`](../../src/mako/benchmarks/dbtest.cc), and [`rust_sto_tpcc_wrapper.cc`](../../src/mako/storage/rust_sto_tpcc_wrapper.cc) | Workers and shared helpers stop before cross-shard facades close. Colocated wrappers share the database/runtime; invalid local topologies fail admission. Close/join do not reclaim native Masstree allocations or registrations. |
-| C++ Rocks-compatible facade lifecycle | [`db.hh`](../../src/rocks_interface/db.hh), [`local_table.hh`](../../src/rocks_interface/local_table.hh), and [`rocksdbInterfaceTest.cc`](../../examples/rocksdbInterfaceTest.cc) | Implemented for native C++ MassTrans only. It enforces paired fixed-worker attachment, active-attempt tokens, no nested transaction, graceful table-capacity failure, and external quiescence before close. `GetDB()` is a non-owning borrow, tokens may reuse an address, native state is process-lived, and replicated schemas must be static and deterministically created at startup. This facade does not select Rust STO. |
-| Shared upper contract and compile-selected engine | [`mako-engine-api`](../../crates/mako-engine-api), [`mako-engine`](../../crates/mako-engine), [`mako-engine-sto`](../../crates/mako-engine-sto), and [`mako-local`](../../crates/mako-local) | Implemented; C ABI remains default; backend features are mutually exclusive. |
-| Rust cache logging, writeback, checkpoints, and recovery | [`mako-cache`](../../crates/mako-cache) and [`recovery.rs`](../../crates/mako-cache/src/recovery.rs) | Implemented over either selected engine; foreground ACK remains volatile and one recovered namespace is admitted per process. |
-| Four-executor transcripts, forced histories, and cross-engine reopen | [`mako-differential`](../../crates/mako-differential) and [`mako_cache_cross_engine_reopen.py`](../../scripts/mako_cache_cross_engine_reopen.py) | Implemented gates; exact-candidate results and production/default acceptance are separate. |
+| C++ Rocks-compatible facade lifecycle | [`db.hh`](../../src/rocks_interface/db.hh), [`local_table.hh`](../../src/rocks_interface/local_table.hh), and [`rocksdbInterfaceTest.cc`](../../examples/rocksdbInterfaceTest.cc) | Implemented over Rust. It enforces paired fixed-worker attachment, active-attempt tokens, no nested transaction, graceful table-capacity failure, and external quiescence before close. `GetDB()` is a non-owning borrow, tokens may reuse an address, native state is process-lived, and replicated schemas must be static and deterministically created at startup. |
+| Shared upper contract and compile-selected engine | [`mako-engine-api`](../../crates/mako-engine-api), [`mako-engine`](../../crates/mako-engine), [`mako-engine-sto`](../../crates/mako-engine-sto), the sole engine | Implemented; Rust is the default and C ABI backend selection is removed. |
+| Rust cache logging, writeback, checkpoints, and recovery | [`mako-cache`](../../crates/mako-cache) and [`recovery.rs`](../../crates/mako-cache/src/recovery.rs) | Implemented over Rust; foreground ACK remains volatile and one recovered namespace is admitted per process. |
+| Model transcripts, forced histories, and fresh-process reopen | [`mako-differential`](../../crates/mako-differential) and [`mako_cache_reopen.py`](../../scripts/mako_cache_reopen.py) | Implemented gates; exact-candidate results and production/default acceptance are separate. |
 | Core opacity, native reclamation/worker-ID recycling, general-purpose MVCC, and durable foreground cache ACK | Appendices H, K.5, and M | Unsupported/deferred. Implemented table history and distributed replication do not remove these limitations. |
-| Rust-default/production acceptance | Appendix O.2 | Not granted by feature availability, historical gate results, or a scoped performance comparison. |
+| Rust-default/production acceptance | Appendix O.2 | Rust is the default and sole backend; retirement validation is recorded in the sharding integration handover. |
 | Bounded point-workload performance characterization | [August point matrix](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) and [September singleton record](../performance/mako-cache-rust-sto-singleton-attribution-2026-09-17.md) | Historical profiles remain distinct; September engine-only singleton evidence is not production-wide budget acceptance. |
 
 The checked-in gate inventory includes Rust formatting, Clippy, rustdoc,
 core/adapter tests, C11 header compilation, ABI negotiation and export checks,
 safe-wrapper/native integration, independent-oracle histories, closed TPC-C
-fixtures, and focused Miri/ASan/UBSan/TSan lanes. The public ABI gate checks its
-44-symbol allowlist, feature mask `0x3f7f`, and export-manifest fingerprint
-`0x8275e6faa88a4fe0`; hidden trusted symbols are outside that public contract.
-These gates were recorded on Rust 1.95, which is still the `crates/` workspace
-`rust-version`. The repository toolchain pin (`rust-toolchain.toml`,
-`install_rustc.sh`, the Docker image) is now `1.97.1`, the release the native
-sharding crate requires; the gate results above have not been re-recorded on it.
-
-Backend selection changes how these gates must run. Do not apply
-`--all-features` indiscriminately to `mako-engine` or `mako-cache`: both engines
-are intentionally mutually exclusive. Current CMake targets separately drive
-`run_mako_engine_sto_tests`, `run_mako_engine_integration_driver_tests`,
-`run_mako_engine_sto_mutation_tests`, and `run_mako_engine_cross_reopen_tests`.
+fixtures, and focused Miri/ASan/UBSan/TSan lanes. Native ABI checks cover the
+Masstree record-directory boundary and `sto-tpcc-ffi` exports. The retired
+`mako_local_*` ABI and its export inventory are removed.
+Historical gates used Rust 1.95, still the `crates/` workspace `rust-version`.
+The repository toolchain pin is now 1.97.1; retirement validation uses that
+container toolchain and the separately pinned sanitizer/Miri nightly.
+Current CMake targets separate `rust_sto_transaction_tests`,
+`rust_masstree_tests`, `rust_sto_cache_integration`, and `rust_cache_reopen`.
+The cache mutation runner also selects Rust only. Backend features no longer
+select mutually exclusive C++ and Rust implementations.
 Tests and runtime scenarios must run inside Docker, not through host `ci.sh`.
 
 An inventory is not a release-candidate result. Candidate identity, source-state
@@ -5736,13 +5717,11 @@ strict-provenance proof. Native UBSan coverage likewise must not be extended
 to uninstrumented third-party binaries. The selected allowlists and build flags
 belong with each artifact, not with an unqualified “sanitizers pass” statement.
 
-The two-runner C++ lifecycle case in the sanitizer gate uses a local-only timed
-transaction mix. It covers concurrent loader and runner setup, RCU publication,
-output, join, and teardown, but does not certify the inherited C++ MassTrans
-cross-partition payload path. That distributed path has unsuppressed C++
-data-race debt recorded as Finding 13 in
-[`masstree-sanitizer-findings.md`](../masstree-sanitizer-findings.md) and is
-not certified by the native Rust protocol-alignment receipts.
+The default one- and two-shard lifecycle cases now run ordinary `dbtest`
+without a backend flag and execute Rust transactions. The C++ MassTrans path
+associated with historical Finding 13 in
+[`masstree-sanitizer-findings.md`](../masstree-sanitizer-findings.md) is removed.
+Existing native Masstree sanitizer qualifications remain applicable.
 
 A production cutover record must include the required native fault-injection
 and exception coverage, upper differential/recovery outcomes on the exact
@@ -5751,9 +5730,9 @@ false-conflict budgets. Existing upper gates need candidate results; they are
 no longer an unimplemented facade/corpus milestone. Deferred capabilities must
 remain excluded or be separately implemented and qualified.
 
-This table records implementation presence, not authorization to make the Rust
-backend the production default. That decision still requires the cutover gates
-in Appendix O.2.
+The owner authorized Rust as the sole default backend on 2026-11-23.
+The retirement handover records its correctness validation; this does not
+supply the unclaimed performance and operational acceptance in Appendix O.2.
 
 ## Appendix O. Implementation status and rollout
 
@@ -5764,16 +5743,16 @@ in Appendix O.2.
 | Native core and external adapter contract | Implemented, including typed pools, general/direct commit, terminal reads, local versions, and failure quarantine | Exact-candidate correctness and safety gates |
 | Hardened Masstree ABI and safe wrapper | Implemented point/scoped/batched access, copied scans, sealing, and explicit lifecycle limits | Native fault/exception, sanitizer, and fixed-worker stress coverage |
 | Transactional Masstree | Implemented records, absence witnesses, scan overlay, registry budgets, payload tiers, and optional fixed-u64 profile | Workload-specific memory and false-conflict budgets |
-| Upper engine and cache | Backend-neutral contract, selectable Rust engine, shared records, recovery, differential and reopen gates implemented | Production performance/operational acceptance and explicit default decision |
+| Upper engine and cache | Sole Rust engine, shared records, recovery, model replay and reopen gates implemented | Production performance/operational acceptance |
 | Native TPC-C/Mako bridge | Local and retained distributed integration, clocks, histories, replication/replay and bounded local specializations implemented | Exact-candidate distributed consumer checks and operational qualification; performance remains user-stopped |
 | Core opacity, general-purpose MVCC, native reclamation | Deferred | Separate designs, implementation, capability admission, and evidence |
 | C++-familiar source migration | Canonical vocabulary and source organization implemented, using `object.rs` and `trans_item.rs`; fresh Q11 functional/correctness/instrumentation evidence retained | Q11 closed with performance explicitly unqualified by user decision; allocation, retained-memory, abort, sustained-soak/recovery and final C++-gap acceptance remain unclaimed |
 
-Implementation presence and bounded correctness/safety evidence are not a
-default-change decision. The September singleton campaign records an older
-bounded comparison; Q11 did not qualify the migrated implementation's
-performance. Further qualification was explicitly stopped. The upper facade
-and its integration gates are already implemented, not pending design work.
+The owner-authorized retirement makes Rust the sole default backend. The
+September singleton campaign remains an older bounded comparison; Q11 did not
+qualify the migrated implementation's performance. Further performance
+qualification was explicitly stopped. The upper facade and integration gates
+are implemented.
 
 ### O.2 Cutover gates
 
@@ -5793,10 +5772,10 @@ facade are not interchangeable. For the surface under consideration:
 - application throughput, latency, and false-conflict budgets need explicit
   acceptance, not inference from one microbenchmark.
 
-The C++ reference backend remains available for at least one compatibility
-release after an approved cutover. No default switch is made by this document.
-The zoo-2 comparisons are evidence toward particular gates, not substitutes
-for the entire acceptance record.
+The 2026-11-23 owner instruction supersedes the earlier requirement to retain
+a C++ compatibility backend: it has been deleted, and Rust is the sole default.
+The zoo-2 comparisons remain evidence for particular historical workloads;
+backend retirement does not establish performance acceptance.
 
 ## Appendix P. Decision record and change policy
 
@@ -5837,7 +5816,7 @@ for the entire acceptance record.
 | D31 | RUST | General `Table::new_direct_with_budget` admits registry configuration/budget before native tree creation; `new_direct` inherits the order with an unrestricted structural budget. Supplied-tree and fixed-u64 constructors do not provide this ordering guarantee. | Makes the no-native-allocation rejection guarantee exact rather than extending it to constructors with different ownership/admission order. |
 | D32 | RUST/COMPAT | Terminal capacity exhaustion, including spent ordered or record-local version domains, reports a fatal status instead of status 6, and still ends the attempt cleanly. | The runtime permanently refuses new transactions after `RuntimeHealth::Exhausted`, so a retryable resource status would misdescribe the outcome. |
 | D33 | RUST | Version requirement is captured per exact binding and folded only over writers; local-only writes omit the ordered ticket but retain all write phases. | Avoids unnecessary shared-clock traffic without comparing local generations or weakening exhaustion checks. |
-| D34 | RUST/COMPAT | The upper Rust cache can select `mako-engine-sto`; C ABI remains default and both share log/recovery contracts. | Separates implemented integration from release/default acceptance and from the C++ Rocks-compatible facade. |
+| D34 | RUST/COMPAT | The upper Rust cache uses `mako-engine-sto` by default and retains its log/recovery contracts. | The Rocks-compatible facade also uses Rust; application and cache bridges retain their separate APIs. |
 | D35 | RUST | Scalar own-publication repairs only its exact directory/scan increment; trusted writing commits advance scan generation once per transaction/table. | Preserves foreign-change detection while avoiding unnecessary self-conflicts and repeated shared RMWs. |
 | D36 | RUST | Bounded-value lazy records are first-touched on the claiming worker but owned by a cross-thread stable arena. | Improves locality without turning allocation placement into a TLS lifetime assumption. |
 

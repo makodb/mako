@@ -12,7 +12,7 @@
 #include "lib/configuration.h"
 #include "lib/common.h"
 import cluster;   // config/sharding metadata module (was #include "cluster/...")
-#include "sto/Interface.hh"
+#include "runtime/worker_context.hh"
 
 import std;
 

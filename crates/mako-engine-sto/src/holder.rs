@@ -1,8 +1,7 @@
 //! Zero-copy one-put holders and the stable control blocks lent to the
 //! trusted terminals.
 //!
-//! The pool mirrors `mako_rust_fast_one_put_holder_pool` in
-//! `mako_local_abi.cc`: a power-of-two ring of holders where lane sequence
+//! The pool is a power-of-two ring of holders where lane sequence
 //! `N` exclusively leases holder `(N - 1) & mask`. Fields are deliberately
 //! non-atomic. The cache's publication protocol (Release of the queue frontier
 //! or exact cell turn after sealing; Acquire before viewing; release before

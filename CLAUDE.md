@@ -110,10 +110,14 @@ Copilot, RCC/Rococo, Carousel, and Februus implementations are retired. This
 includes the old `deptran` and `deptran_er` RCC aliases. EPaxos, Replicated
 Commit, and Multi-Paxos Plus were unimplemented selector placeholders and are
 unsupported. The former standalone DepTran OCC implementation is also retired;
-Mako's optimistic concurrency control is provided by its MBTA/STO engine. The
-original Silo `txn`/`txn_btree`/`txn_proto2` transaction engine has been removed
-(last present at commit fd3ed37e1); it is neither selectable nor runnable. Mako
-always uses STO `Transaction` with MassTrans through `storage/mbta_wrapper.hh`.
+Mako's optimistic concurrency control is provided by native Rust STO through
+`storage/rust_sto_tpcc_wrapper.hh` and `sto-tpcc-ffi`. Rust is the default and
+sole transaction backend. The C++ `Transaction`/MassTrans implementation and
+`mako-local` FFI crates were removed (last present at `0d26e2e0b`). Shared native
+worker, epoch, replay and RPC support now lives in `src/mako/runtime/`.
+The original Silo `txn`/`txn_btree`/`txn_proto2` engine was removed earlier
+(last present at `fd3ed37e1`). Test the transaction manager with `sto-core` and
+`sto-test-datatypes`; keep native Masstree component tests separate.
 `SiloRuntime` remains live allocator/RCU/Masstree support and is not the retired
 engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Raft** (`src/deptran/raft/`): the supported and tested replication engine, and

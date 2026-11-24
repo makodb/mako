@@ -45,7 +45,9 @@ BASE_CARGO_ARGS = (
 
 
 def cargo_args(engine: str) -> tuple[str, ...]:
-    feature = "engine-sto-test-hooks" if engine == "sto" else "engine-c-abi"
+    if engine != "sto":
+        raise HarnessFailure("only the Rust transaction engine is supported")
+    feature = "engine-sto-test-hooks"
     return (*BASE_CARGO_ARGS, "--no-default-features", "--features", f"{feature},test-support")
 
 
@@ -479,12 +481,13 @@ def dependency_hashes() -> dict[str, str]:
     # These remain path dependencies of every isolated copy. A storage adapter
     # change during the run must invalidate the evidence just like a cache edit.
     crates = (
-        "mrx-core", "mrx-rocks", "mako-history", "mako-local", "mako-local-sys",
+        "mrx-core", "mrx-rocks", "mako-history",
         "mako-engine", "mako-engine-api", "mako-engine-sto", "mako-clock",
         "sto-core", "sto-masstree", "masstree", "mtree-sys",
     )
     files = [path for name in crates for path in source_files(ORIGINAL_CRATES / name)]
     files.append(ORIGINAL_LOCKFILE)
+    files.extend((ORIGINAL_CRATES / "native-build-support").glob("*.rs"))
     hashes = {
         path.relative_to(ORIGINAL_CRATES).as_posix(): sha256_bytes(path.read_bytes())
         for path in sorted(files)
@@ -572,66 +575,13 @@ class TempWorkspace:
 PATH_DEPENDENCY = re.compile(r'(?P<prefix>\bpath\s*=\s*)"(?P<path>[^"]+)"')
 
 
-def wrapper_hashes(crate: Path) -> dict[str, str]:
-    """Hash both unchanged Rust FFI crates and their direct native headers.
-
-    A source-path override permits using an existing fingerprinted native build
-    at its original source root. It does not permit substituting wrapper code,
-    ABI headers, or the verifier. Cargo still runs the unchanged mandatory
-    source/configuration/archive fingerprint check for every native build.
-    """
-    root = crate.parent.parent
-    if crate.resolve() != root.joinpath("crates/mako-local").resolve():
-        raise HarnessFailure("native wrapper override must name the proved crates/mako-local directory")
-    files: list[Path] = []
-    for relative in ("crates/mako-local", "crates/mako-local-sys"):
-        directory = root / relative
-        if not directory.joinpath("Cargo.toml").is_file():
-            raise HarnessFailure(f"native wrapper source is incomplete: {directory}")
-        files.extend(
-            path for path in directory.rglob("*") if path.is_file()
-            and not any(part in ("target", ".git", "__pycache__") for part in path.relative_to(directory).parts)
-            and path.suffix != ".pyc"
-        )
-    for relative in (
-        "src/mako/storage/mako_local_abi.h",
-        "src/mako/storage/mako_timestamp.h",
-        "scripts/mako_local_fingerprint.py",
-    ):
-        path = root / relative
-        if not path.is_file():
-            raise HarnessFailure(f"native wrapper input is missing: {path}")
-        files.append(path)
-    return {path.relative_to(root).as_posix(): sha256_bytes(path.read_bytes()) for path in sorted(files)}
-
-
-def verify_wrapper_override(value: str | None) -> tuple[Path | None, dict[str, object] | None]:
-    if value is None:
-        return None, None
-    chosen = Path(value).expanduser().resolve()
-    original = ORIGINAL_CRATES / "mako-local"
-    current = wrapper_hashes(original)
-    alternate = wrapper_hashes(chosen)
-    mismatches = sorted(path for path in set(current) | set(alternate)
-                        if current.get(path) != alternate.get(path))
-    if mismatches:
-        raise HarnessFailure("native wrapper source override is not byte-identical", details=mismatches)
-    return chosen, {
-        "original": str(original), "selected": str(chosen),
-        "tree_sha256": tree_digest(current), "file_sha256": current,
-        "byte_identical": True, "native_fingerprint_required": True,
-    }
-
-
-def rewrite_path_dependencies(manifest: Path, local_source: Path | None = None) -> list[dict[str, str]]:
+def rewrite_path_dependencies(manifest: Path) -> list[dict[str, str]]:
     source = manifest.read_text(encoding="utf-8")
     rewrites: list[dict[str, str]] = []
 
     def replace(match: re.Match[str]) -> str:
         raw = match.group("path")
         dependency = (ORIGINAL_CRATE / raw).resolve()
-        if local_source is not None and dependency == (ORIGINAL_CRATES / "mako-local").resolve():
-            dependency = local_source
         if not dependency.joinpath("Cargo.toml").is_file():
             raise HarnessFailure(
                 f"path dependency {raw!r} does not resolve to a crate",
@@ -649,7 +599,7 @@ def rewrite_path_dependencies(manifest: Path, local_source: Path | None = None) 
 
 
 def create_workspace(
-    label: str, keep: bool, temp_root: Path, local_source: Path | None = None
+    label: str, keep: bool, temp_root: Path
 ) -> tuple[TempWorkspace, list[dict[str, str]]]:
     temp_root.mkdir(parents=True, exist_ok=True)
     if keep:
@@ -670,7 +620,10 @@ def create_workspace(
         crate,
         ignore=shutil.ignore_patterns("target", ".git", "__pycache__", "*.pyc"),
     )
-    rewrites = rewrite_path_dependencies(crate / "Cargo.toml", local_source)
+    shutil.copytree(
+        ORIGINAL_CRATES / "native-build-support", root / "native-build-support"
+    )
+    rewrites = rewrite_path_dependencies(crate / "Cargo.toml")
     (root / "Cargo.toml").write_text(
         """[workspace]
 resolver = "2"
@@ -767,16 +720,9 @@ def cargo_environment(
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(workspace.target)
     if native_build is not None:
-        env["MAKO_LOCAL_FAKE_ABI"] = "0"
         env["MAKO_BUILD_DIR"] = str(native_build)
-        env["MAKO_LOCAL_REQUIRE_NATIVE"] = "1"
     else:
-        # mako-local lives at its original absolute path and would otherwise
-        # auto-discover a possibly stale default CMake tree there. Pure-Rust
-        # mutants intentionally compile against its explicit fake ABI.
-        env["MAKO_LOCAL_FAKE_ABI"] = "1"
         env.pop("MAKO_BUILD_DIR", None)
-        env.pop("MAKO_LOCAL_REQUIRE_NATIVE", None)
     if require_hooks:
         env["MAKO_CACHE_REQUIRE_NATIVE_CRASH_HOOKS"] = "1"
     else:
@@ -792,7 +738,7 @@ def prepare_lockfile(
     """Normalize the copied full-workspace lock to the one-member topology.
 
     Cargo records dev-dependency edges for every workspace member.  Once only
-    mako-cache is copied, dependencies such as mako-local are ordinary path
+    mako-cache is copied, dependencies such as mako-engine-sto are ordinary path
     dependencies and their dev-only edges disappear.  Cargo therefore refuses
     the byte-for-byte full-workspace lock under --locked even though every
     resolved registry version is already pinned.  One offline metadata pass
@@ -825,7 +771,7 @@ def prepare_lockfile(
     }
 
 
-def test_command(cargo: str, target: TestTarget, engine: str = "c-abi") -> list[str]:
+def test_command(cargo: str, target: TestTarget, engine: str = "sto") -> list[str]:
     return [
         cargo,
         *cargo_args(engine),
@@ -845,61 +791,18 @@ def resolve_build_dirs(
     args: argparse.Namespace, selected: Sequence[Mutation]
 ) -> tuple[Path | None, bool]:
     hooks_needed = any(mutation.test.needs_hooks for mutation in selected)
-    native_needed = args.engine == "sto" or hooks_needed or any(
-        mutation.test.needs_native for mutation in selected
-    )
-
-    hook_value = args.hook_build_dir
-    native_value = args.mako_build_dir
-    if native_needed:
-        hook_value = hook_value or os.environ.get("MAKO_CACHE_HOOK_BUILD_DIR")
-        native_value = native_value or os.environ.get("MAKO_BUILD_DIR")
-
-    if hook_value:
-        chosen = Path(hook_value).expanduser().resolve()
-        require_hooks = True
-    elif native_value:
-        chosen = Path(native_value).expanduser().resolve()
-        require_hooks = False
-    else:
-        chosen = None
-        require_hooks = False
-
-    # Rust STO implements the observer hooks in Rust. Its Masstree archive
-    # must be genuine, but need not enable the C++ transaction test hooks.
-    if args.engine == "sto":
-        require_hooks = hooks_needed
-        if os.environ.get("MAKO_MTREE_NATIVE_INTEGRATION") != "1":
-            raise HarnessFailure("Rust STO mutations require MAKO_MTREE_NATIVE_INTEGRATION=1")
-        for name in ("MAKO_MTREE_NATIVE_LIB_DIRS", "MAKO_MTREE_NATIVE_LIBS"):
-            if not os.environ.get(name):
-                raise HarnessFailure(f"Rust STO mutations require {name}")
-
-    if native_needed and chosen is None:
-        raise HarnessFailure(
-            "selected mutants require native Mako",
-            details=(
-                "pass --mako-build-dir PATH (or MAKO_BUILD_DIR); the full/default "
-                "matrix includes the timestamp mutant and therefore requires "
-                "--hook-build-dir PATH (or MAKO_CACHE_HOOK_BUILD_DIR)"
-            ),
-        )
-    if hooks_needed and not require_hooks:
-        raise HarnessFailure(
-            "selected mutants require the hook-enabled native archive",
-            details=(
-                "pass --hook-build-dir PATH or set MAKO_CACHE_HOOK_BUILD_DIR; "
-                "the directory must contain libmako.a built with "
-                "MAKO_LOCAL_TEST_HOOKS=ON"
-            ),
-        )
-    if chosen is not None:
-        for required in (chosen / "libmako.a", chosen / "CMakeCache.txt"):
-            if not required.is_file():
-                raise HarnessFailure(
-                    f"native build is incomplete: {required} is missing"
-                )
-    return chosen, require_hooks
+    for name in ("MAKO_MTREE_NATIVE_INTEGRATION", "MAKO_MTREE_NATIVE_LIB_DIRS", "MAKO_MTREE_NATIVE_LIBS"):
+        value = os.environ.get(name)
+        if not value or (name == "MAKO_MTREE_NATIVE_INTEGRATION" and value != "1"):
+            raise HarnessFailure(f"Rust STO mutations require {name}" + ("=1" if name.endswith("INTEGRATION") else ""))
+    value = args.mako_build_dir or os.environ.get("MAKO_BUILD_DIR")
+    if not value:
+        raise HarnessFailure("Rust STO mutations require --mako-build-dir or MAKO_BUILD_DIR")
+    chosen = Path(value).expanduser().resolve()
+    for required in (chosen / "libmako_mtree_boundary.a", chosen / "CMakeCache.txt"):
+        if not required.is_file():
+            raise HarnessFailure(f"native build is incomplete: {required} is missing")
+    return chosen, hooks_needed
 
 
 def mutate_copy(workspace: TempWorkspace, mutation: Mutation) -> dict[str, str]:
@@ -931,8 +834,8 @@ def native_profile(build: Path | None, engine: str, require_hooks: bool) -> dict
     return {
         "build_dir": str(build) if build else None,
         "commit_hooks_required": require_hooks,
-        "hook_implementation": "rust" if engine == "sto" else "c++",
-        "hook_archive_required": require_hooks and engine == "c-abi",
+        "hook_implementation": "rust",
+        "hook_archive_required": False,
     }
 
 
@@ -942,7 +845,7 @@ def run_baseline(
     require_hooks: bool,
 ) -> dict[str, object]:
     workspace, rewrites = create_workspace(
-        "baseline", args.keep_workdirs, args.resolved_temp_root, args.resolved_local_source
+        "baseline", args.keep_workdirs, args.resolved_temp_root
     )
     try:
         env = cargo_environment(
@@ -1040,7 +943,7 @@ def run_mutation(
     require_hooks: bool,
 ) -> dict[str, object]:
     workspace, rewrites = create_workspace(
-        mutation.name, args.keep_workdirs, args.resolved_temp_root, args.resolved_local_source
+        mutation.name, args.keep_workdirs, args.resolved_temp_root
     )
     base: dict[str, object] = {
         "name": mutation.name,
@@ -1178,26 +1081,11 @@ def parser() -> argparse.ArgumentParser:
         help="validate names, exact anchors, digests, and source integrity without Cargo",
     )
     result.add_argument("--cargo", default="cargo", help="Cargo executable")
-    result.add_argument("--engine", choices=("c-abi", "sto"), default="c-abi",
+    result.add_argument("--engine", choices=("sto",), default="sto",
                         help="engine for both the unmutated baseline and every mutant")
     result.add_argument(
         "--mako-build-dir",
-        help="CMake tree containing libmako.a for native tests (or MAKO_BUILD_DIR)",
-    )
-    result.add_argument(
-        "--hook-build-dir",
-        help=(
-            "CMake tree containing the MAKO_LOCAL_TEST_HOOKS=ON libmako.a; "
-            "takes precedence over --mako-build-dir (or MAKO_CACHE_HOOK_BUILD_DIR)"
-        ),
-    )
-    result.add_argument(
-        "--mako-local-source-dir",
-        help=(
-            "use an existing native build's original mako-local crate path only "
-            "after proving both Rust FFI crates, ABI headers, and verifier are "
-            "byte-identical; native fingerprint verification remains mandatory"
-        ),
+        help="CMake tree containing libmako_mtree_boundary.a for native tests (or MAKO_BUILD_DIR)",
     )
     result.add_argument("--compile-timeout", type=int, default=900)
     result.add_argument("--baseline-timeout", type=int, default=1200)
@@ -1276,13 +1164,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         validations = validate_definitions(selected)
         report["anchor_validation"] = validations
-        args.resolved_local_source, wrapper_proof = verify_wrapper_override(args.mako_local_source_dir)
-        report["native_wrapper_source"] = wrapper_proof
         if args.check:
             # Exercise the copy/manifest rewrite path too.  This catches a new
             # relative dependency (for example mako-history) before a long run.
             workspace, rewrites = create_workspace(
-                "check", False, args.resolved_temp_root, args.resolved_local_source
+                "check", False, args.resolved_temp_root
             )
             try:
                 report["path_rewrites"] = rewrites

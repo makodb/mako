@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <rusty/box.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -123,6 +124,8 @@ public:
   sto_tpcc_table *sharding_host_table() const noexcept {
     return is_remote_ ? nullptr : table_;
   }
+  // @unsafe - Called only before publishing an empty routing-only handle.
+  void mark_sharding_proxy() noexcept { is_remote_ = true; }
 
 private:
   // @unsafe - Colocated replicated rows still use their owning participant.
@@ -147,9 +150,8 @@ private:
   friend class rust_sto_tpcc_wrapper;
 };
 
-// Closed benchmark wrapper. Construct all tables during startup before its
-// bounded, long-lived transaction workers attach; live schema mutation is
-// outside the supported profile.
+// Rust transaction adapter. Table creation uses the attached worker when
+// present; catalog publication is serialized with other table opens.
 class rust_sto_tpcc_wrapper final : public abstract_db,
                                     public TxnInsertBatchCapability,
                                     public TxnTpccPaymentCapability,
@@ -220,6 +222,7 @@ public:
                                      bool use_hashtable = false) override;
   abstract_ordered_index *open_index(const std::string &name,
                                      int shard_index = -1) override;
+  sharded_ordered_index *open_sharded_index(const std::string &name) override;
   void close_index(abstract_ordered_index *idx) override;
 
   void shard_abort_txn(void *txn) override;
@@ -248,6 +251,18 @@ public:
   static sto_tpcc_thread *sharding_host_idle_thread() noexcept {
     return tls_transaction_active_ ? nullptr : tls_thread_;
   }
+  static bool current_transaction_active() noexcept {
+    return tls_transaction_active_;
+  }
+  // Borrow the active attempt on this OS thread, including a receiver-created
+  // participant. This handle is invalid after commit, abort or thread_end.
+  static void* current_transaction_handle() noexcept {
+    return tls_transaction_active_ ? tls_thread_ : nullptr;
+  }
+  static void abort_current_thread_transaction() noexcept {
+    if (tls_owner_ && tls_transaction_active_)
+      tls_owner_->abort_current_transaction_noexcept();
+  }
 
 private:
   // Table IDs are in [1, kTableIdLimit); tables_by_id_ has one slot for each.
@@ -270,6 +285,8 @@ private:
   // all-or-nothing: a C++ exception after FFI creation destroys that table and
   // does not consume its ID or leave a partial catalog entry.
   std::vector<rusty::Box<rust_sto_tpcc_ordered_index>> tables_;
+  // Routing facades borrow the leaf tables and share the database's lifetime.
+  std::map<std::string, std::unique_ptr<sharded_ordered_index>> sharded_tables_;
   // A follower replays its leader's loading log while its own workload is
   // still opening tables, so replay threads look IDs up while open_index
   // publishes them. One slot per possible table ID, allocated once in the

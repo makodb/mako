@@ -11,7 +11,7 @@
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/sharded_ordered_index.hh"
 
 import std;
 
@@ -31,7 +31,7 @@ public:
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex() ;
         worker_id_ = worker_id_ * 100 + home_shard_index ;
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         // Write 5 keys - unique per worker to avoid contention
         for (size_t i = 0; i < 5; i++) {
@@ -114,7 +114,7 @@ public:
         printf("\n[TEST_SINGLE_KEY] === Testing Single Key Contention Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         // All threads write to the SAME key to create high contention
         std::string shared_key = "contention_key_shared";
@@ -166,7 +166,7 @@ public:
         printf("\n[TEST_OVERLAP_KEYS] === Testing Overlapping Keys Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         // Workers access overlapping key ranges
         int key_group = (worker_id_ / 2) * 5;
@@ -228,7 +228,7 @@ public:
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
         int remote_shard_index = home_shard_index == 0 ? 1 : 0;
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         int commits = 0, aborts = 0;
         for (size_t i = 0; i < 10; i++) {
@@ -318,7 +318,7 @@ public:
         printf("\n[TEST_RW_CONTENTION] === Testing Read-Write Contention Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         bool is_writer = (worker_id_ % 2 == 0);
 
@@ -408,7 +408,7 @@ void run_tests(abstract_db* db) {
 // Verify data integrity for all tests
 // @unsafe - Reads the replica's physical table through legacy storage APIs.
 bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
-    mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+    sharded_ordered_index *table = db->open_sharded_index("customer_0");
     // Verify replayed rows here, not a distributed scan of other live owners.
     auto* replica_table = table->shard_for_index(
         BenchmarkConfig::getInstance().getShardIndex());
@@ -633,7 +633,7 @@ int main(int argc, char **argv) {
 
     if (benchConfig.getLeaderConfig()) {
         mako::setup_rpc_server();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         map<int, abstract_ordered_index*> open_tables;
         auto *local_table = table->shard_for_index(benchConfig.getShardIndex());

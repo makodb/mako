@@ -28,7 +28,7 @@
 #include "mako/lib/server.h"
 #include "mako/lib/common.h"
 #include "mako/benchmarks/bench.h"  // scoped_db_thread_ctx (worker Silo binding)
-#include "mako/sto/Transaction.hh"
+#include "mako/runtime/epoch.hh"
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -286,6 +286,14 @@ inline void ClientTcpServer::Stop() {
     // with an error, and the loop sees stop_requested_).
     if (listen_fd_ >= 0) {
         ::shutdown(listen_fd_, SHUT_RDWR);  // @unsafe
+    }
+
+    // The listener borrows listen_fd_. Join before closing or changing it,
+    // and before inspecting the final set of accepted worker connections.
+    if (listener_thread_.joinable()) {
+        listener_thread_.join();
+    }
+    if (listen_fd_ >= 0) {
         ::close(listen_fd_);  // @unsafe
         listen_fd_ = -1;
     }
@@ -298,11 +306,6 @@ inline void ClientTcpServer::Stop() {
                 ::shutdown(fd, SHUT_RDWR);  // @unsafe - Signal threads to exit
             }
         }
-    }
-
-    // Join listener thread
-    if (listener_thread_.joinable()) {
-        listener_thread_.join();
     }
 
     // Join all worker threads

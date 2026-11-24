@@ -44,11 +44,11 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "tpcc.h"
 #include "tpcc_fixed_batch.h"
 #include "lib/server.h"
-#include "sto/Interface.hh"
-#include "sto/Transaction.hh"
+#include "runtime/worker_context.hh"
+#include "runtime/sync_util.hh"
+#include "runtime/epoch.hh"
 #include "common.h"
 #include "deptran/s_main.h"
-#include "sto/multiversion.hh"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_warehouse_bridge.h"
@@ -281,7 +281,8 @@ static inline ALWAYS_INLINE spinlock &
 LockForPartition(unsigned int wid)
 {
   INVARIANT(g_enable_partition_locks);
-  return g_partition_locks[PartitionId(wid)].elem;
+  const size_t offset = TThread::get_shard_index() * BenchmarkConfig::getInstance().getNthreads();
+  return g_partition_locks[offset + PartitionId(wid)].elem;
 }
 
 static inline atomic<uint64_t> &
@@ -289,8 +290,9 @@ NewOrderIdHolder(unsigned warehouse, unsigned district)
 {
   INVARIANT(warehouse >= 1 && warehouse <= NumWarehouses());
   INVARIANT(district >= 1 && district <= NumDistrictsPerWarehouse());
-  const unsigned idx =
-    (warehouse - 1) * NumDistrictsPerWarehouse() + (district - 1);
+  const size_t idx =
+    (TThread::get_shard_index() * NumWarehouses() + warehouse - 1) *
+      NumDistrictsPerWarehouse() + (district - 1);
   return g_district_ids[idx].elem;
 }
 
@@ -4348,29 +4350,33 @@ private:
       }
     }
 
-    if (g_enable_partition_locks) {
+    // Runners are initialized before workers start. A colocated runner must
+    // not overwrite another shard's allocation or reuse its order-ID slots.
+    if (g_enable_partition_locks && !g_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
       auto& cfg = BenchmarkConfig::getInstance();
       void * const px =
         tpcc_memalign(CACHELINE_SIZE,
-                      sizeof(aligned_padded_elem<spinlock>) * cfg.getNthreads());
+                      sizeof(aligned_padded_elem<spinlock>) * cfg.getNthreads() * cfg.getNshards());
       ALWAYS_ERROR(px);
       ALWAYS_ERROR(reinterpret_cast<uintptr_t>(px) % CACHELINE_SIZE == 0);
       g_partition_locks = reinterpret_cast<aligned_padded_elem<spinlock> *>(px);
-      for (size_t i = 0; i < cfg.getNthreads(); i++) {
+      for (size_t i = 0; i < cfg.getNthreads() * cfg.getNshards(); i++) {
         new (&g_partition_locks[i]) aligned_padded_elem<spinlock>();
         ALWAYS_ERROR(!g_partition_locks[i].elem.is_locked());
       }
     }
 
-    if (g_new_order_fast_id_gen) {
+    if (g_new_order_fast_id_gen && !g_district_ids) {
+      const size_t count = BenchmarkConfig::getInstance().getNshards() *
+          NumWarehouses() * NumDistrictsPerWarehouse();
       void * const px =
         tpcc_memalign(
             CACHELINE_SIZE,
-            sizeof(aligned_padded_elem<atomic<uint64_t>>) *
-              NumWarehouses() * NumDistrictsPerWarehouse());
+            sizeof(aligned_padded_elem<atomic<uint64_t>>) * count);
+      ALWAYS_ERROR(px);
       g_district_ids = reinterpret_cast<aligned_padded_elem<atomic<uint64_t>> *>(px);
-      for (size_t i = 0; i < NumWarehouses() * NumDistrictsPerWarehouse(); i++)
+      for (size_t i = 0; i < count; i++)
         new (&g_district_ids[i]) atomic<uint64_t>(3001);
     }
   }

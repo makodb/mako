@@ -49,7 +49,7 @@ def dump_json(path: Path, value: object) -> None:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
-    parser.add_argument("--engine", required=True, choices=("rust", "cpp"))
+    parser.add_argument("--engine", default="rust", choices=("rust",))
     parser.add_argument("--shards", type=positive_int, default=2)
     parser.add_argument("--replication", choices=("none", "raft"), default="none")
     parser.add_argument("--colocated-leader", action="store_true",

@@ -1,11 +1,9 @@
 //! Engine-neutral contract between the Mako transaction cache and a local
 //! transaction engine.
 //!
-//! The cache (`mako-cache`) drives exactly one local engine per process. Two
-//! engines implement this contract: the C ABI facade over C++ STO/MassTrans
-//! (`mako-local`) and the native Rust STO engine (`mako-engine-sto`). Both
-//! expose the same value types defined here. The default `distributed` feature
-//! also exposes their legacy cache/engine facade; local-only users retain neutral types.
+//! The cache (`mako-cache`) drives the Rust engine (`mako-engine-sto`) through
+//! the value types defined here. The default `distributed` feature exposes
+//! the cache/engine facade; local-only users retain neutral types.
 //!
 //! Everything in this crate is plain data or a trait; there is no unsafe block
 //! and no engine logic. Numeric contract values (feature bits, limits,

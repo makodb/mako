@@ -1,11 +1,11 @@
 #include <stddef.h>
 
 #include <mako.hh>
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
 #include <examples/common.h>
 #include "storage/abstract_db.h"
 #include "storage/abstract_ordered_index.h"
-#include "sto/StringWrapper.hh"
+
 
 import std;
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
               << "\n";
 
     // ---- DB setup ----
-    abstract_db* db = new mbta_wrapper;
+    abstract_db* db = new rust_sto_tpcc_wrapper;
     db->init();
 
     abstract_ordered_index* customerTable = db->open_index("customer_0");
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
 
     // ---- Per-thread DB state (single thread) ----
     // Equivalent to RustWrapper::ensure_thread_info()
-    mbta_table::thread_init();
+    db->thread_init(false);
 
     str_arena arena;
     std::string txn_obj_buf;
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            tx_put(customerTable, txn, db_key, StringWrapper(db_val));
+            tx_put(customerTable, txn, db_key, db_val);
             db->commit_txn(txn);
             ++load_succ;
         } catch (abstract_db::abstract_abort_exception&) {
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            tx_put(customerTable, txn, db_key, StringWrapper(db_val));
+            tx_put(customerTable, txn, db_key, db_val);
             db->commit_txn(txn);
             ++set_succ;
         } catch (abstract_db::abstract_abort_exception&) {

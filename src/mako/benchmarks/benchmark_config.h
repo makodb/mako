@@ -127,7 +127,7 @@ class BenchmarkConfig {
 
       // Selected by matched storage-comparison binaries. Ordinary dbtest
       // builds accept only the native C++ default.
-      std::string storage_engine_{"cpp"};
+      std::string storage_engine_{"rust"};
       bool emit_tpcc_result_{false};
 
       // Watermark tracking for latency measurements

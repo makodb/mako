@@ -28,10 +28,9 @@ Environment:
 Coverage contract:
   * First-party C and C++ boundary and workload code compiled by the selected
     CMake targets receives the selected sanitizer's compiler instrumentation.
-  * rust_sto_integration runs the Rust STO workspace and instrumented native
-    Masstree tests. The native C++ facade runs separately: three OFF-specific
-    boundary checks, then all mako-local targets with STO_RMW=ON and a required
-    three-way differential driver. Its LSan lifetime policy stays in that lane.
+  * rust_sto_integration runs the Rust transaction workspace, instrumented
+    native Masstree tests, and Rust adapter/cache model replay. Transaction
+    algorithms use in-memory datatypes independently of the native tree.
   * Every registered CTest carrying the exact "rust" label runs. This picks
     up the Rust TPC-C slow-exit and workload smoke tests when CMake registers
     them, without maintaining a second test-name list here.
@@ -48,9 +47,7 @@ Coverage contract:
   * ASan leak detection remains enabled for the workspace sweep, native runner,
     and every Rust-labeled CTest. Exact intentional-quarantine tests are skipped
     in the sweep and rerun one-by-one with only leak reporting disabled. The
-    exact C++ slow-exit, local-facade, and MassTrans non-transactional CTests
-    also disable leak reporting because the native backend retains
-    STO/Masstree state for process lifetime. Four exact Rust TPC-C lifecycle
+    native facades use Rust with leak detection enabled. Exact Rust TPC-C lifecycle
     tests use one checked-in LSan
     constructor suppression for native Masstree roots retained until exit.
   * The UBSan job compiler-instruments native C and C++ code. Stable Rust 1.97
@@ -59,11 +56,7 @@ Coverage contract:
   * ASan, UBSan, and TSan use the checked-in, sanitizer-specific Masstree
     suppressions described above. Findings matched by those files qualify the
     affected result and are audited by this gate.
-  * Every job finishes with a consistent STO_RMW=ON rebuild, the native ABI
-    history/differential suite, and the full MassTrans non-transactional CTest,
-    including MV insert/growth/cleanup. ASan also runs the two exact MV
-    delete/resurrection CTests. Compile commands must retain READ_MY_WRITES=1
-    and the selected sanitizer instrumentation.
+
 EOF
 }
 
@@ -248,7 +241,6 @@ ubsan_suppressions="${repo_root}/src/masstree/ubsan_suppressions.txt"
 tsan_suppressions="${repo_root}/src/masstree/tsan_suppressions.txt"
 lsan_suppression_sha256=""
 lsan_options=""
-native_abi_lsan_sha256=""
 
 if [[ "${sanitizer}" == "address" ]]; then
     if [[ ! -f "${lsan_suppressions}" || ! -r "${lsan_suppressions}" ||
@@ -468,136 +460,6 @@ run_asan_quarantine_tests() {
     done
 }
 
-# The C++ facade has a different lifetime and feature contract from Rust STO.
-# Keep its reviewed lifetime rules local to this lane, never in the workspace
-# or Rust adapter/cache environment. The OFF checks and full ON suite together
-# preserve both sides of its advertised capability boundary.
-run_native_abi_profile() {
-    local profile="$1"
-    local native_lsan="${repo_root}/src/mako/mako_local_lsan_suppressions.txt"
-    local negative="lost_transaction_buffer_is_reported_with_native_lifetime_rules"
-    local -a platform=()
-    local -a environment=(
-        "${rust_command_environment[@]}"
-        "${workspace_native_environment[@]}"
-        "MAKO_BUILD_DIR=${build_dir}"
-        "MAKO_LOCAL_FAKE_ABI=0"
-        "MAKO_LOCAL_REQUIRE_NATIVE=1"
-        "CARGO_TARGET_DIR=${build_dir}/rust-workspace-target"
-    )
-    if [[ "${rust_compiler_instrumented}" == "1" ]]; then
-        platform=(--target "${rust_target}")
-    fi
-    local -a command=(
-        "${selected_cargo}" test --manifest-path "${repo_root}/crates/Cargo.toml"
-        --locked "${platform[@]}" -p mako-local --all-features
-    )
-    if [[ "${sanitizer}" == "address" ]]; then
-        python3 - "${native_lsan}" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-if path.is_symlink() or not path.is_file():
-    raise SystemExit("native LSan policy must be a regular non-symlink file")
-active = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
-expected = [
-    "leak:Sto::allocate_process_lifetime_transaction",
-    "leak:mako_local_table_open",
-    "leak:DirectRunner::DirectRunner",
-]
-if active != expected:
-    raise SystemExit(f"native LSan roots differ: {active!r}")
-PY
-        local policy_sha
-        policy_sha="$(sha256sum "${native_lsan}")"
-        policy_sha="${policy_sha%% *}"
-        if [[ -n "${native_abi_lsan_sha256}" &&
-              "${policy_sha}" != "${native_abi_lsan_sha256}" ]]; then
-            echo "native LSan policy changed between profiles" >&2
-            return 1
-        fi
-        native_abi_lsan_sha256="${policy_sha}"
-        # Optimized native frames can omit frame pointers. DWARF unwinding
-        # preserves the non-inlined allocation helper without broadening its rule.
-        environment+=(
-            "LSAN_OPTIONS=suppressions=${native_lsan}:print_suppressions=1"
-            "ASAN_OPTIONS=${ASAN_OPTIONS}:fast_unwind_on_malloc=0:malloc_context_size=128"
-        )
-        local negative_log="native-abi-${profile}-lsan-negative"
-        if run_logged "${negative_log}" env "${environment[@]}" \
-                "${command[@]}" --test native_lifetime_lsan -- \
-                "${negative}" --exact --ignored --test-threads=1; then
-            echo "native lifetime rules hid the deliberately lost read buffer" >&2
-            return 1
-        fi
-        python3 - "${build_dir}/sanitizer-logs/${negative_log}.log" "${negative}" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text()
-if f"test {sys.argv[2]} ... ok" not in text:
-    raise SystemExit("native LSan negative-control assertions did not pass")
-if ("ERROR: LeakSanitizer: detected memory leaks" not in text
-        or "lose_owned_read_value" not in text
-        or "ERROR: AddressSanitizer:" in text):
-    raise SystemExit("native LSan negative control did not report the unrelated owned read buffer")
-if re.findall(r"SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked in (\d+) allocation\(s\)", text) != [("1301", "1")]:
-    raise SystemExit("native LSan negative control leaked more than its one owned 1301-byte read buffer")
-print("native lifetime policy preserves the unrelated owned-buffer leak tripwire")
-PY
-    fi
-    if [[ "${profile}" == "point" ]]; then
-        local case
-        for case in \
-            unsupported_scan_profile_is_typed_and_leaves_transaction_active \
-            legacy_no_ryw_builds_still_report_duplicate_write \
-            unwind_abort_and_operation_conflict_leave_worker_reusable; do
-            run_logged "native-abi-point-${case}" env "${environment[@]}" \
-                "${command[@]}" --test transactions -- "${case}" --exact --test-threads=1
-            python3 - "${build_dir}/sanitizer-logs/native-abi-point-${case}.log" "${case}" <<'PY'
-import pathlib
-import sys
-
-if f"test {sys.argv[2]} ... ok" not in pathlib.Path(sys.argv[1]).read_text():
-    raise SystemExit("native point-profile exact test did not execute")
-PY
-        done
-    elif [[ "${profile}" == "rmw" ]]; then
-        environment+=(
-            "MAKO_LOCAL_REQUIRE_DIFFERENTIAL=1"
-            "MAKO_LOCAL_DIFFERENTIAL_DRIVER=${build_dir}/mako_local_differential_driver"
-        )
-        run_logged native-abi-rmw-all-targets env "${environment[@]}" \
-            "${command[@]}" --all-targets -- --test-threads=1
-        python3 - "${build_dir}/sanitizer-logs/native-abi-rmw-all-targets.log" <<'PY'
-import pathlib
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text()
-for name in ("forced_rw_ww_and_phantom_histories_pass_the_advertised_profile",
-             "three_way_deterministic_transactions_agree"):
-    if f"test {name} ... ok" not in text:
-        raise SystemExit(f"required native RMW history/differential test did not execute: {name}")
-PY
-    else
-        echo "unknown native ABI profile: ${profile}" >&2
-        return 1
-    fi
-    if [[ "${sanitizer}" == "address" ]]; then
-        local final_policy_sha
-        final_policy_sha="$(sha256sum "${native_lsan}")"
-        if [[ "${final_policy_sha%% *}" != "${native_abi_lsan_sha256}" ]]; then
-            echo "native LSan policy changed during profile execution" >&2
-            return 1
-        fi
-        echo "native_abi_${profile}_lsan_sha256=${native_abi_lsan_sha256}" >>"${manifest}"
-        echo "native_abi_${profile}_lsan_negative=1301-bytes-one-owned-buffer" >>"${manifest}"
-    fi
-    echo "native_abi_${profile}_gate=passed" >>"${manifest}"
-}
-
 audit_asan_quarantine_skips() {
     local global_list_log="${build_dir}/sanitizer-logs/asan-workspace-test-list.log"
     local quarantine_case
@@ -623,7 +485,6 @@ audit_asan_quarantine_skips() {
             --exclude mako-cache --exclude mako-cache-bench \
             --exclude sto-rocksdb --exclude raft-host \
             --exclude rocksdb-raft-service \
-            --exclude mako-local \
             --all-targets \
             --all-features \
             --locked \
@@ -712,7 +573,7 @@ PY
 
 # An executable can hold only one Rust std, and libmako.a brings two Cargo
 # staticlibs (native sharding, the Raft runtime) into every native executable
-# and into the mako-local test executables. -Zbuild-std rebuilds std inside
+# and into the native Rust test executables. -Zbuild-std rebuilds std inside
 # each Cargo invocation with a crate hash taken from that invocation's profile,
 # so the release archives (sto-tpcc-ffi, native sharding, Raft, rust-lib) and
 # the dev-profile test executables would each carry a different std and fail
@@ -967,7 +828,6 @@ run_logged configure \
         "-DMAKO_RUST_STO_ASAN_QUARANTINE_TESTS:STRING=${asan_quarantine_cmake}" \
         "-DMAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS:STRING=${asan_native_quarantine_cmake}" \
         "-DMAKO_RUST_STO_ASAN_OPTIONS:STRING=${ASAN_OPTIONS:-}" \
-        "-DSTO_RMW:BOOL=OFF" \
         "-DSTO_TPCC_RUST_EXTRA_RUSTFLAGS:STRING=${sto_tpcc_rustflags}"
 
 if ! grep -Fq "${configure_confirmation}" "${build_dir}/sanitizer-logs/configure.log"; then
@@ -1000,11 +860,6 @@ for selector_expectation in \
         exit 1
     fi
 done
-
-if ! grep -Fxq 'STO_RMW:BOOL=OFF' "${build_dir}/CMakeCache.txt"; then
-    echo "default sanitizer phase did not disable the STO read-my-writes profile" >&2
-    exit 1
-fi
 
 configured_workspace_native_link="$(sed -n \
     's/^MAKO_RUST_STO_WORKSPACE_NATIVE_LINK:BOOL=//p' \
@@ -1345,11 +1200,6 @@ if [[ "${workspace_native_link}" == "ON" ]]; then
     )
 fi
 
-rmw_ctest_selection=""
-if [[ "${sanitizer}" == "address" ]]; then
-    rmw_ctest_selection=";exact-test_silo_nontxn_api_sto_rmw_insert_delete;exact-test_silo_nontxn_api_sto_rmw_resurrection_delete"
-fi
-
 manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
 {
     echo "commit=${head_sha}"
@@ -1362,7 +1212,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "cmake_toggle=${cmake_toggle}=1"
     echo "cmake_generator=${generator}"
     echo "cmake_build_type=Release"
-    echo "sto_default_profile=STO_RMW:BOOL=OFF"
+    echo "transaction_backend=rust"
     echo "tmpdir=${TMPDIR}"
     echo "rustc=$("${selected_rustc}" --version)"
     echo "cargo=$("${selected_cargo}" --version)"
@@ -1395,7 +1245,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
         echo "ctest_selection=none-focused-cargo-tests"
     else
-        echo "ctest_selection=exact-masstree-c11-header;exact-silo-runtime-concurrency-lifecycle;exact-silo-critical-default-profile;exact-native-process-lifetime-lifecycle;exact-label-rust${rmw_ctest_selection}"
+        echo "ctest_selection=exact-masstree-c11-header;exact-silo-runtime-concurrency-lifecycle;exact-native-process-lifetime-lifecycle;exact-label-rust"
     fi
     if [[ "${MAKO_SANITIZER_FOCUS:-}" == "cache" ]]; then
         if [[ "${sanitizer}" == "address" ]]; then
@@ -1414,17 +1264,19 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
         echo "suppression_file=${tsan_suppressions}"
         echo "suppression_sha256=$(sha256sum "${tsan_suppressions}" | awk '{print $1}')"
     else
-        echo "result_qualification=checked-in-lsan-root-suppression-for-four-exact-tests;listed-intentional-quarantine-tests-leak-qualified;native-abi-only-process-lifetime-roots"
+        echo "result_qualification=checked-in-lsan-root-suppression-for-six-exact-tests;listed-intentional-quarantine-tests-leak-qualified;native-masstree-constructor-roots"
         echo "suppression_file=${lsan_suppressions}"
         echo "suppression_sha256=${lsan_suppression_sha256}"
         echo "lsan_suppression_rule=leak:mt_tree::mt_tree"
-        echo "lsan_suppression_scope=test_sto_tpcc_rust_slow_exit;test_sto_tpcc_rust_concurrent;test_sto_tpcc_rust_run_resource_exhausted;test_sto_tpcc_rust_concurrent_resource_exhausted"
+        echo "lsan_suppression_scope=test_sto_tpcc_default_slow_exit;test_sto_tpcc_default_multishard_slow_exit;test_sto_tpcc_rust_slow_exit;test_sto_tpcc_rust_concurrent;test_sto_tpcc_rust_run_resource_exhausted;test_sto_tpcc_rust_concurrent_resource_exhausted"
         echo "lsan_options=${lsan_options}"
         echo "lsan_expected_test_sto_tpcc_rust_slow_exit=allocations:4,bytes:1280"
         echo "lsan_expected_test_sto_tpcc_rust_concurrent=allocations:16,bytes:5120"
         echo "lsan_expected_test_sto_tpcc_rust_run_resource_exhausted=allocations:4,bytes:1280"
         echo "lsan_expected_test_sto_tpcc_rust_concurrent_resource_exhausted=allocations:16,bytes:5120"
-        echo "lsan_expected_total=allocations:40,bytes:12800"
+        echo "lsan_expected_test_sto_tpcc_default_slow_exit=allocations:4,bytes:1280"
+        echo "lsan_expected_test_sto_tpcc_default_multishard_slow_exit=allocations:8,bytes:2560"
+        echo "lsan_expected_total=allocations:52,bytes:16640"
         echo "asan_quarantine_test_count=${#asan_quarantine_cases[@]}"
         echo "asan_quarantine_tests=${asan_quarantine_cmake}"
         echo "asan_quarantine_allowlist=${quarantine_allowlist}"
@@ -1437,10 +1289,6 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
         echo "asan_exact_quarantine_leak_detection=disabled"
         echo "asan_ctest_rust_label_leak_detection=enabled"
         echo "asan_ctest_remaining_rust_label_suppressions=none"
-        echo "asan_ctest_native_process_lifetime_lifecycle_leak_detection=disabled-legacy-process-lifetime-backend"
-        echo "asan_ctest_sto_rmw_profile_leak_detection=disabled-process-lifetime-masstree"
-        echo "asan_native_abi_lsan_policy=${repo_root}/src/mako/mako_local_lsan_suppressions.txt"
-        echo "asan_native_abi_leak_detection=enabled"
     fi
 } | tee "${manifest}"
 
@@ -1562,7 +1410,7 @@ actual_clippy_packages = {
 }
 if actual_clippy_packages != expected_clippy_packages:
     raise SystemExit(f"Clippy package selection differs: {actual_clippy_packages!r}")
-for package in ("mako-engine", "mako-engine-sto", "mako-cache", "mako-cache-bench", "mako-local",
+for package in ("mako-engine", "mako-engine-sto", "mako-cache", "mako-cache-bench",
                 "sto-rocksdb", "raft-host", "rocksdb-raft-service"):
     if f"--exclude {package}" not in test_commands[0]:
         raise SystemExit(f"workspace all-features test did not exclude {package}")
@@ -1738,8 +1586,7 @@ if [[ "${sanitizer}" == "address" ]]; then
     run_logged asan-quarantine-tests run_asan_quarantine_tests
 fi
 
-run_native_abi_profile point
-audit_one_rust_std native-abi-point \
+audit_one_rust_std rust-workspace \
     --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}"
 
 ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
@@ -1910,10 +1757,10 @@ required_sources = {
     "src/mako/benchmarks/tpcc.cc",
     "src/mako/lib/server.cc",
     "src/mako/silo_runtime.cc",
-    "src/mako/sto/MassTrans.cc",
-    "src/mako/sto/ReplayDB.cc",
-    "src/mako/sto/ThreadPool.cc",
-    "src/mako/sto/Transaction.cc",
+    "src/mako/runtime/epoch.cc",
+    "src/mako/runtime/ReplayDB.cc",
+    "src/mako/runtime/ThreadPool.cc",
+    "src/mako/runtime/benchmark_thread.cc",
     "src/mako/storage/mtree_abi.cc",
     "src/mako/storage/rust_sto_tpcc_wrapper.cc",
     "tests/mtree_abi_c11_header.c",
@@ -1946,18 +1793,6 @@ for entry in database:
         raise SystemExit(
             f"{relative_source} disables sanitizer coverage in compile_commands.json"
         )
-    if relative_source in {
-        "src/mako/sto/MassTrans.cc",
-        "tests/test_silo_nontxn_api.cc",
-    }:
-        definitions = [
-            token for token in tokens if token.startswith("-DREAD_MY_WRITES=")
-        ]
-        if definitions != ["-DREAD_MY_WRITES=0"]:
-            raise SystemExit(
-                f"{relative_source} has inconsistent default READ_MY_WRITES "
-                f"definitions: {definitions!r}"
-            )
     seen.add(relative_source)
 
 missing = sorted(required_sources - seen)
@@ -1987,19 +1822,13 @@ required = {
     "test_mtree_abi_c11_header",
     "test_rocksdb_interface_lifecycle",
     "test_silo_nontxn_api",
-    "test_silo_nontxn_api_mv_delete_delete_conflict",
-    "test_silo_nontxn_api_mv_delete_update_conflict",
     "test_silo_runtime_concurrency_lifecycle",
-    "test_silo_transaction_install_exception_fail_stop",
-    "test_silo_transaction_set_capacity_exhaustion",
-    "test_silo_transaction_set_exact_chunk_boundary",
-    "test_silo_transitem_lifetime",
     "test_sto_tpcc_ffi_c11_header",
     "test_benchmark_output",
     "test_sto_tpcc_cpp_wrapper_scan_smoke",
     "test_sto_tpcc_cpp_wrapper_smoke",
-    "test_sto_tpcc_cpp_slow_exit",
-    "test_sto_tpcc_cpp_multishard_slow_exit",
+    "test_sto_tpcc_default_slow_exit",
+    "test_sto_tpcc_default_multishard_slow_exit",
     "test_sto_tpcc_rust_slow_exit",
     "test_sto_tpcc_rust_concurrent",
     "test_sto_tpcc_rust_startup_resource_exhausted",
@@ -2053,37 +1882,10 @@ allowed_environment = {
         "MAKO_STO_TPCC_MAX_RETAINED_RECORDS=350000",
         "MAKO_TPCC_WORKLOAD_MIX=100,0,0,0,0"
     ],
-    "test_sto_tpcc_cpp_multishard_slow_exit": [
-        "MAKO_TPCC_WORKLOAD_MIX=0,0,34,33,33"
-    ],
 }
 exact_filters = {
     "test_silo_runtime_concurrency_lifecycle": (
-        "--gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:"
-        "SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:"
-        "SpinBarrierTest.*:MasstreeContextEpochTest.*:MassTransEpochIntegrationTest.*:"
-        "StoThreadIdLifecycleTest.*:StoEpochAdvancerLifecycleTest.*:MakoTimestampTest.*"
-    ),
-    "test_silo_transitem_lifetime": (
-        "--gtest_filter=TransItemLifetimeTest."
-        "ReusedSlotRetainsExactlyOneOwnedExtraString"
-    ),
-    "test_silo_transaction_set_exact_chunk_boundary": (
-        "--gtest_filter=TransactionSetBoundaryTest."
-        "ParticipantAbortCleansExactChunkBoundaries"
-    ),
-    "test_silo_transaction_set_capacity_exhaustion": (
-        "--gtest_filter=TransactionSetBoundaryTest."
-        "CapacityExhaustionFailsClosedInRelease"
-    ),
-    "test_silo_transaction_install_exception_fail_stop": (
-        "--gtest_filter=TransactionCommitFailureTest.InstallExceptionIsFailStop"
-    ),
-    "test_silo_nontxn_api_mv_delete_delete_conflict": (
-        "--gtest_filter=SiloNonTxnApi.ConcurrentMvDeletesOfPresentRowConflict"
-    ),
-    "test_silo_nontxn_api_mv_delete_update_conflict": (
-        "--gtest_filter=SiloNonTxnApi.ConcurrentMvDeleteInvalidatesStagedUpdate"
+        "--gtest_filter=SiloRuntimeTest.ConcurrentGlobalDefaultInitialization:SiloRuntimeLifetimeTest.LazyServicesHaveBoundedTeardown:CoreStorageTest.*:SpinBarrierTest.*:MasstreeContextEpochTest.*:NativeThreadIdTest.*:NativeEpochAdvancerTest.*:NativeEpochGuardTest.*"
     ),
 }
 fail_if_empty_gtests = set(exact_filters) | {
@@ -2135,15 +1937,9 @@ explicit_non_rust_runs = {
     "test_mtree_abi_c11_header",
     "test_rocksdb_interface_lifecycle",
     "test_silo_nontxn_api",
-    "test_silo_nontxn_api_mv_delete_delete_conflict",
-    "test_silo_nontxn_api_mv_delete_update_conflict",
     "test_silo_runtime_concurrency_lifecycle",
-    "test_silo_transaction_install_exception_fail_stop",
-    "test_silo_transaction_set_capacity_exhaustion",
-    "test_silo_transaction_set_exact_chunk_boundary",
-    "test_silo_transitem_lifetime",
-    "test_sto_tpcc_cpp_slow_exit",
-    "test_sto_tpcc_cpp_multishard_slow_exit",
+    "test_sto_tpcc_default_slow_exit",
+    "test_sto_tpcc_default_multishard_slow_exit",
 }
 missing_rust_labels = sorted((required - explicit_non_rust_runs) - rust_names)
 if missing_rust_labels:
@@ -2178,36 +1974,10 @@ run_logged ctest-silo-runtime-concurrency-lifecycle \
     ctest --test-dir "${build_dir}" --output-on-failure \
         --no-tests=error -R '^test_silo_runtime_concurrency_lifecycle$'
 
-# Each critical default-profile regression has a one-test GTest selector and
-# fail-if-empty protection. In particular, the TransItem lifetime case keeps
-# LSan enabled so slot reuse cannot orphan an owned key string.
-run_logged ctest-silo-critical-default-profile \
-    ctest --test-dir "${build_dir}" --output-on-failure \
-        --no-tests=error \
-        -R '^(test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime)$'
-
-# The C++ reference backend, its MassTrans regression, and the local DB facade
-# deliberately retain native STO/Masstree state for process lifetime. Their
-# tests must still run under each native sanitizer. ASan disables only leak
-# reporting for these exact tests; address errors remain fatal and every
-# Rust-labeled CTest retains leak detection.
-if [[ "${sanitizer}" == "address" ]]; then
-    asan_cpp_lifecycle_options="${ASAN_OPTIONS/detect_leaks=1/detect_leaks=0}"
-    if [[ "${asan_cpp_lifecycle_options}" == "${ASAN_OPTIONS}" ]]; then
-        echo "ASAN_OPTIONS must contain detect_leaks=1 before the C++ lifecycle test" >&2
-        exit 1
-    fi
-    run_logged ctest-native-process-lifetime-lifecycle \
-        env ASAN_OPTIONS="${asan_cpp_lifecycle_options}" \
-            ctest --test-dir "${build_dir}" --output-on-failure \
-                --no-tests=error \
-                -R '^(test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit)$'
-else
-    run_logged ctest-native-process-lifetime-lifecycle \
-        ctest --test-dir "${build_dir}" --output-on-failure \
-            --no-tests=error \
-            -R '^(test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit)$'
-fi
+# These public facades now use Rust and must pass with leak detection enabled.
+run_logged ctest-native-facades \
+    ctest --test-dir "${build_dir}" --output-on-failure --no-tests=error \
+        -R '^(test_rocksdb_interface_lifecycle|test_silo_nontxn_api)$'
 
 if [[ "${sanitizer}" == "address" ]]; then
     current_lsan_sha256="$(sha256sum "${lsan_suppressions}" | awk '{print $1}')"
@@ -2217,8 +1987,16 @@ if [[ "${sanitizer}" == "address" ]]; then
     fi
 
     # Passing CTests hide child output unless verbose mode is selected. Run the
-    # only four qualified tests separately so their suppression tables are
+    # only six qualified tests separately so their suppression tables are
     # retained as independently auditable evidence.
+    run_logged ctest-default-slow-exit-lsan \
+        env LSAN_OPTIONS="${lsan_options}" \
+            ctest --test-dir "${build_dir}" --verbose \
+                --no-tests=error -R '^test_sto_tpcc_default_slow_exit$'
+    run_logged ctest-default-multishard-slow-exit-lsan \
+        env LSAN_OPTIONS="${lsan_options}" \
+            ctest --test-dir "${build_dir}" --verbose \
+                --no-tests=error -R '^test_sto_tpcc_default_multishard_slow_exit$'
     run_logged ctest-rust-slow-exit-lsan \
         env LSAN_OPTIONS="${lsan_options}" \
             ctest --test-dir "${build_dir}" --verbose \
@@ -2243,6 +2021,10 @@ if [[ "${sanitizer}" == "address" ]]; then
     fi
 
     python3 - "${manifest}" \
+        "${build_dir}/sanitizer-logs/ctest-default-slow-exit-lsan.log" \
+        test_sto_tpcc_default_slow_exit 4 1280 \
+        "${build_dir}/sanitizer-logs/ctest-default-multishard-slow-exit-lsan.log" \
+        test_sto_tpcc_default_multishard_slow_exit 8 2560 \
         "${build_dir}/sanitizer-logs/ctest-rust-slow-exit-lsan.log" \
         test_sto_tpcc_rust_slow_exit 4 1280 \
         "${build_dir}/sanitizer-logs/ctest-rust-concurrent-lsan.log" \
@@ -2299,8 +2081,8 @@ for index in range(0, len(arguments), 4):
         raise SystemExit(f"{test_name}: LSan rows {rows!r}, expected {expected!r}")
     observed.append((test_name, expected_count, expected_bytes, log.resolve(), hashlib.sha256(log.read_bytes()).hexdigest()))
 
-if (sum(row[1] for row in observed), sum(row[2] for row in observed)) != (40, 12800):
-    raise SystemExit("qualified LSan totals differ from 40 allocations / 12800 bytes")
+if (sum(row[1] for row in observed), sum(row[2] for row in observed)) != (52, 16640):
+    raise SystemExit("qualified LSan totals differ from 52 allocations / 16640 bytes")
 
 with manifest.open("a", encoding="utf-8") as output:
     for test_name, count, byte_count, log, digest in observed:
@@ -2309,8 +2091,8 @@ with manifest.open("a", encoding="utf-8") as output:
         )
         output.write(f"lsan_evidence_{test_name}={log}\n")
         output.write(f"lsan_evidence_{test_name}_sha256={digest}\n")
-    output.write("lsan_observed_total=allocations:40,bytes:12800\n")
-print("verified exact LSan evidence: 40 allocations / 12800 bytes")
+    output.write("lsan_observed_total=allocations:52,bytes:16640\n")
+print("verified exact LSan evidence: 52 allocations / 16640 bytes")
 PY
 
     # Every other Rust-labeled test runs with leak detection enabled and no
@@ -2318,206 +2100,13 @@ PY
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \
             --no-tests=error -L '^rust$' \
-            -E '^(test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted)$'
+            -E '^(test_sto_tpcc_default_slow_exit|test_sto_tpcc_default_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted)$'
 else
     run_logged ctest-rust-boundary \
         ctest --test-dir "${build_dir}" --output-on-failure \
             --no-tests=error -L '^rust$'
 fi
 
-# READ_MY_WRITES changes inline MassTrans definitions. Rebuild the library,
-# direct native control and consumers under one consistent ON profile only
-# after every default-profile gate completes. This is required by the native
-# facade history and three-way differential suites for every sanitizer.
-    run_logged configure-sto-rmw \
-        cmake -S "${repo_root}" -B "${build_dir}" -G "${generator}" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DSTO_RMW=ON
-
-    if ! grep -Fxq 'CMAKE_BUILD_TYPE:STRING=Release' \
-            "${build_dir}/CMakeCache.txt"; then
-        echo "STO_RMW gate lost the Release build type" >&2
-        exit 1
-    fi
-    if ! grep -Fxq 'STO_RMW:BOOL=ON' "${build_dir}/CMakeCache.txt"; then
-        echo "STO_RMW gate did not enable the requested CMake profile" >&2
-        exit 1
-    fi
-    if ! grep -Fxq "${cmake_toggle}:BOOL=ON" "${build_dir}/CMakeCache.txt"; then
-        echo "STO_RMW gate lost the selected sanitizer configuration" >&2
-        exit 1
-    fi
-
-    run_logged build-sto-rmw \
-        cmake --build "${build_dir}" --parallel "${jobs}" \
-            --target test_silo_nontxn_api mako_local_differential_driver -- -k 0
-
-    python3 - "${build_dir}/compile_commands.json" "-fsanitize=${sanitizer}" <<'PY'
-import json
-import pathlib
-import shlex
-import sys
-
-database_path = pathlib.Path(sys.argv[1])
-database = json.loads(database_path.read_text(encoding="utf-8"))
-root = pathlib.Path.cwd().resolve()
-required = (
-    "src/mako/sto/MassTrans.cc",
-    "src/mako/storage/mako_local_abi.cc",
-    "tests/mako_local_differential_driver.cc",
-    "tests/test_silo_nontxn_api.cc",
-)
-for relative in required:
-    source = (root / relative).resolve()
-    matches = [
-        entry
-        for entry in database
-        if pathlib.Path(entry["file"]).resolve() == source
-    ]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"expected one compile command for {relative}, found {len(matches)}"
-        )
-    entry = matches[0]
-    tokens = entry.get("arguments") or shlex.split(entry["command"])
-    definitions = [
-        token for token in tokens if token.startswith("-DREAD_MY_WRITES=")
-    ]
-    if definitions != ["-DREAD_MY_WRITES=1"]:
-        raise SystemExit(
-            f"{relative} has inconsistent READ_MY_WRITES definitions: "
-            f"{definitions!r}"
-        )
-    if sys.argv[2] not in tokens:
-        raise SystemExit(f"{relative} lacks {sys.argv[2]}")
-    if any(
-        token == "-fno-sanitize" or token.startswith("-fno-sanitize=")
-        for token in tokens
-    ):
-        raise SystemExit(
-            f"{relative} disables sanitizer coverage in compile_commands.json"
-        )
-print(f"verified {sys.argv[2]} STO_RMW profile: READ_MY_WRITES=1")
-PY
-
-run_native_abi_profile rmw
-audit_one_rust_std sto-rmw \
-    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}" \
-    --may-dir "${build_dir}"
-
-# The growth fixture composes its own insert, so it belongs to the ON profile.
-# Run the whole existing CTest here rather than dropping its supported cases or
-# introducing another leak qualification. ASan keeps this CTest's established
-# native process-lifetime qualification; other sanitizers retain their options.
-rmw_nontxn_environment=()
-if [[ "${sanitizer}" == "address" ]]; then
-    rmw_nontxn_environment=("ASAN_OPTIONS=${asan_cpp_lifecycle_options}")
-fi
-run_logged ctest-sto-rmw-nontxn \
-    env "${rmw_nontxn_environment[@]}" \
-        ctest --test-dir "${build_dir}" --verbose --no-tests=error \
-            -R '^test_silo_nontxn_api$'
-python3 - "${build_dir}/sanitizer-logs/ctest-sto-rmw-nontxn.log" <<'PY'
-import pathlib
-import re
-import sys
-
-text = pathlib.Path(sys.argv[1]).read_text()
-name = "SiloNonTxnApi.MvInsertedValueCanGrowBeforeCommitOrCleanup"
-if len(re.findall(r"\[\s*RUN\s*\]\s+" + re.escape(name) + r"\s", text)) != 1:
-    raise SystemExit("ON-profile MV growth fixture did not execute exactly once")
-if len(re.findall(r"\[\s*OK\s*\]\s+" + re.escape(name) + r"\s", text)) != 1:
-    raise SystemExit("ON-profile MV growth fixture did not pass exactly once")
-print("verified supported-profile MV growth/commit/abort/delete coverage")
-PY
-{
-    echo "sto_rmw_profile_gate=passed"
-    echo "sto_rmw_profile=STO_RMW:BOOL=ON"
-    echo "sto_rmw_compile_definition=READ_MY_WRITES=1"
-    echo "sto_rmw_sanitizer=-fsanitize=${sanitizer}"
-    echo "sto_rmw_nontxn_gate=passed"
-} >>"${manifest}"
-
-if [[ "${sanitizer}" == "address" ]]; then
-
-    rmw_ctest_json="${build_dir}/sanitizer-logs/ctest-tests-sto-rmw.json"
-    ctest --test-dir "${build_dir}" --show-only=json-v1 >"${rmw_ctest_json}"
-    python3 - "${rmw_ctest_json}" <<'PY'
-import json
-import pathlib
-import sys
-
-tests = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get(
-    "tests", []
-)
-expected = {
-    "test_silo_nontxn_api_sto_rmw_insert_delete": (
-        "--gtest_filter=SiloNonTxnApi.MassTransInsertThenDeleteCancelsInMvMode"
-    ),
-    "test_silo_nontxn_api_sto_rmw_resurrection_delete": (
-        "--gtest_filter=SiloNonTxnApi.MassTransResurrectionThenDeleteIsNetZeroInMvMode"
-    ),
-}
-forbidden_properties = {
-    "DISABLED",
-    "ENVIRONMENT",
-    "ENVIRONMENT_MODIFICATION",
-    "PASS_REGULAR_EXPRESSION",
-    "SKIP_REGULAR_EXPRESSION",
-    "SKIP_RETURN_CODE",
-    "WILL_FAIL",
-}
-
-for name, expected_filter in expected.items():
-    matches = [test for test in tests if test.get("name") == name]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"STO_RMW CTest {name} must be registered exactly once; "
-            f"found {len(matches)}"
-        )
-    test = matches[0]
-    command = test.get("command", [])
-    if not command:
-        raise SystemExit(f"STO_RMW CTest has no resolved command: {name}")
-    if command.count(expected_filter) != 1:
-        raise SystemExit(
-            f"STO_RMW CTest {name} does not select its exact GTest: {command!r}"
-        )
-    if command.count("--gtest_fail_if_no_test_selected") != 1:
-        raise SystemExit(
-            f"STO_RMW CTest {name} lacks one fail-if-empty guard: {command!r}"
-        )
-    properties = {
-        prop.get("name"): prop.get("value")
-        for prop in test.get("properties", [])
-    }
-    forbidden = sorted(forbidden_properties & set(properties))
-    if forbidden:
-        raise SystemExit(
-            f"STO_RMW CTest {name} has coverage-altering properties: "
-            + ", ".join(forbidden)
-        )
-    if "sto-rmw" not in properties.get("LABELS", []):
-        raise SystemExit(f"STO_RMW CTest {name} lost its exact sto-rmw label")
-
-print("verified exact STO_RMW CTest inventory and commands")
-PY
-
-    run_logged ctest-sto-rmw-insert-delete-address \
-        env ASAN_OPTIONS="${asan_cpp_lifecycle_options}" \
-            ctest --test-dir "${build_dir}" --output-on-failure \
-                --no-tests=error \
-                -R '^test_silo_nontxn_api_sto_rmw_insert_delete$'
-    run_logged ctest-sto-rmw-resurrection-delete-address \
-        env ASAN_OPTIONS="${asan_cpp_lifecycle_options}" \
-            ctest --test-dir "${build_dir}" --output-on-failure \
-                --no-tests=error \
-                -R '^test_silo_nontxn_api_sto_rmw_resurrection_delete$'
-    echo "sto_rmw_exact_lifecycle_gate=passed" >>"${manifest}"
-else
-    echo "sto_rmw_exact_lifecycle_gate=not-selected-address-only" >>"${manifest}"
-fi
 
 verify_unwind_config
 

@@ -12,9 +12,9 @@
 
 #include <rocksdb/c.h>
 
-#include "sto/ReplayDB.h"
+#include "runtime/ReplayDB.h"
 #include "mako.hh"
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
 #include "deptran/s_main.h"
 #include "util.h"
 
@@ -59,7 +59,7 @@ static abstract_db* initWithDB_replay() {
     sync_util::sync_logger::Init(0, 1, benchConfig.getNthreads(),
                                   false, "localhost", nullptr);
 
-    abstract_db* db = new mbta_wrapper;
+    abstract_db* db = new rust_sto_tpcc_wrapper;
     db->init();
     return db;
 }
@@ -240,7 +240,7 @@ int main() {
 
     abstract_db* db = initWithDB_replay();
 
-    mbta_wrapper* db_wrapper = dynamic_cast<mbta_wrapper*>(db);
+    rust_sto_tpcc_wrapper* db_wrapper = dynamic_cast<rust_sto_tpcc_wrapper*>(db);
     if (!db_wrapper) {
         fprintf(stderr, "Failed to cast db\n");
         return 1;

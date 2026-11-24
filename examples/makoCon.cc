@@ -24,7 +24,7 @@ import std;
 
 // Global database instance (used by FFI callbacks)
 static mako::DB* g_mako_db = nullptr;
-static mbta_sharded_ordered_index* g_table = nullptr;
+static sharded_ordered_index* g_table = nullptr;
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -127,7 +127,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     }
 
     // Begin a single database transaction for all operations
-    // The local facade translates mbta_wrapper's ambient thread-local state
+    // The local facade translates the Rust adapter's thread-local state
     // into a non-null, thread-affine opaque token.
     void* txn = g_mako_db->BeginTransaction();
 
@@ -151,7 +151,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             if (op.op == TXN_OP_GET) {
                 // GET operation
                 tl_val_buf.clear();
-                mako::Status s = mako::mbta_sharded_Get(g_table, txn, tl_key_buf, tl_val_buf);
+                mako::Status s = mako::sharded_Get(g_table, txn, tl_key_buf, tl_val_buf);
                 if (s.ok()) {
                     result.success = true;
                     if (!tl_val_buf.empty()) {
@@ -169,7 +169,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_SET) {
                 // SET operation - use pre-encoded value (encoded_vals[i] owns the buffer)
-                mako::Status s = mako::mbta_sharded_Put(g_table, txn, tl_key_buf, encoded_vals[i]);
+                mako::Status s = mako::sharded_Put(g_table, txn, tl_key_buf, encoded_vals[i]);
                 result.success = s.ok();
                 if (!s.ok()) {
                     all_success = false;
@@ -182,7 +182,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 // We avoid Get+Delete in same txn to prevent OCC read-write conflict.
                 // data_len=1 signals success to Rust; actual key existence can be
                 // verified by a separate GET after the DEL transaction commits.
-                mako::Status s = mako::mbta_sharded_Delete(g_table, txn, tl_key_buf);
+                mako::Status s = mako::sharded_Delete(g_table, txn, tl_key_buf);
                 result.success = s.ok();
                 result.data_len = s.ok() ? 1 : 0;
                 if (!s.ok()) {

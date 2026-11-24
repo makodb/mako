@@ -221,21 +221,14 @@ SCENARIOS = {
         ],
         "forbidden": NEVER_WHEN_PASSING + [r"^mako_sto_shard_host: first remove owner=0 "],
     },
-    # The C++ storage callbacks, unchanged, on a Rust-engine database.
-    #
-    # The C++ scan finds no MBTA table behind the handle and answers IO (6)
-    # before it looks at a row. Precopy asks the source for its first row and
-    # gets that IO, so the coordinator aborts. Abort makes the destination
-    # clean its stage range, which needs the same scan, so that cleanup fails
-    # and is repeated without end, and the poll answers "pending" for ever
-    # because an abort is reported only after both sides are done.
+    # Rust scan_next is deliberately failed on both owners. The source cannot
+    # copy; destination cleanup also cannot finish, so outcome remains pending.
     "red-baseline": {
         "exit": 1,
         "summary": "FAIL",
-        "ok": ["tick-running"],
+        "ok": BEFORE_MIGRATION,
         "failed": {"outcome-committed": r"outcome=pending$"},
-        "skipped": ["registration-guarded", "open-registered-only", "unentered-thread-refused"]
-                   + AFTER_COMMIT,
+        "skipped": AFTER_COMMIT,
         "stderr": [
             # The source's scan was reached and refused; nothing was put or
             # removed. Without this line "pending" could come from a migration
@@ -245,8 +238,7 @@ SCENARIOS = {
             # at least; it is retried every 20 ms).
             calls(1, scan=r"[1-9]\d+", scan_ok="0", scan_last="6"),
         ],
-        # The Rust storage callbacks are not installed here.
-        "forbidden": [r"^rust_sharding_host: ", r"^mako_sto_shard_host: "],
+        "forbidden": [r"^rust_sharding_host: .*failed"],
     },
 }
 

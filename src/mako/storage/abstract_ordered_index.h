@@ -64,10 +64,28 @@ public:
   // zero.
   virtual bool invoke_bytes(const char *keyp, size_t keylen,
                             const char *valuep, size_t valuelen) {
+    // An arena-backed delivery keeps the historical std::string reference
+    // stable. A raw-byte override still receives invoke_bytes directly.
+    if (arena_delivery_ && arena_delivery_->callback == this) {
+      auto& value = *(*arena_delivery_->arena)();
+      if (valuelen != 0) value.assign(valuep, valuelen);
+      else value.clear();
+      return invoke(keyp, keylen, value);
+    }
     std::string value;
     if (valuelen != 0)
       value.assign(valuep, valuelen);
     return invoke(keyp, keylen, value);
+  }
+
+  // Scope arena ownership to this delivery without changing raw callback
+  // dispatch. Thread-local stacked frames support nested or concurrent scans
+  // and restore the outer frame when a callback throws.
+  bool invoke_arena_bytes(const char* keyp, size_t keylen, const char* valuep,
+                          size_t valuelen, str_arena* arena) {
+    if (!arena) return invoke_bytes(keyp, keylen, valuep, valuelen);
+    ArenaDelivery delivery(this, arena);
+    return invoke_bytes(keyp, keylen, valuep, valuelen);
   }
 
   // Upper bound on the number of records the caller can consume. Backends
@@ -77,6 +95,21 @@ public:
   virtual size_t max_records_hint() const {
     return std::numeric_limits<size_t>::max();
   }
+
+private:
+  struct ArenaDelivery {
+    const oi_scan_callback* callback;
+    str_arena* arena;
+    const ArenaDelivery* previous;
+    ArenaDelivery(const oi_scan_callback* cb, str_arena* storage)
+        : callback(cb), arena(storage), previous(arena_delivery_) {
+      arena_delivery_ = this;
+    }
+    ~ArenaDelivery() { arena_delivery_ = previous; }
+    ArenaDelivery(const ArenaDelivery&) = delete;
+    ArenaDelivery& operator=(const ArenaDelivery&) = delete;
+  };
+  inline static thread_local const ArenaDelivery* arena_delivery_ = nullptr;
 };
 
 // Spellings for the DSL's raw-pointer types (`*mut c_void` etc.).

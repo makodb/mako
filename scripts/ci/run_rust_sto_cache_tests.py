@@ -52,7 +52,7 @@ QUARANTINE = {
 }
 PROFILES = {
     "sto-masstree": ["--all-features", "--lib", "local_version_tests::"],
-    "mako-engine-sto": ["--all-features", "--lib", "--test", "native", "--test", "value_boundaries"],
+    "mako-engine-sto": ["--all-features", "--lib", "--test", "native", "--test", "value_boundaries", "--test", "differential"],
     "mako-cache": ["--no-default-features", "--features", "engine-sto-test-hooks,test-support", "--all-targets"],
 }
 REQUIRED_MASSTREE_SUITES = (
@@ -158,7 +158,7 @@ def main(argv=None) -> int:
         if separate_models:
             model_env = dict(env)
             for name in ("RUSTFLAGS", "RUSTDOCFLAGS", "ASAN_OPTIONS", "LSAN_OPTIONS", "TSAN_OPTIONS", "UBSAN_OPTIONS",
-                         "MAKO_BUILD_DIR", "MAKO_LOCAL_REQUIRE_NATIVE", "MAKO_MTREE_NATIVE_INTEGRATION",
+                         "MAKO_BUILD_DIR", "MAKO_MTREE_NATIVE_INTEGRATION",
                          "MAKO_MTREE_NATIVE_LIB_DIRS", "MAKO_MTREE_NATIVE_LIBS"):
                 model_env.pop(name, None)
             # An explicitly instrumented RocksDB belongs only to sanitizer

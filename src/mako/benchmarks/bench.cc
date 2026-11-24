@@ -20,12 +20,12 @@
 #include "../counter.h"
 #include "../scopedperf.hh"
 #include "../allocator.h"
-#include "sto/Transaction.hh"
+#include "runtime/epoch.hh"
 #include "lib/configuration.h"
 #include "common.h"
 #include "lib/fasttransport.h"
 #include "deptran/s_main.h"
-#include "sto/sync_util.hh"
+#include "runtime/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
 #include "cluster_bootstrap.h"
@@ -49,7 +49,7 @@ using namespace util;
 std::unordered_map<int, mako::ShardClient*> shardClientAll;
 std::mutex shardClientAllMutex;
 // par_id ==> txn
-std::unordered_map<int, Transaction*> shardTxnAll;
+
 
 namespace {
 
@@ -584,7 +584,7 @@ bench_worker::run_body(bool &startup_barrier_entered)
     throttler.end_work();  // End work timing, may sleep if budget exhausted
   }
 #if defined(COCO)
-  shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
+
 #endif
   // clockid_t cid;
   // int s;
@@ -779,7 +779,7 @@ bench_runner::run()
   CoordinatorDrain coordinator_drain(BenchmarkConfig::getInstance());
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
-  Transaction::clear_stats();
+  // Rust transaction statistics are reported by the worker result counters.
   int idx=0;
   worker_barriers_in_use_ = true;
   for (vector<bench_worker *>::const_iterator it = workers.begin();
@@ -927,42 +927,7 @@ bench_runner::run()
     latency_numer_us_remote += workers[i]->get_latency_numer_us_remote();
   }
 
-#if defined(TRACKING_ROLLBACK)
-  vector<uint32_t> fvw;
 
-  if (sync_util::sync_logger::hist_timestamp_vec.find(0) != sync_util::sync_logger::hist_timestamp_vec.end()) { 
-    auto w = sync_util::sync_logger::hist_timestamp_vec[0][0];
-    // w -> timestamp * 10 + epoch
-    mako::benchmark_cerr() << "--- failed shard: " << w << endl;
-    // time in ms; <tput; good tput>; we do this analysis only up to the failure dection point
-    unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> merged_rollback_tracker;
-    for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
-      Transaction * txn = shardTxnAll[i];
-      unordered_map<uint64_t, vector<uint64_t>> rt = txn->rollbacks_tracker;
-
-      for(const auto& it : rt){
-        //cerr << "Key: " << it.first << ", Value: ";
-        //arr2str(it.second);
-        int c = 0;
-        for (const auto& vv : it.second) {
-          if (vv <= w / 10) c++;
-        }
-        merged_rollback_tracker[it.first] = std::make_pair(std::get<0>(merged_rollback_tracker[it.first])+it.second.size(),
-                                                           std::get<1>(merged_rollback_tracker[it.first])+c);
-      }
-    }
-    std::vector<std::pair<uint64_t, std::pair<uint64_t, uint64_t>>> vec(merged_rollback_tracker.begin(), merged_rollback_tracker.end());
-    std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b) {
-      return a.first < b.first;
-    });
-
-    for (const auto& entry : vec) {
-        mako::benchmark_cout()
-            << "Key: " << entry.first << ", Value: (" << entry.second.first
-            << ", " << entry.second.second << ")\n";
-    }
-  }
-#endif
 
 
 

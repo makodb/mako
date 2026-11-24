@@ -6,6 +6,7 @@
 #include "gateway_protocol.h"
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -101,10 +102,11 @@ public:
     static Status Connect(const RemoteOptions& options, RemoteDB** output) {
         if (!output) return Status::InvalidArgument("null database output");
         *output = nullptr;
+        // Connect transfers a conventional delete-owned interface pointer.
+        auto db = std::make_unique<RemoteDB>();
+        db->options_ = options;
         auto* client = mako_gateway_client_new(options.client_id, options.first_sequence);
         if (!client) return Status::InvalidArgument("client_id must be unique with high bit set; sequence must be nonzero");
-        auto db = rusty::make_box<RemoteDB>();
-        db->options_ = options;
         Status status = Status::OK();
         {
             auto state = db->connection_.lock().unwrap();

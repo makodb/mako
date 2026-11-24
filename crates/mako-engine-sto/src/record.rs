@@ -1,8 +1,8 @@
 //! Canonical cache commit records: sizing and allocation-free encoding.
 //!
 //! The framing is [`mako_engine_api::record_format`]; this module produces
-//! exactly the bytes `serialize_cache_record` in `mako_local_abi.cc` produces
-//! for the same operations, so records from either engine replay identically.
+//! the canonical durable bytes for the final operations. Historical records
+//! from the retired engine retain the same framing and replay semantics.
 
 use std::ptr;
 

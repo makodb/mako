@@ -28,7 +28,7 @@ namespace mako {
 /**
  * ITable - Abstract interface for table operations
  *
- * Both local tables (wrapping mbta_sharded_ordered_index) and remote tables
+ * Both local tables (wrapping sharded_ordered_index) and remote tables
  * (RemoteTable) implement this interface.
  */
 // @safe - Pure abstract interface
@@ -101,7 +101,7 @@ public:
     // =========================================================================
     // Non-transactional API (Masstree-shape; docs/storage-interface.md)
     // =========================================================================
-    // On STO/MassTrans, each op is self-contained and immediately visible:
+    // On Rust-backed tables, each op is self-contained and immediately visible:
     // internally it is a one-op OCC transaction on the owning shard, so it uses
     // that backend's normal commit machinery. This interface alone does not
     // certify distributed or replicated publication. No BeginTransaction
@@ -195,7 +195,7 @@ public:
      * @param name - Table name
      * @return Borrowed pointer owned by the database, or nullptr on failure
      *
-     * For local DB: Creates wrapper around mbta_sharded_ordered_index
+     * For local DB: Creates wrapper around sharded_ordered_index
      * For remote DB: Creates RemoteTable proxy
      *
      * Local lookup/creation is metadata-only and does not require a database

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Drive real MBTA/native/srpc nodes; every OK is emitted after engine assertions.
+"""Drive Rust transaction-engine/native/srpc nodes after engine assertions.
 
 This tests native migration, owner-local point I/O, direct local full scans,
-STO timer/cut/cleanup lifetimes, and fixture-only real peer callback barriers.
-Precopy inspection reads actual MBTA bytes; old jobs replay only issued bytes
+Native epoch timer/cut/cleanup lifetimes and real peer callback barriers.
+Precopy inspection reads actual Rust-engine bytes; old jobs replay only issued bytes
 through real srpc. No storage, epochs, or replies are mocked. Each retained
 context lives on its own registered physical worker. The fixture does not start
 dbtest's ordinary FastTransport data plane; mixed scans stop before remote I/O.

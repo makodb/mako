@@ -16,7 +16,7 @@
 
 struct MakoShardHost;
 namespace mako { struct NativeShardingHost; }
-class mbta_sharded_ordered_index;
+class sharded_ordered_index;
 class TxnTpccPaymentCapability;
 class TxnTpccNewOrderCapability;
 class TxnTpccDeliveryCapability;
@@ -103,14 +103,10 @@ public:
   /**
    * Initializes a new txn object the space pointed to by buf
    *
-   * Transaction flags from the retired original-Silo/NDB engine are not
-   * supported. Current C++ STO/MassTrans callers must pass zero.
-   * TxnProfileHint is backend-neutral metadata; the current mbta wrapper
-   * does not use it to alter transaction behavior.
-   *
-   * The return is backend-defined. mbta_wrapper starts ambient thread-local
-   * state and returns nullptr by design; callers must not require a non-null
-   * native result.
+   * Transaction flags from the retired original Silo engine are unsupported;
+   * callers pass zero. TxnProfileHint is backend-neutral metadata.
+   * The Rust adapter returns an opaque thread-affine transaction handle valid
+   * until commit or abort. Callers must pass it to transaction operations.
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
@@ -154,7 +150,7 @@ public:
   virtual void print_txn_debug(void *txn) const {}
 
   /**
-   * maintain a hash ma from table_id to abstract_ordered_index(mbta_ordered_index)
+   * maintain a hash ma from table_id to abstract_ordered_index
    *
    * @param table_id
    * @return Backend-defined pointer, or nullptr when the ID is unknown. The
@@ -165,7 +161,7 @@ public:
 
   /**
    * Historical size-hint open surface. Ownership is backend-defined and callers
-   * must handle nullptr. The current mbta_wrapper retires this overload and
+   * must handle nullptr. The Rust adapter retires this overload and
    * always returns nullptr.
    */
   virtual abstract_ordered_index *
@@ -192,7 +188,7 @@ public:
    * return nullptr; callers must check it. The base implementation is
    * unsupported.
    */
-  virtual mbta_sharded_ordered_index *
+  virtual sharded_ordered_index *
   open_sharded_index(const std::string &name) {
     NDB_UNIMPLEMENTED("open_sharded_index");
   }

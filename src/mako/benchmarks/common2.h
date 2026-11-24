@@ -5,7 +5,7 @@
 // ONLY for dbtest
 #ifndef SILO_STO_COMMON_2_H
 #define SILO_STO_COMMON_2_H
-#include "sto/ThreadPool.h"
+#include "runtime/ThreadPool.h"
 #include <unistd.h>
 #include <cstdlib>
 #include <unordered_map>
@@ -15,8 +15,8 @@
 #include <algorithm>   // For std::copy
 #include <sstream>     // For istringstream
 #include "bench.h"
-#include "sto/ReplayDB.h"
-#include "sto/sync_util.hh"
+#include "runtime/ReplayDB.h"
+#include "runtime/sync_util.hh"
 #include <mutex>
 
 using namespace std;

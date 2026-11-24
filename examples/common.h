@@ -8,7 +8,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <mako.hh>
-#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/sharded_ordered_index.hh"
 
 using namespace std;
 
@@ -106,7 +106,7 @@ std::vector<kv_pair> scan_tables(abstract_db *db, abstract_ordered_index* table)
     return calloc.values;
 }
 
-inline std::vector<kv_pair> scan_tables(abstract_db *db, mbta_sharded_ordered_index* table) {
+inline std::vector<kv_pair> scan_tables(abstract_db *db, sharded_ordered_index* table) {
     str_arena arena;
     void *buf = NULL;
     char WS = static_cast<char>(0);

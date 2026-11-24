@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include "lib/server.h"
-#include "sto/Transaction.hh"
+#include "runtime/epoch.hh"
 #include "storage/rust_sto_tpcc_wrapper.hh"
 
 // Run on an attached owner thread with two distinct, small rows. Drive the
@@ -61,8 +61,8 @@ inline void check_rust_sharding_receiver(rust_sto_tpcc_wrapper& db,
     const auto first = read(first_key, 1);
     check(db.shard_participant_active() && !db.shard_participant_empty(),
           "first read lost its Rust transaction");
-    const auto cut = Transaction::epoch_cut();
-    check(cut != 0 && !Transaction::epoch_drained(cut), "first read lost its epoch pin");
+    const auto cut = mako::EpochRuntime::epoch_cut();
+    check(cut != 0 && !mako::EpochRuntime::epoch_drained(cut), "first read lost its epoch pin");
     const auto second = read(second_key, 2);
     check(first != second, "second read replayed the first row");
     check(read(second_key, 2) == second, "duplicate second read changed its reply");
@@ -79,5 +79,5 @@ inline void check_rust_sharding_receiver(rust_sto_tpcc_wrapper& db,
               && reply.req_nr == number, "receiver fixture abort receipt mismatch");
     }
     check(!mako::sharding_has_request() && db.shard_participant_empty()
-          && Transaction::epoch_drained(cut), "abort left the Rust participant pinned");
+          && mako::EpochRuntime::epoch_drained(cut), "abort left the Rust participant pinned");
 }

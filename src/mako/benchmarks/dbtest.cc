@@ -144,7 +144,10 @@ static void parse_command_line_args(int argc,
 
     case 'E': {
       const string engine(optarg);
-      ALWAYS_ASSERT(engine == "cpp" || engine == "rust");
+      if (engine != "rust") {
+        std::cerr << "--storage-engine only supports rust; the C++ engine was retired\n";
+        std::exit(2);
+      }
       BenchmarkConfig::getInstance().setStorageEngine(engine);
       }
       break;
@@ -547,17 +550,7 @@ main(int argc, char **argv)
   parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
                           site_name, paxos_config_file, local_shards_str, replication_type);
 
-#if defined(MAKO_RUST_STO_TPCC)
   benchConfig.setEmitTpccResult(true);
-#else
-  if (benchConfig.getStorageEngine() != "cpp") {
-    mako::benchmark_cerr()
-        << "[ERROR] This dbtest binary has no Rust STO TPC-C adapter; "
-           "use the sto_tpcc_bench target."
-        << endl;
-    return 2;
-  }
-#endif
 
   // Keep dbtest CLI responsive to process-level termination signals (SIGTERM/SIGINT),
   // which are commonly used by timeout/docker stop/script cleanup flows.
@@ -619,7 +612,6 @@ main(int argc, char **argv)
     benchConfig.setShardIndex(local_shards.front());
   }
 
-#if defined(MAKO_RUST_STO_TPCC)
   // Reject invalid native attachment budgets before allocating the backend.
   // Rust participants use the same shard RPC and replication topology as C++.
   if (benchConfig.getStorageEngine() == "rust") {
@@ -642,7 +634,6 @@ main(int argc, char **argv)
       return 2;
     }
   }
-#endif
 
   warn_if_replicated_role_may_block();
   startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec, startup_timeout_explicit);
@@ -662,13 +653,10 @@ main(int argc, char **argv)
     // would use the wrong transaction context and fail.
     // @safe - The Rust Masstree ABI is bound to the process-global runtime.
     // Retain that same owner so runner/loader binding cannot select a foreign one.
-    const bool rust_backend = benchConfig.getStorageEngine() == "rust";
     rusty::Arc<SiloRuntime> shared_runtime =
-        rust_backend
-            ? SiloRuntime::GlobalDefaultOwner().clone()
-            : SiloRuntime::Create();
+        SiloRuntime::GlobalDefaultOwner().clone();
     Notice("Created shared SiloRuntime %d for multi-shard mode", shared_runtime->id());
-    if (rust_backend) {
+    {
       // @unsafe - Native Masstree uses this runtime's pinned loader arenas.
       SiloRuntime::BindCurrentThread(shared_runtime.as_ptr());
       initialize_benchmark_allocator();

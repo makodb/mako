@@ -1,7 +1,7 @@
 #include <std_compat.hpp>
 #include "mako/lib/server.h"
 #include "mako/lib/table_registry.h"
-#include "mako/sto/Transaction.hh"
+#include "mako/runtime/epoch.hh"
 #include "mako/lib/shardClient.h"
 #include "mako/benchmarks/bench.h"
 #include <rusty/box.hpp>
@@ -90,7 +90,7 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
         || req->coordinate_length > sizeof(req->coordinate)
         || req->coordinate_length > sizeof(ShardingRequest::coordinate)) return;
     // Do not bind over, abort, or finish another live participant's staged work.
-    if (TThread::txn && TThread::txn->has_staged_items()) {
+    if (receiver->db->shard_participant_active() && !receiver->db->shard_participant_empty()) {
         resp->status = ErrorCode::SERVER_BUSY;
         return;
     }
@@ -156,8 +156,8 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
                                                 key, value, &result, &output);
             // Early/busy returns may leave only the helper placeholder alive.
             // Binding acquired its engine guard, so settle it before the read.
-            if (sharding_has_request() && TThread::txn && TThread::txn->in_progress())
-                TThread::txn->silent_abort();
+            if (sharding_has_request() && receiver->db->shard_participant_active())
+                receiver->db->shard_abort_txn(nullptr);
             sharding_finish_request(); // follows actual engine completion
             bound = false;
         }
@@ -182,8 +182,8 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
         // retained unknown result fences the stream instead of guessing success.
         if (bound) {
             try {
-                if (sharding_has_request() && TThread::txn && TThread::txn->in_progress())
-                    TThread::txn->silent_abort();
+                if (sharding_has_request() && receiver->db->shard_participant_active())
+                    receiver->db->shard_abort_txn(nullptr);
                 sharding_finish_request();
             }
             catch (...) { resp->outcome = MAKO_GATEWAY_UNKNOWN; }

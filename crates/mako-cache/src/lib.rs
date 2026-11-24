@@ -1,9 +1,8 @@
 //! Transactional STO write-back cache over RocksDB.
 //!
-//! The selected engine is the authoritative live state while this process
-//! runs. Feature `engine-c-abi` (default) uses C++ STO/MassTrans; `engine-sto`
-//! uses Rust STO over the native C++ Masstree index. Select exactly one engine,
-//! using `default-features = false` when selecting `engine-sto`.
+//! Rust STO is the authoritative live state while this process runs. The
+//! default `engine-sto` feature uses Rust transactions over the native
+//! Masstree index; it is the sole supported transaction backend.
 //!
 //! Before commit, the engine sizes and seals its canonical final write set
 //! while the cache claims bounded capacity in the current worker's SPSC
@@ -582,7 +581,7 @@ impl CacheStatus {
 /// Anything that can go wrong opening or using the transaction cache.
 #[derive(Debug)]
 pub enum Error {
-    /// The native Silo/MassTrans boundary failed.
+    /// The native Masstree boundary failed.
     Native(LocalError),
     /// The backend failed outside the asynchronous application path.
     Backend(BlobError),
@@ -1025,7 +1024,7 @@ impl<B: Blobs + 'static> Cache<B> {
         let worker_slot = CommitFence::try_current_thread_slot()?;
         let lane = self.writeback.lane(worker_slot)?;
         // The cache and table borrows establish the invariants required by
-        // mako-local's build-private trusted Put path. Public cache semantics
+        // the Rust engine's build-private trusted Put path. Public cache semantics
         // are unchanged: reads/scans and conditional mutations still use the
         // checked ABI, and commit retains separate visibility/cleanup results.
         Ok(Transaction {
@@ -2431,7 +2430,7 @@ fn finish_read_only(native: mako_engine::Transaction<'_>) -> Result<(), Error> {
 ///
 /// Returning the preparation error is correct only when native cleanup is
 /// known complete. A cleanup failure quarantines the worker and is the more
-/// severe result, matching mako-local's own fail-closed preflight behavior.
+/// severe result, matching the Rust engine's own fail-closed preflight behavior.
 fn abort_after_precommit_failure(
     native: mako_engine::Transaction<'_>,
     preparation: Error,

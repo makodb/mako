@@ -43,15 +43,14 @@ starting their key schedules separately. A matching aggregate checksum cannot
 hide a mutation applied to the wrong key. Contended MRX and raw RocksDB RMW
 remain weaker baselines and retain aggregate lost-update bounds instead.
 
-## Comparing the transaction engines
+## Comparing Rust builds
 
-The benchmark can select either `engine-c-abi` or `engine-sto`. Build each
-with `--no-default-features`, the explicit engine feature, and a separate
-`CARGO_TARGET_DIR`. The Rust STO build also needs the native Masstree library
-environment used by CMake's `run_mako_engine_sto_tests` target. Both builds
-must use the same verified native source, allocator, compiler settings, and
-RocksDB libraries. Copying a binary to zoo-002 does not make a different
-system library version equivalent.
+The benchmark defaults to the sole `engine-sto` backend. Build revisions with
+separate `CARGO_TARGET_DIR` paths and compare them using the `--baseline` and
+`--candidate` arguments of `scripts/run_mako_engine_compare.py`. Both builds
+need native Masstree linkage and the same allocator, compiler settings and
+RocksDB libraries. The CMake `rust_cache_reopen` target checks persistence with
+a fresh writer, reopen and verification process.
 
 `engine_compare` separates three measurements in fresh processes:
 
@@ -77,15 +76,16 @@ throughput. Neither measurement promises WAL fsync.
 
 ## Zoo-002 acceptance run
 
-Build an optimized, production-profile native tree (`STO_RMW=ON`,
-`OPACITY=OFF`, test hooks disabled), then run from the repository root:
+Build an optimized native tree with test hooks disabled, then run from the repository root:
 
 ```bash
 ssh zoo-002
 cd /home/users/shuai/mako/.claude/worktrees/masstree-rocks
 taskset -c 0-15 env \
   MAKO_BUILD_DIR="$PWD/build_milestone1" \
-  MAKO_LOCAL_REQUIRE_NATIVE=1 \
+  MAKO_MTREE_NATIVE_INTEGRATION=1 \
+  MAKO_MTREE_NATIVE_LIB_DIRS="$PWD/build_milestone1:$PWD/build_milestone1/src/masstree" \
+  MAKO_MTREE_NATIVE_LIBS="static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread" \
   CARGO_TARGET_DIR="$PWD/build_milestone1/cargo-target" \
   cargo run --locked --release --manifest-path crates/Cargo.toml \
     -p mako-cache-bench -- run \
@@ -107,7 +107,9 @@ write-back consumer while leaving CPUs 0-31 to its foreground workers:
 ```bash
 taskset -c 0-31 env \
   MAKO_BUILD_DIR="$PWD/build_milestone1" \
-  MAKO_LOCAL_REQUIRE_NATIVE=1 \
+  MAKO_MTREE_NATIVE_INTEGRATION=1 \
+  MAKO_MTREE_NATIVE_LIB_DIRS="$PWD/build_milestone1:$PWD/build_milestone1/src/masstree" \
+  MAKO_MTREE_NATIVE_LIBS="static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread" \
   CARGO_TARGET_DIR="$PWD/build_milestone1/cargo-target" \
   cargo run --locked --release --manifest-path crates/Cargo.toml \
     -p mako-cache-bench -- run \
@@ -169,7 +171,9 @@ or machine interruption:
 ```bash
 taskset -c 0-15 env \
   MAKO_BUILD_DIR="$PWD/build_milestone1" \
-  MAKO_LOCAL_REQUIRE_NATIVE=1 \
+  MAKO_MTREE_NATIVE_INTEGRATION=1 \
+  MAKO_MTREE_NATIVE_LIB_DIRS="$PWD/build_milestone1:$PWD/build_milestone1/src/masstree" \
+  MAKO_MTREE_NATIVE_LIBS="static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread" \
   CARGO_TARGET_DIR="$PWD/build_milestone1/cargo-target" \
   cargo run --locked --release --manifest-path crates/Cargo.toml \
     -p mako-cache-bench -- run \

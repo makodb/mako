@@ -1,8 +1,9 @@
+#include "benchmarks/benchmark_config.h"
 #include "lib/sharding_admission.h"
 #include "lib/table_registry.h"
-#include "sto/Transaction.hh"
+#include "runtime/epoch.hh"
 #include "storage/abstract_db.h"
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
 #include <limits>
 #include <string_view>
 #include <rusty/vec.hpp>
@@ -13,10 +14,10 @@ import rusty;
 namespace mako {
 // @unsafe - the fixed MBTA engine is the only provider; no virtual no-op fallback.
 void sharding_mark_proxy(FullOrderedIndex* index) {
-    auto* mbta = dynamic_cast<mbta_ordered_index*>(index);
-    if (!mbta || oi_mbta_size(mbta->mbta) != 0)
+    auto* rust = dynamic_cast<rust_sto_tpcc_ordered_index*>(index);
+    if (!rust || rust->size() != 0)
         throw abstract_db::abstract_abort_exception();
-    mbta->set_is_remote(true);
+    rust->mark_sharding_proxy();
 }
 
 // @unsafe - sole constructor for dispatch values crossing legacy engine/RPC code.
@@ -119,19 +120,19 @@ void require(uint32_t status) {
 // A failed read begin releases only this new logical guard, never an engine pin.
 uint32_t begin_context() {
     if (context.revision == std::numeric_limits<uint64_t>::max()) return MAKO_SHARD_RETRY;
-    const auto epoch = Transaction::epoch_enter();
+    const auto epoch = mako::EpochRuntime::epoch_enter();
     if (epoch == 0) return MAKO_SHARD_RETRY;
     const MakoShardRead* read = nullptr;
     const auto status = mako_sharding_read_begin(TThread::get_shard_index(), epoch, &read);
     if (status != MAKO_SHARD_OK) {
-        Transaction::epoch_leave();
+        mako::EpochRuntime::epoch_leave();
         return status;
     }
     uint64_t view_id = 0;
     const auto view_status = mako_sharding_read_view_id(read, &view_id);
     if (view_status != MAKO_SHARD_OK || view_id == 0) {
         mako_sharding_read_end(read);
-        Transaction::epoch_leave();
+        mako::EpochRuntime::epoch_leave();
         return view_status == MAKO_SHARD_OK ? MAKO_SHARD_RETRY : view_status;
     }
     if (context.view_id != view_id) {
@@ -156,7 +157,7 @@ uint32_t begin_context() {
 void release_read() {
     mako_sharding_read_end(context.read);
     context.read = nullptr;
-    Transaction::epoch_leave();
+    mako::EpochRuntime::epoch_leave();
 }
 // @unsafe - identity allocation for the fixed-membership, no-restart worker stream.
 void begin_local() {
@@ -177,7 +178,7 @@ void begin_local() {
     context.received_admitted = false;
     require(begin_context());
     context.open = true;
-    context.engine = TThread::txn && TThread::txn->has_epoch();
+    // Rust explicitly calls sharding_engine_start after beginning its attempt.
 }
 // @unsafe - all physical effects, remote terminal work and logical retries ended.
 void finish() {
@@ -443,7 +444,7 @@ FullOrderedIndex* sharding_physical_handle(const ShardingRequest& request) {
 bool sharding_enter_native_kernel() {
     if (context.native_kernel || context.replication_replay || context.open
         || context.engine || context.received || context.pins
-        || (TThread::txn && TThread::txn->in_progress())) return false;
+        || rust_sto_tpcc_wrapper::current_transaction_active()) return false;
     context.native_kernel = true;
     return true;
 }
@@ -677,20 +678,6 @@ bool sharding_bind_request(const ShardingRequest& request) {
         context.received_admitted = false;
     }
     context.received = true;
-    if (TThread::txn && TThread::txn->in_progress()) {
-        try {
-            // Idle helper resets deliberately do not own an engine epoch yet.
-            TThread::txn->ensure_epoch();
-        } catch (...) {
-            if (opened) {
-                release_read();
-                context.open = false;
-                context.received = false;
-            }
-            return false;
-        }
-        context.engine = true;
-    }
     if (!same_request(request, context.incoming)) {
         if (!opened) {
             if (context.revision == std::numeric_limits<uint64_t>::max()) return false;
@@ -751,7 +738,7 @@ void sharding_finish_request() {
 ShardingReplicationReplay::ShardingReplicationReplay() {
     if (context.native_kernel || context.replication_replay || context.open
         || context.engine || context.received || context.pins || TThread::mode() != 0
-        || (TThread::txn && TThread::txn->in_progress()))
+        || rust_sto_tpcc_wrapper::current_transaction_active())
         throw abstract_db::abstract_abort_exception();
     if (mako_sharding_enabled())
         require(mako_sharding_replication_replay(
@@ -760,7 +747,7 @@ ShardingReplicationReplay::ShardingReplicationReplay() {
 }
 // @unsafe - an exceptional replay must finish physical cleanup in its own lane.
 ShardingReplicationReplay::~ShardingReplicationReplay() {
-    if (TThread::txn) TThread::txn->silent_abort();
+    rust_sto_tpcc_wrapper::abort_current_thread_transaction();
     context.replication_replay = false;
 }
 // @unsafe - pin the logical operation, not an individual OCC attempt.

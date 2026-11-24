@@ -34,7 +34,7 @@ def checked_machine(baseline):
 
 
 def validate_cell(protocol, drained, verified, arm, workers, seconds, worker_cpus=None, writeback_cpu=32):
-    engine = "sto" if arm == "sto" else "mako-local/sto-masstrans"
+    engine = "sto"
     worker_cpus = list(range(workers)) if worker_cpus is None else worker_cpus
     expected = {"version": 2, "engine": engine, "workers": workers,
                 "seconds": seconds, "keys_per_worker": 256,
@@ -165,8 +165,8 @@ def execute(command, directory, phase, timeout, baseline):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--c-abi", type=Path, required=True)
-    parser.add_argument("--sto", type=Path, required=True)
+    parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, nargs="+", default=[1, 4, 8, 16, 32])
     parser.add_argument("--worker-cpus", type=parse_worker_cpus,
@@ -206,7 +206,7 @@ def main():
             parser.error(f"requested CPUs unavailable: {sorted(required - allowed)}")
     except (OSError, ValueError) as error:
         parser.error(f"cannot establish CPU placement: {error}")
-    binaries = {"c-abi": args.c_abi.resolve(strict=True), "sto": args.sto.resolve(strict=True)}
+    binaries = {"baseline": args.baseline.resolve(strict=True), "candidate": args.candidate.resolve(strict=True)}
     with open("/var/tmp/mako-zoo2-perf-shuai.lock", "r") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         baseline = machine()
@@ -226,7 +226,7 @@ def main():
         planned = [(repetition, workers, arm)
                    for repetition in range(1, args.repetitions + 1)
                    for workers in args.workers
-                   for arm in (["c-abi", "sto"] if repetition % 2 else ["sto", "c-abi"])]
+                   for arm in (["baseline", "candidate"] if repetition % 2 else ["candidate", "baseline"])]
         results = load_resume(args.output, protocol, planned) if args.resume else []
         if args.resume:
             fd, attempt = tempfile.mkstemp(prefix="resume-", suffix=".json", dir=args.output)
@@ -242,7 +242,7 @@ def main():
             write_json(args.output / "protocol.json", protocol)
         completed = {(result["repetition"], result["workers"], result["arm"]) for result in results}
         for repetition in range(1, args.repetitions + 1):
-            arms = ["c-abi", "sto"] if repetition % 2 else ["sto", "c-abi"]
+            arms = ["baseline", "candidate"] if repetition % 2 else ["candidate", "baseline"]
             for workers in args.workers:
                 for arm in arms:
                     if (repetition, workers, arm) in completed:

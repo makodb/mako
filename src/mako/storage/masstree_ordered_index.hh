@@ -26,10 +26,8 @@
  *
  * Thread contract: same per-thread bring-up as the rest of the engine
  * (masstree threadinfo + RCU registration — scoped_db_thread_ctx or an
- * mbta-style thread_init covers it).
+ * benchmark thread_init covers it).
  *
- * INCLUDE ORDER: before any header pulling sto/MassTrans.hh
- * (`#define RCU 1` vs imstring.h's template parameter).
  */
 
 #include "mako/masstree_btree.h"  // concurrent_btree

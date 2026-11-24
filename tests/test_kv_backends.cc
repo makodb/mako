@@ -5,8 +5,8 @@
 // construction time:
 //
 //     masstree_ordered_index      plain Masstree, no transactions
-//     mbta_ordered_index          Silo (one-op OCC txn per op)
-//     mbta_sharded_ordered_index  Mako routing over per-key tables
+//     rust_sto_tpcc_ordered_index Rust (one-op OCC txn per op)
+//     sharded_ordered_index  Mako routing over per-key tables
 //
 // Two proofs:
 //   1. TYPED_TEST over factory tags — the SAME test body runs against
@@ -19,7 +19,7 @@
 //      vocabulary.
 //
 // Values are RAW BYTES per the interface contract: backends needing a
-// storage encoding (mbta's EXTRA_BITS) apply it internally.
+// storage encoding (the application metadata trailer) apply it internally.
 //
 // Scan boundary keys are chosen strictly BETWEEN stored keys so the
 // expected result set is identical under any inclusive/exclusive
@@ -28,11 +28,9 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-// masstree_ordered_index must precede mbta_wrapper (MassTrans's
-// `#define RCU 1` vs imstring.h's template parameter).
 #include "storage/masstree_ordered_index.hh"
-#include "storage/mbta_wrapper.hh"
-#include "storage/mbta_sharded_ordered_index.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
+#include "storage/sharded_ordered_index.hh"
 
 #include <gtest/gtest.h>
 
@@ -40,28 +38,25 @@ import std;
 
 namespace {
 
-using mbta_type = mbta_table;
-
-std::atomic<int> g_tid_counter{0};
 std::atomic<long> g_table_id{7000};
-
-// Per-thread Silo/Masstree bring-up — the same minimal contract
-// test_silo_nontxn_api.cc uses. One shared storage runtime serves all
-// three backends, so one init covers them (masstree_ordered_index
-// needs the threadinfo/RCU part).
+rust_sto_tpcc_wrapper& database() {
+    static auto* db = [] {
+        auto& config = BenchmarkConfig::getInstance();
+        config.setConfig(nullptr);
+        config.setNthreads(1);
+        config.setNshards(1);
+        config.setShardIndex(0);
+        config.setIsReplicated(0);
+        config.setPaxosProcName(mako::LOCALHOST_CENTER);
+        auto* result = new rust_sto_tpcc_wrapper;
+        result->init();
+        return result;
+    }();
+    return *db;
+}
 void engine_thread_init() {
-    static thread_local bool done = false;
-    if (done) return;
-    done = true;
-    static std::once_flag once;
-    std::call_once(once, [] { mbta_type::static_init(); });
-    TThread::set_id(g_tid_counter.fetch_add(1));
-    TThread::set_mode(0);
-    TThread::readset_shard_bits = 0;
-    TThread::writeset_shard_bits = 0;
-    TThread::transget_without_throw = false;
-    TThread::transget_without_stable = false;
-    mbta_type::thread_init();
+    static thread_local bool attached = false;
+    if (!attached) { database().thread_init(true); attached = true; }
 }
 
 // A scan_callback that collects (key, value) pairs and optionally
@@ -90,16 +85,16 @@ struct MasstreeBackend {
     }
     static const char* prefix() { return "mt"; }
 };
-struct SiloBackend {
+struct RustBackend {
     static OrderedIndex* make(const std::string& name) {
-        return mbta_index_build(name, g_table_id.fetch_add(1));
+        return database().open_index(name);
     }
-    static const char* prefix() { return "silo"; }
+    static const char* prefix() { return "rust"; }
 };
 struct MakoBackend {
     static OrderedIndex* make(const std::string& name) {
-        auto* local = mbta_index_build(name, g_table_id.fetch_add(1));
-        return new mbta_sharded_ordered_index(
+        auto* local = database().open_index(name);
+        return new sharded_ordered_index(
             name, std::vector<abstract_ordered_index*>{local});
     }
     static const char* prefix() { return "mako"; }
@@ -118,7 +113,7 @@ protected:
     }
 };
 
-using Backends = ::testing::Types<MasstreeBackend, SiloBackend, MakoBackend>;
+using Backends = ::testing::Types<MasstreeBackend, RustBackend, MakoBackend>;
 TYPED_TEST_SUITE(KvBackends, Backends);
 
 // ---------------------------------------------------------------------------
@@ -261,7 +256,7 @@ void exercise_any_backend(OrderedIndex* t) {
 TEST(KvBackendSwitch, OneFunctionServesAllThree) {
     engine_thread_init();
     exercise_any_backend(MasstreeBackend::make("switch_mt"));
-    exercise_any_backend(SiloBackend::make("switch_silo"));
+    exercise_any_backend(RustBackend::make("switch_silo"));
     exercise_any_backend(MakoBackend::make("switch_mako"));
 }
 

@@ -1,14 +1,24 @@
-# Original Silo transaction engine: removed
+# Retired C++ transaction engines
 
 The original Silo transaction engine has been removed from this directory.
 It is not a supported Mako backend.
 
-Production Mako uses this path:
+Production Mako uses Rust as its sole transaction engine:
 
 ```
-dbtest -> mbta_wrapper -> MassTrans -> Sto::start_transaction()
-       -> Sto::try_commit()
+dbtest / applications / RPC -> rust_sto_tpcc_wrapper -> sto-tpcc-ffi
+                            -> sto-core + sto-masstree
+mako-cache -> mako-engine -> mako-engine-sto -> sto-core + sto-masstree
 ```
+
+`--storage-engine=rust` remains accepted; omitting it selects Rust. Requests
+for `cpp` fail. The C++ `Transaction`, `MassTrans`, `mbta_wrapper`, native
+sharding storage backend, and `mako-local` / `mako-local-sys` crates were
+removed during retirement on 2026-11-23. Their last pre-retirement revision is
+`0d26e2e0b`. Runtime interfaces formerly colocated with that engine now live
+under `src/mako/runtime/`; they do not instantiate a C++ transaction.
+
+The older Silo removal is recorded below.
 
 The removed transaction plane consisted of:
 
@@ -32,13 +42,27 @@ assertion). The last commit that has them is `fd3ed37e1`; read one with
 `git show fd3ed37e1:src/mako/<file>`.
 
 Do not retire code merely because its name contains `Silo`. The following
-support remains live and is used by STO/MassTrans:
+support remains live and is used by Rust applications and Masstree:
 
 - `SiloRuntime`
 - allocator, core, RCU, thread, and ticker support
 - `masstree_btree.h` and the current Masstree library
-- `src/mako/sto` files in the configured production dependency closure
-- `src/mako/storage/mbta_wrapper.hh`
+- `src/mako/runtime` epoch, worker, replay and RPC support
+- `src/mako/storage/rust_sto_tpcc_wrapper.hh`
 
 Paxos and Raft select replication protocols only; neither selects the old
 transaction engine.
+
+Run checks inside the build container:
+
+```sh
+cmake --build build --target rust_sto_transaction_tests  # in-memory datatypes
+cmake --build build --target rust_masstree_tests         # native tree boundary
+cmake --build build --target rust_sto_cache_integration  # adapter + cache + model
+cmake --build build --target rust_cache_reopen           # fresh-process recovery
+ctest --test-dir build --output-on-failure --no-tests=error -L rust
+```
+
+Native application tests, sharding fixtures, and protocol tests use the Rust
+adapter. The retained transaction corpus is replayed against an independent
+ordered-map model, with no executable reference to the retired engine.

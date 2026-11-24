@@ -10,11 +10,11 @@
 #include <sstream>
 #include <vector>
 #include <cstdint>
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
 #include <examples/common.h>
 #include "storage/abstract_db.h"
 #include "storage/abstract_ordered_index.h"
-#include "sto/StringWrapper.hh"
+
 
 class abstract_db;
 class FullOrderedIndex;

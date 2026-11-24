@@ -1,17 +1,13 @@
 //! The Mako cache's local engine, implemented over the native Rust STO.
 //!
-//! This crate is the second implementation of the [`mako_engine_api`]
-//! contract. Where `mako-local` drives the C++ STO/MassTrans engine through
-//! the `mako_local_*` C ABI, this crate drives `sto-core` transactions over
-//! `sto-masstree` tables directly, mints Mako timestamps from `mako-clock`,
-//! and encodes cache commit records in Rust. Every type re-exported here
-//! carries the same name as its `mako-local` counterpart so the cache can be
-//! compiled against either engine through the `mako-engine` facade.
+//! This crate implements the [`mako_engine_api`] contract using `sto-core`
+//! transactions over `sto-masstree` tables, Mako timestamps from `mako-clock`,
+//! and cache commit records encoded in Rust. `mako-engine` re-exports this
+//! implementation for cache callers.
 //!
 //! # Protocol parity
 //!
-//! The commit terminals reproduce the C++ validation-gate protocol rule for
-//! rule, using `sto-core`'s [`sto_core::CommitHook`] seams:
+//! The commit terminals implement the validation-gate protocol using `sto-core`'s [`sto_core::CommitHook`] seams:
 //!
 //! - `reserve_upper_metadata` (write set locked) enters the general
 //!   certification gate for general-profile commits;

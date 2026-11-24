@@ -210,7 +210,7 @@ fn install_native_observer(point: Point) {
         mako_engine::features()
             .expect("read native crash-hook capability")
             .test_commit_observer(),
-        "native crash case requires MAKO_LOCAL_TEST_HOOKS"
+        "native crash case requires the engine-sto-test-hooks Cargo feature"
     );
     mako_engine::install_test_commit_observer(observe_native_commit)
         .expect("install native commit observer");
@@ -624,7 +624,7 @@ fn process_crash_matrix_recovers_only_whole_transactions() {
     let require_native_observer = env::var_os(REQUIRE_NATIVE_HOOKS_ENV).is_some();
     assert!(
         native_observer || !require_native_observer,
-        "{REQUIRE_NATIVE_HOOKS_ENV} requires a native build configured with MAKO_LOCAL_TEST_HOOKS=ON"
+        "{REQUIRE_NATIVE_HOOKS_ENV} requires a native build configured with the engine-sto-test-hooks Cargo feature"
     );
     if !native_observer {
         eprintln!(

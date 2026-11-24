@@ -14,7 +14,7 @@
 #include "lib/fasttransport.h"
 #include "lib/server.h"
 #include "deptran/s_main.h"
-#include "sto/Interface.hh"
+#include "runtime/worker_context.hh"
 #include "spinbarrier.h"
 
 

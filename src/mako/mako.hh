@@ -26,11 +26,9 @@
 #include "util.h"
 
 #include "benchmarks/bench.h"
-#include "sto/sync_util.hh"
-#include "storage/mbta_wrapper.hh"
-#if defined(MAKO_RUST_STO_TPCC)
+#include "runtime/sync_util.hh"
 #include "storage/rust_sto_tpcc_wrapper.hh"
-#endif
+#include "runtime/benchmark_thread.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"
@@ -120,13 +118,9 @@ static void print_system_info()
 // @unsafe - Construct the configured backend at the native ownership boundary.
 static abstract_db* make_benchmark_db() {
   const auto &engine = BenchmarkConfig::getInstance().getStorageEngine();
-#if defined(MAKO_RUST_STO_TPCC)
-  if (engine == "rust")
-    return new rust_sto_tpcc_wrapper;
-#endif
-  if (engine != "cpp")
-    throw std::runtime_error("unsupported storage engine: " + engine);
-  return new mbta_wrapper;
+  if (engine != "rust")
+    throw std::runtime_error("the C++ transaction backend is retired; use rust");
+  return new rust_sto_tpcc_wrapper;
 }
 
 // Initialize database for a specific shard (multi-shard mode)
@@ -744,11 +738,6 @@ static void wait_for_termination()
 static void setup_sync_util_callbacks()
 {
   // Invoke get_epoch function
-  register_sync_util([&]() {
-    return BenchmarkConfig::getInstance().getIsReplicated()? get_epoch(): 0;
-  });
-
-  // rpc client
   register_sync_util_sc([&]() {
     return BenchmarkConfig::getInstance().getIsReplicated()? get_epoch(): 0;
   });

@@ -1,25 +1,15 @@
-//! The local-engine differential corpus and its executors.
-//!
-//! One deterministic corpus of transaction scripts is replayed by every
-//! executor that claims to implement Mako's local transaction contract: the
-//! C++ engine called directly, the C++ engine behind the `mako_local_*` C ABI,
-//! the safe Rust facade over that ABI, and the native Rust STO engine. Every
-//! executor emits the same transcript format, and the tests compare those
-//! transcripts byte for byte. This crate holds the corpus model, its parser
-//! and generators, a transcript replay generic over [`EngineDb`], and the
-//! subprocess helpers the tests share.
+//! Transaction corpus, independent ordered-map specification, and Rust engine replay.
 
 #![forbid(unsafe_code)]
 
 pub mod history;
+mod reference;
+pub use reference::replay_reference;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::io::{Read, Write as _};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 use mako_engine_api::{EngineDb, EngineTransaction, Features, MAX_KEY_BYTES};
 
@@ -27,16 +17,10 @@ use mako_engine_api::{EngineDb, EngineTransaction, Features, MAX_KEY_BYTES};
 pub const CORPUS_HEADER: &str = "mako-local-differential-v1";
 /// First line of every transcript.
 pub const TRANSCRIPT_HEADER: &str = "mako-local-transcript-v1";
-/// Environment variable naming the C++ differential driver executable.
-pub const DRIVER_ENV: &str = "MAKO_LOCAL_DIFFERENTIAL_DRIVER";
-/// Environment variable that makes a missing driver a failure, not a skip.
-pub const REQUIRED_ENV: &str = "MAKO_LOCAL_REQUIRE_DIFFERENTIAL";
 /// Environment variable pointing at a retained corpus to replay verbatim.
 pub const REPLAY_ENV: &str = "MAKO_LOCAL_DIFF_REPLAY";
 /// Environment variable selecting one generator seed.
 pub const SEED_ENV: &str = "MAKO_LOCAL_DIFF_SEED";
-/// Environment variable the C++ driver reads to corrupt one operation.
-pub const INJECT_ENV: &str = "MAKO_LOCAL_DIFF_INJECT_OP";
 /// Environment variable naming where failure artifacts are retained.
 pub const ARTIFACT_DIR_ENV: &str = "MAKO_LOCAL_DIFF_ARTIFACT_DIR";
 
@@ -1031,132 +1015,6 @@ pub fn generated_corpus(fixture: &str) -> Result<String, String> {
     Ok(corpus)
 }
 
-/// Run `command` with `input` on stdin, draining both output pipes, with a
-/// 120-second timeout.
-pub fn run_with_input(command: &mut Command, input: &[u8]) -> Result<Output, String> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to spawn {command:?}: {error}"))?;
-    let mut stdin = child.stdin.take().expect("piped stdin");
-    let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut stderr = child.stderr.take().expect("piped stderr");
-    let input = input.to_vec();
-    // Drain both output pipes concurrently with corpus delivery. Large binary
-    // values deliberately make every direction exceed a typical pipe buffer.
-    let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let stdout_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).map(|_| bytes)
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let status = loop {
-        match child
-            .try_wait()
-            .map_err(|error| format!("failed to poll {command:?}: {error}"))?
-        {
-            Some(status) => break status,
-            None if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = writer.join();
-                let stdout = stdout_reader
-                    .join()
-                    .ok()
-                    .and_then(Result::ok)
-                    .unwrap_or_default();
-                let stderr = stderr_reader
-                    .join()
-                    .ok()
-                    .and_then(Result::ok)
-                    .unwrap_or_default();
-                return Err(format!(
-                    "{command:?} exceeded the 120-second timeout\npartial stdout:\n{}\npartial stderr:\n{}",
-                    String::from_utf8_lossy(&stdout),
-                    String::from_utf8_lossy(&stderr)
-                ));
-            }
-        }
-    };
-    let write_result = writer
-        .join()
-        .map_err(|_| format!("stdin writer panicked for {command:?}"))?;
-    if let Err(error) = write_result {
-        if status.success() {
-            return Err(format!("failed to feed {command:?}: {error}"));
-        }
-        // A parser/native failure may close stdin early. Preserve its captured
-        // status and diagnostics rather than replacing them with BrokenPipe.
-    }
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| format!("stdout reader panicked for {command:?}"))?
-        .map_err(|error| format!("failed to read stdout for {command:?}: {error}"))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| format!("stderr reader panicked for {command:?}"))?
-        .map_err(|error| format!("failed to read stderr for {command:?}: {error}"))?;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-/// Return a successful child's stdout, relaying its stderr, or a diagnostic.
-pub fn checked_stdout(label: &str, output: Output) -> Result<Vec<u8>, String> {
-    if output.status.success() {
-        // Sanitizer suppression summaries are emitted on stderr even for a
-        // successful child. Relay them so `cargo test -- --nocapture` retains
-        // the reviewed LSan root counts in the gate transcript.
-        if !output.stderr.is_empty() {
-            eprintln!(
-                "--- {label} stderr ---\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        Ok(output.stdout)
-    } else {
-        Err(format!(
-            "{label} exited with {}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    }
-}
-
-/// Run the C++ driver in `mode` (`direct` or `abi`) over `corpus`.
-pub fn run_cpp(driver: &Path, mode: &str, corpus: &[u8]) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(driver);
-    command.arg(mode).env_remove(INJECT_ENV);
-    let output = run_with_input(&mut command, corpus)?;
-    checked_stdout(&format!("C++ {mode} runner"), output)
-}
-
-/// Run the C++ driver with one operation's result deliberately corrupted.
-pub fn run_cpp_injected(
-    driver: &Path,
-    mode: &str,
-    corpus: &[u8],
-    operation: usize,
-) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(driver);
-    command.arg(mode).env(INJECT_ENV, operation.to_string());
-    let output = run_with_input(&mut command, corpus)?;
-    checked_stdout(&format!("injected C++ {mode} runner"), output)
-}
-
 static TEMP_ORDINAL: AtomicU64 = AtomicU64::new(0);
 
 /// Create a fresh artifact directory under `MAKO_LOCAL_DIFF_ARTIFACT_DIR` or
@@ -1204,25 +1062,6 @@ pub fn first_difference(left: &[u8], right: &[u8]) -> String {
     format!(
         "first difference at byte {offset}, line {left_line}:\n  left:  {left_record}\n  right: {right_record}"
     )
-}
-
-/// Locate the C++ driver, or explain why the differential is skipped.
-///
-/// Returns `Ok(None)` when the driver is not configured and not required.
-pub fn driver_path() -> Result<Option<PathBuf>, String> {
-    match std::env::var_os(DRIVER_ENV) {
-        Some(path) => {
-            let path = PathBuf::from(path);
-            if !path.is_file() {
-                return Err(format!("differential driver is missing: {path:?}"));
-            }
-            Ok(Some(path))
-        }
-        None if std::env::var_os(REQUIRED_ENV).is_some() => {
-            Err(format!("{REQUIRED_ENV} is set but {DRIVER_ENV} is missing"))
-        }
-        None => Ok(None),
-    }
 }
 
 #[cfg(test)]

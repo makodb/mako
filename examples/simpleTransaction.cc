@@ -261,7 +261,7 @@ void run_tests(abstract_db *db) {
 }
 
 int main() {
-    abstract_db *db = new mbta_wrapper;
+    abstract_db *db = new rust_sto_tpcc_wrapper;
     db->init() ;
     printf("=== Mako Transaction Tests  ===\n");
 

@@ -1,3 +1,4 @@
+#include "lib/shardClient.h"
 // Rust-engine sharding storage fixture: one raw range migrates between two
 // colocated owners of one process whose database is the Rust transaction
 // engine, through the real sharding crate and the real srpc admin path.
@@ -49,10 +50,9 @@
 //   aborted       As pinned, but the migration is aborted while it waits. The
 //                 expected outcome is "aborted": the source keeps every row
 //                 and the destination's stage range is emptied.
-//   red-baseline  The C++ storage callback table, unchanged, on a Rust-engine
-//                 database, with both table handles registered directly. This
-//                 is the defect the Rust storage callbacks remove, and its
-//                 expected result is the failure.
+//   red-baseline  The Rust callback table with scan_next forced to return IO.
+//                 Both migration and cleanup must remain pending; the driver
+//                 requires the resulting failed check.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +66,7 @@
 #include "lib/common.h"
 #include "lib/configuration.h"
 #include "silo_runtime.h"
-#include "storage/mbta_wrapper.hh"
+#include "storage/rust_sto_tpcc_wrapper.hh"
 #include "storage/rust_sto_tpcc_wrapper.hh"
 #include "storage/rust_sto_sharding_host.hh"
 #include "rust_sharding_receiver_fixture.hh"
@@ -87,12 +87,14 @@ constexpr uint64_t kDrainAnswersWanted = 5;
 const char kRawName[] = "rs_raw";
 const MakoShardTxn kNonce{0x5253545348415244ULL, 1};
 
+bool fail_migration_scan = false;
+
 enum class Scenario { red_baseline, migrate, pinned, deleted_keys, aborted, warehouses };
 
 // What a scenario does differently from `migrate`.
 struct Shape {
-    // false keeps the C++ callback table: the defect of red-baseline.
-    bool rust_callbacks;
+    // Inject a failed Rust scan; the driver must reject the migration.
+    bool fail_scan;
     // 5,000 deleted keys below the first live row of the range, on both owners.
     bool tombstones;
     // An admitted writer keeps its epoch through the drain loop.
@@ -186,10 +188,10 @@ const char* const kAfterAbortChecks[] = {
 
 // @safe - the scenario's differences from `migrate`.
 Shape shape_of(Scenario scenario) {
-    Shape shape{true, false, false, false, false, std::string(), "n", 60};
+    Shape shape{false, false, false, false, false, std::string(), "n", 60};
     switch (scenario) {
         case Scenario::red_baseline:
-            shape.rust_callbacks = false;
+            shape.fail_scan = true;
             // Its expected result is "not committed".
             shape.wait_seconds = 15;
             break;
@@ -444,8 +446,8 @@ void load_tombstones(unsigned owner, char prefix, size_t live_rows) {
                         + " was not present when deleted");
 }
 
-// @unsafe - point reads through the adapter on the loader thread. The C++
-// scan answers IO before it looks at any row, so without this the baseline
+// @unsafe - point reads through the adapter on the loader thread. The injected
+// scan answers IO before it looks at any row, so without this the negative control
 // would fail the same way over tables that were never loaded.
 void require_loaded(unsigned owner, const rusty::Vec<Row>& rows) {
     const std::string who = "owner " + std::to_string(owner);
@@ -512,6 +514,8 @@ uint32_t fx_scan_next(void* context, uint64_t table, MakoShardBytes lo, uint32_t
                       MakoShardBytes hi, uint32_t has_after, MakoShardBytes after_coordinate,
                       MakoShardBytes after_key, MakoShardRowSink sink, void* sink_context) {
     const uint32_t owner = owner_of(context);
+    if (fail_migration_scan)
+        return counted(counts[owner].scan_next, MAKO_SHARD_IO);
     return counted(counts[owner].scan_next,
                    real[owner].scan_next(context, table, lo, has_hi, hi, has_after,
                                          after_coordinate, after_key, sink, sink_context));
@@ -655,14 +659,14 @@ void hold_writer(rust_sto_tpcc_wrapper& db, bool commit) {
     str_arena arena;
     auto* txn = db.new_txn(0, arena, nullptr);
     tx_put(raw[0], txn, lcdf::Str(m_key(3)), mako::Encode(kWriterValue));
-    const auto announced = Transaction::tinfo[TThread::id()].epoch.load();
+    const auto announced = mako::EpochRuntime::tinfo[TThread::id()].epoch.load();
     pin.epoch.store(announced);
     require(announced != 0, "ordinary Rust writer has no epoch announcement");
     pin.state.store(kPinHeld);
     while (pin.state.load() != kPinRelease) usleep(1000);
     if (commit) require(db.commit_txn(txn), "ordinary write did not commit after freeze");
     else db.abort_txn(txn);
-    require(Transaction::tinfo[TThread::id()].epoch.load() == 0, "terminal kept its epoch");
+    require(mako::EpochRuntime::tinfo[TThread::id()].epoch.load() == 0, "terminal kept its epoch");
     db.thread_end();
     pin.state.store(kPinReleased);
 }
@@ -1014,14 +1018,14 @@ void no_pin_left(Problems& problems) {
             problems.add("owner " + std::to_string(owner) + " has no storage thread slot");
             continue;
         }
-        const auto announced = Transaction::tinfo[slot].epoch.load();
+        const auto announced = mako::EpochRuntime::tinfo[slot].epoch.load();
         if (announced != 0)
             problems.add("owner " + std::to_string(owner) + " storage thread (slot "
                          + std::to_string(slot) + ") announces epoch "
                          + std::to_string(announced));
     }
-    const auto cut = Transaction::epoch_cut();
-    if (cut == 0 || !Transaction::epoch_drained(cut))
+    const auto cut = mako::EpochRuntime::epoch_cut();
+    if (cut == 0 || !mako::EpochRuntime::epoch_drained(cut))
         problems.add("a new cut " + std::to_string(cut) + " is not drained");
 }
 
@@ -1425,16 +1429,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     TThread::set_shard_index(0);
     require(raw[0] != raw[1], "the two owners share one index");
     for (uint32_t owner = 0; owner < kOwners; ++owner) {
-        if (shape.rust_callbacks) {
-            register_rust(guarded, owner);
-        } else {
-            // The baseline has no Rust registration to go through. Both
-            // handles must be known to the crate, or the node start is
-            // refused first.
-            require_status(mako_sharding_raw_register(kRawTable, owner, 0,
-                                                      reinterpret_cast<uintptr_t>(raw[owner])),
-                           MAKO_SHARD_OK, "raw handle registration");
-        }
+        register_rust(guarded, owner);
     }
 
     db.thread_init(true, 0);
@@ -1461,27 +1456,28 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
 
     // The advancer alone, not ensure_epoch_runtime: this thread's Masstree
     // context must stay the one the Rust engine attached.
-    Transaction::start_epoch_advancer();
+    mako::EpochRuntime::start_epoch_advancer();
     {
-        const auto before = Transaction::epoch_current();
+        const auto before = mako::EpochRuntime::epoch_current();
         bool grew = false;
         for (unsigned attempt = 0; attempt < 40 && !grew; ++attempt) {
             usleep(50000);
-            grew = Transaction::epoch_current() > before;
+            grew = mako::EpochRuntime::epoch_current() > before;
         }
         if (grew) check_ok("tick-running");
         else check_failed("tick-running", "the STO epoch did not grow in 2 seconds");
     }
 
-    if (shape.rust_callbacks) callbacks_guarded(guarded, db);
+    callbacks_guarded(guarded, db);
+    fail_migration_scan = shape.fail_scan;
     for (uint32_t owner = 0; owner < kOwners; ++owner) {
         hosts[owner] = rusty::Some(rusty::make_box<mako::NativeShardingHost>(
             &db, owner, kOwners, SiloRuntime::Current()));
         auto& host = *hosts[owner].as_mut().unwrap();
         host_of[owner] = &host;
         real[owner] = host.callbacks();
-        if (shape.rust_callbacks) db.configure_native_sharding(host, real[owner]);
-        if (shape.rust_callbacks) {
+        db.configure_native_sharding(host, real[owner]);
+        {
             // The first table handed out closed the registration.
             const uint32_t late = mako::rust_sharding_register_raw(kRawTable, owner, raw[owner]);
             if (late != MAKO_SHARD_INVALID)
@@ -1505,27 +1501,19 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     stage("ready");
     TThread::in_loading_phase = false;
 
-    if (shape.rust_callbacks) {
-        conclude("registration-guarded", guarded);
-        check("open-registered-only", open_registered_only);
-        check("unentered-thread-refused", unentered_thread_refused);
-    } else {
-        // These call the Rust registration and the installed Rust slots
-        // directly; the baseline has neither.
-        check_skipped("registration-guarded");
-        check_skipped("open-registered-only");
-        check_skipped("unentered-thread-refused");
-    }
+    conclude("registration-guarded", guarded);
+    check("open-registered-only", open_registered_only);
+    check("unentered-thread-refused", unentered_thread_refused);
 
     if (scenario == Scenario::pinned) {
         check_rust_sharding_receiver(db, raw[0], kRawTable, config_path, "a", "n");
         check_ok("receiver-replayed-own-reply");
-        mako::NativeShardingHost cpp_peer(&db, 0, kOwners, SiloRuntime::Current());
+        mako::NativeShardingHost unconfigured_peer(&db, 0, kOwners, SiloRuntime::Current());
         uint32_t reply = kNoStatus;
         const auto receive = [](void* ctx, uint32_t status, MakoShardBytes) {
             *static_cast<uint32_t*>(ctx) = status;
         };
-        require_status(mako::native_sharding_peer_call(&cpp_peer, 1, 2, {nullptr, 0}, receive,
+        require_status(mako::native_sharding_peer_call(&unconfigured_peer, 1, 2, {nullptr, 0}, receive,
             &reply), MAKO_SHARD_OK, "mixed peer HELLO transport");
         require_status(reply, MAKO_SHARD_INVALID, "mixed peer HELLO");
         check_ok("mixed-peer-refused");
@@ -1571,7 +1559,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
                     held.add(std::string("migration reached outcome=")
                              + outcome_text(result.outcome)
                              + " while a pin older than the cut was held");
-                else if (Transaction::epoch_drained(cut))
+                else if (mako::EpochRuntime::epoch_drained(cut))
                     held.add("the STO clock reports the cut " + std::to_string(cut)
                              + " drained while the pin was held");
             }
@@ -1699,7 +1687,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         hosts[owner] = rusty::None;
     }
     db.thread_end();
-    if (shape.rust_callbacks) mako::rust_sharding_release();
+    mako::rust_sharding_release();
     stage("stopped");
 }
 

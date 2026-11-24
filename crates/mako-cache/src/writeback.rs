@@ -3785,7 +3785,7 @@ impl<B: Blobs> Writeback<B> {
     /// Claim queue capacity for a record that the trusted native transaction
     /// adapter will serialize directly.
     ///
-    /// The exact byte buffer is owned by `mako-local` across the synchronous
+    /// The exact byte buffer is owned by the Rust engine across the synchronous
     /// native commit call. This permit owns only the bounded queue slot and
     /// therefore adds no duplicate write-set representation.
     pub(crate) fn reserve_native(
@@ -6580,7 +6580,7 @@ impl<B: Blobs> BoundReservation<'_, B> {
         self.token.sequence()
     }
 
-    /// Expose this reservation's checked-out storage to mako-local's unsafe
+    /// Expose this reservation's checked-out storage to the Rust engine's unsafe
     /// synchronous record terminal.
     ///
     /// # Safety

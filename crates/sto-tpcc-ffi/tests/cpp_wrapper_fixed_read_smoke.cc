@@ -19,7 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "storage/rust_sto_tpcc_wrapper.hh"
-#include "sto/Transaction.hh"
+#include "runtime/worker_context.hh"
 
 namespace {
 

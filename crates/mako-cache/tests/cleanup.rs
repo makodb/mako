@@ -213,7 +213,7 @@ fn cleanup_uncertainty_quarantines_fresh_cache_workers() {
     let hooks_required = std::env::var_os(REQUIRE_NATIVE_HOOKS_ENV).is_some();
     assert!(
         cleanup_hooks || !hooks_required,
-        "{REQUIRE_NATIVE_HOOKS_ENV} requires a native build configured with MAKO_LOCAL_TEST_HOOKS=ON"
+        "{REQUIRE_NATIVE_HOOKS_ENV} requires the engine-sto-test-hooks Cargo feature and native Masstree linkage"
     );
     if !cleanup_hooks {
         eprintln!("native cleanup seams are disabled; hook-only cache cleanup cases skipped");

@@ -54,7 +54,7 @@ class BenchmarkDriverTests(unittest.TestCase):
             root = Path(temporary)
             output = root / "output"
             output.mkdir()
-            binaries = {name: root / name for name in ("c-abi", "sto")}
+            binaries = {name: root / name for name in ("baseline", "candidate")}
             for binary in binaries.values():
                 binary.touch()
                 binary.chmod(0o755)
@@ -63,9 +63,9 @@ class BenchmarkDriverTests(unittest.TestCase):
                 sentinel.touch()
             argv = ["driver", "--output", str(output), "--workers", "1", "--repetitions", "1"]
             if module is variants:
-                argv += ["--variant", f"first={binaries['c-abi']}", "--variant", f"second={binaries['sto']}", "--modes", "cache-ack"]
+                argv += ["--variant", f"first={binaries['baseline']}", "--variant", f"second={binaries['candidate']}", "--modes", "cache-ack"]
             else:
-                argv += ["--c-abi", str(binaries["c-abi"]), "--sto", str(binaries["sto"])]
+                argv += ["--baseline", str(binaries["baseline"]), "--candidate", str(binaries["candidate"])]
                 argv += (["--seconds", "1", "--run-timeout", "5"] if module is soak else
                          ["--iterations", "1", "--warmup", "256", "--modes", "cache-ack", "--perf", "1"])
             argv += list(arguments)
@@ -76,7 +76,7 @@ class BenchmarkDriverTests(unittest.TestCase):
                 return real_open(path, *args, **kwargs)
 
             def engine(command):
-                return "sto" if module is variants or Path(command[3]).name == "sto" else "mako-local/sto-masstrans"
+                return "sto"
 
             def fake_sample(command, **kwargs):
                 launches.append(command)
@@ -111,7 +111,7 @@ class BenchmarkDriverTests(unittest.TestCase):
                     record["commits"] = 0
                 if defect == "pmu-first" and len(launches) == 1:
                     record["pmu_min_running_ratio"] = 0.994
-                if defect == "c-abi":
+                if defect == "baseline":
                     record["engine"] = "mako-local/sto-masstrans"
                 if defect in changes:
                     key, value = changes[defect]
@@ -264,7 +264,7 @@ class BenchmarkDriverTests(unittest.TestCase):
                     self.assertFalse(result["blocks"][0]["accepted"])
 
     def test_rust_variants_reject_c_abi_backend(self):
-        result = self.exercise(variants, "c-abi")
+        result = self.exercise(variants, "baseline")
         self.assertIsNotNone(result["error"])
         self.assertEqual(result["launches"], 1)
         self.assertEqual(result["retained_databases"], 1)
@@ -402,14 +402,14 @@ class ResumeTests(unittest.TestCase):
         self.protocol = {"schema": "mako-paired-engine-soak-v1", "seconds": 120,
                          "workers": [1], "repetitions": 1,
                          "worker_cpus": [0], "writeback_cpu": 32,
-                         "binary_sha256": {"c-abi": "a" * 64, "sto": "b" * 64},
-                         "binary_paths": {"c-abi": "/frozen/c-abi", "sto": "/frozen/sto"},
+                         "binary_sha256": {"baseline": "a" * 64, "candidate": "b" * 64},
+                         "binary_paths": {"baseline": "/frozen/c-abi", "candidate": "/frozen/sto"},
                          "initial_machine": self.machine}
-        self.planned = [(1, 1, "c-abi"), (1, 1, "sto")]
-        self.directory = self.output / "r1-w1-c-abi.example"
+        self.planned = [(1, 1, "baseline"), (1, 1, "candidate")]
+        self.directory = self.output / "r1-w1-baseline.example"
         self.directory.mkdir()
         (self.directory / "expected.txt").write_text("gc-soak-v1 1 256 128\n256\n")
-        identity = "mako-local/sto-masstrans"
+        identity = "sto"
         cell_protocol = {"event": "protocol", "version": 2, "engine": identity,
                          "workers": 1, "worker_cpus": [0], "seconds": 120, "keys_per_worker": 256,
                          "value_bytes": 128, "rate_per_worker": 0,
@@ -419,7 +419,7 @@ class ResumeTests(unittest.TestCase):
                    "ack_seconds": 120.1, "applied_seconds": 120.2}
         verified = {"event": "verified", "engine": identity, "commits": 256,
                     "workers": 1, "keys": 256, "open_seconds": 1.0}
-        self.result = {"arm": "c-abi", "workers": 1, "repetition": 1,
+        self.result = {"arm": "baseline", "workers": 1, "repetition": 1,
                        "directory": str(self.directory), "run": {"returncode": 0},
                        "verify": {"returncode": 0}, "protocol": cell_protocol,
                        "drained": drained, "verified": verified,
@@ -448,8 +448,8 @@ class ResumeTests(unittest.TestCase):
         self.assertTrue(marker.exists())
 
     def test_changed_binary_protocol_and_governor_rejected(self):
-        for change in ({"binary_sha256": {"c-abi": "changed", "sto": "b" * 64}},
-                       {"binary_paths": {"c-abi": "/different", "sto": "/frozen/sto"}},
+        for change in ({"binary_sha256": {"baseline": "changed", "candidate": "b" * 64}},
+                       {"binary_paths": {"baseline": "/different", "candidate": "/frozen/sto"}},
                        {"seconds": 960}, {"workers": [1, 4]}, {"repetitions": 2},
                        {"initial_machine": {"boost": "1", "governors": {"0": "schedutil"}}},
                        {"initial_machine": {"boost": "0", "governors": {"0": "performance"}}}):
@@ -460,7 +460,7 @@ class ResumeTests(unittest.TestCase):
         soak.write_json(self.output / "results.json", [self.result, self.result])
         with self.assertRaises(RuntimeError):
             self.load()
-        self.result["arm"] = "sto"
+        self.result["arm"] = "candidate"
         self.save_result()
         with self.assertRaises(RuntimeError):
             self.load()

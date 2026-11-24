@@ -122,6 +122,7 @@ RustWrapper::RustWrapper() : running_(false), initialized_(false) {
 RustWrapper::~RustWrapper() {
     if (running_) running_ = false;
     if (ti_initialized) {
+        g_rust_wrapper_instance->db->thread_end();
         ti_initialized = false;
     }
     g_rust_wrapper_instance = nullptr;
@@ -153,7 +154,7 @@ bool RustWrapper::init() {
 
 void RustWrapper::ensure_thread_info() {
     if (!ti_initialized) {
-        mbta_table::thread_init();
+        db->thread_init(false);
         ti_initialized = true;
     }
     if (!tl_initialized) {
@@ -209,7 +210,7 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
             tl_val_buf.append(mako::EXTRA_BITS_FOR_VALUE, 'B');
 
             try {
-                tx_put(customerTable, txn, tl_key_buf, StringWrapper(tl_val_buf));
+                tx_put(customerTable, txn, tl_key_buf, tl_val_buf);
                 db->commit_txn(txn);
                 result = "OK";
             } catch (abstract_db::abstract_abort_exception &ex) {
@@ -237,6 +238,7 @@ void RustWrapper::cleanup_thread_info() {
     tl_txn_obj_buf.clear();
     tl_initialized = false;
     if (ti_initialized) {
+        g_rust_wrapper_instance->db->thread_end();
         ti_initialized = false;
     }
 }
@@ -494,7 +496,7 @@ int main(int argc, char **argv) {
     benchConfig.setConfig(config);
 
     // Initialize database
-    abstract_db *db = new mbta_wrapper;
+    abstract_db *db = new rust_sto_tpcc_wrapper;
     db->init();
     
     // Open table

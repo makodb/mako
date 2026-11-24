@@ -32,7 +32,7 @@
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/sharded_ordered_index.hh"
 #include "deptran/replication_helper.h"
 
 import std;
@@ -663,7 +663,7 @@ void run_tests(mako::IDatabase* db) {
 // Verify data integrity for all tests
 // @unsafe - Reads the replica's physical table through legacy storage APIs.
 bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
-    mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+    sharded_ordered_index *table = db->open_sharded_index("customer_0");
     // Verify replayed rows here, not a distributed scan of other live owners.
     auto* replica_table = table->shard_for_index(
         BenchmarkConfig::getInstance().getShardIndex());
@@ -1242,7 +1242,7 @@ int main(int argc, char **argv) {
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
         mako::setup_rpc_server();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        sharded_ordered_index *table = db->open_sharded_index("customer_0");
 
         map<int, abstract_ordered_index*> open_tables;
         auto *local_table = table->shard_for_index(benchConfig.getShardIndex());

@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[path = "../mako-local/build_support/native_allocator.rs"]
+#[path = "../native-build-support/native_allocator.rs"]
 mod native_allocator;
 
 use native_allocator::{NativeAllocator, ResolvedAllocator, CONTRACT_RELATIVE_PATH};
@@ -18,14 +18,14 @@ fn main() {
     for variable in ["MAKO_BUILD_DIR", "LIBCXX_DIR"] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
-    println!("cargo:rerun-if-changed=../mako-local/build_support/native_allocator.rs");
+    println!("cargo:rerun-if-changed=../native-build-support/native_allocator.rs");
 
     let build = std::env::var_os("MAKO_BUILD_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("mako-cache-bench requires MAKO_BUILD_DIR"));
-    if !build.join("libmako.a").is_file() {
+    if !build.join("libmako_mtree_boundary.a").is_file() {
         panic!(
-            "MAKO_BUILD_DIR={} does not contain libmako.a",
+            "MAKO_BUILD_DIR={} does not contain libmako_mtree_boundary.a",
             build.display()
         );
     }
@@ -34,18 +34,6 @@ fn main() {
     println!("cargo:rerun-if-changed={}", cache_path.display());
     let cache = std::fs::read_to_string(&cache_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", cache_path.display()));
-
-    let yaml = cmake_value(&cache, "YAML_CPP_BINARY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| build.join("third-party/yaml-cpp"));
-    if !yaml.join("libyaml-cpp.so").is_file() {
-        panic!(
-            "native benchmark requires Mako's yaml-cpp at {}",
-            yaml.display()
-        );
-    }
-    println!("cargo:rustc-link-search=native={}", yaml.display());
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", yaml.display());
 
     let libcxx = libcxx_dir(&cache).unwrap_or_else(|| {
         panic!(
@@ -63,73 +51,8 @@ fn main() {
     // mrx-masstree's native archive contains the snapshot implementation,
     // whose object file references LZ4 even though this benchmark never calls
     // that path. Declare the final binary's dependency directly instead of
-    // relying on mako-local's production-only link metadata to supply it.
+    // relying on an application library to supply it.
     println!("cargo:rustc-link-lib=dylib=lz4");
-
-    // Both engine builds of the benchmark link mrx-masstree's libmako.a
-    // closure, and the C ABI build adds mako-local's; either reaches
-    // libmako.a's Rust staticlibs.
-    emit_trailing_native_link_group(&build);
-}
-
-/// Repeat the trailing native link group that `mako-local and mrx-masstree` emits for its own
-/// link targets.
-///
-/// libmako.a calls into two Cargo staticlibs (native sharding and the Raft
-/// runtime, the `rust-staticlib` rows of mako-local's archive manifest). Each
-/// carries its own Rust std and a `panic = "abort"` runtime, so they must come
-/// after this executable's own std: `cargo:rustc-link-arg` places them there,
-/// while `rustc-link-lib=static=` would put them first and make every Rust
-/// panic abort the process. The group repeats the whole closure because the
-/// Raft runtime calls back into libmako.a. `cargo:rustc-link-arg` does not
-/// propagate from a dependency's build script, hence the repetition here; the
-/// full rationale is in crates/mako-local/build.rs.
-///
-/// The manifest is read from the copy CMake publishes in the build tree, not
-/// from crates/mako-local: this package is also built from an isolated copy
-/// of its own directory (the mutation runners), where sibling crates are not
-/// at `../`. A build tree without that copy or without one of the archives is
-/// skipped here; mako-local and mrx-masstree's build script owns the closure and reports what
-/// is missing.
-fn emit_trailing_native_link_group(build: &Path) {
-    let manifest = build.join("generated/mako_local_native_link_archives.txt");
-    println!("cargo:rerun-if-changed={}", manifest.display());
-    let Ok(rows) = std::fs::read_to_string(&manifest) else {
-        return;
-    };
-    let mut archives = Vec::new();
-    let mut has_rust_staticlib = false;
-    for line in rows.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let (Some(_name), Some(relative)) = (fields.next(), fields.next()) else {
-            panic!("malformed row in {}: {line:?}", manifest.display());
-        };
-        has_rust_staticlib |= fields.next() == Some("rust-staticlib");
-        let path = build.join(relative);
-        println!("cargo:rerun-if-changed={}", path.display());
-        if !path.is_file() {
-            return;
-        }
-        // The linker resolves a path argument against its own working
-        // directory, so a relative MAKO_BUILD_DIR must not leak into it.
-        archives.push(path.canonicalize().unwrap_or(path));
-    }
-    if !has_rust_staticlib {
-        return;
-    }
-    println!("cargo:rustc-link-arg=-Wl,--start-group");
-    for path in &archives {
-        println!("cargo:rustc-link-arg={}", path.display());
-    }
-    println!("cargo:rustc-link-arg=-Wl,--end-group");
-    // What the staticlibs need from the platform, repeated after the group
-    // because GNU ld drops an --as-needed library nothing before it used.
-    for library in ["rocksdb", "pthread", "dl", "m", "rt", "util", "gcc_s"] {
-        println!("cargo:rustc-link-arg=-l{library}");
-    }
 }
 
 fn configure_allocator_rpath(build: &Path, cache: &str) {

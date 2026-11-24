@@ -1,4 +1,6 @@
 #include "rust_sto_tpcc_wrapper.hh"
+#include "sharded_ordered_index.hh"
+#include "sharded_scan.hh"
 
 #include <algorithm>
 #include <cassert>
@@ -19,7 +21,12 @@
 #include "lib/common.h"
 #include "lib/sharding_admission.h"
 #include "rcu.h"
-#include "mbta_wrapper.hh"
+#include "runtime/benchmark_thread.hh"
+#include "runtime/worker_context.hh"
+#include "runtime/sync_util.hh"
+#include "runtime/replay_record.h"
+#include "lib/table_registry.h"
+#include "benchmarks/rpc_setup.h"
 #include "mtree_abi.h"
 #include <rusty/mutex.hpp>
 #include "deptran/replication_helper.h"
@@ -927,14 +934,34 @@ bool rust_sto_tpcc_ordered_index::remove(lcdf::Str key) {
   }
 }
 
+namespace {
+// The callback may retain value references only when an arena was supplied.
+class ArenaScanCallback final : public oi_scan_callback {
+ public:
+  ArenaScanCallback(oi_scan_callback& callback, str_arena* arena)
+      : callback_(callback), arena_(arena) {}
+  size_t max_records_hint() const override { return callback_.max_records_hint(); }
+  bool invoke(const char* key, size_t length, const std::string& value) override {
+    return invoke_bytes(key, length, value.data(), value.size());
+  }
+  bool invoke_bytes(const char* key, size_t length, const char* value, size_t size) override {
+    return callback_.invoke_arena_bytes(key, length, value, size, arena_);
+  }
+ private:
+  oi_scan_callback& callback_;
+  str_arena* arena_;
+};
+} // namespace
+
 void rust_sto_tpcc_ordered_index::scan(const std::string &start_key,
                                        const std::string *end_key,
                                        oi_scan_callback &callback,
-                                       str_arena *) {
+                                       str_arena *arena) {
+  ArenaScanCallback delivery(callback, arena);
   while (true) {
     owner_->begin_current_transaction();
     try {
-      scan_local(false, start_key, end_key, callback, true);
+      scan_local(false, start_key, end_key, delivery, true);
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
@@ -949,11 +976,12 @@ void rust_sto_tpcc_ordered_index::scan(const std::string &start_key,
 void rust_sto_tpcc_ordered_index::rscan(const std::string &start_key,
                                         const std::string *end_key,
                                         oi_scan_callback &callback,
-                                        str_arena *) {
+                                        str_arena *arena) {
+  ArenaScanCallback delivery(callback, arena);
   while (true) {
     owner_->begin_current_transaction();
     try {
-      scan_local(true, start_key, end_key, callback, true);
+      scan_local(true, start_key, end_key, delivery, true);
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
@@ -1146,18 +1174,20 @@ void rust_sto_tpcc_ordered_index::tx_scan(c_void *txn,
                                           const std::string &start_key,
                                           const std::string *end_key,
                                           oi_scan_callback &callback,
-                                          str_arena *) {
+                                          str_arena *arena) {
+  ArenaScanCallback delivery(callback, arena);
   owner_->require_txn_handle(txn);
-  scan_local(false, start_key, end_key, callback, true);
+  scan_local(false, start_key, end_key, delivery, true);
 }
 
 void rust_sto_tpcc_ordered_index::tx_rscan(c_void *txn,
                                            const std::string &start_key,
                                            const std::string *end_key,
                                            oi_scan_callback &callback,
-                                           str_arena *) {
+                                           str_arena *arena) {
+  ArenaScanCallback delivery(callback, arena);
   owner_->require_txn_handle(txn);
-  scan_local(true, start_key, end_key, callback, true);
+  scan_local(true, start_key, end_key, delivery, true);
 }
 
 // @unsafe - Existing remote scan contract returns the lower median payload.
@@ -1241,6 +1271,7 @@ rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper()
 
 rust_sto_tpcc_wrapper::~rust_sto_tpcc_wrapper() noexcept {
   release_sharding_indexes();
+  sharded_tables_.clear();
   tables_by_name_.clear();
   for (const auto &slot : tables_by_id_)
     slot.store(nullptr, rusty::sync::atomic::Ordering::Release);
@@ -1376,11 +1407,11 @@ void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
   if (tls_thread_)
     throw std::runtime_error("Rust STO thread was initialized twice");
   (void)source;
-  mbta_wrapper::benchmark_thread_init(loader);
+  mako::benchmark_thread_init(loader);
   tls_benchmark_thread_initialized_ = true;
   const sto_tpcc_status status = sto_tpcc_thread_create(db_, &tls_thread_);
   if (status != STO_TPCC_OK) {
-    mbta_wrapper::benchmark_thread_end();
+    mako::benchmark_thread_end();
     tls_benchmark_thread_initialized_ = false;
     require_ok("thread_create", status);
   } else {
@@ -1390,7 +1421,9 @@ void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
 
 // @unsafe - Resolve native state before destroying its worker/RCU attachment.
 void rust_sto_tpcc_wrapper::thread_end() {
-  if (tls_transaction_active_)
+  // A local operation may have aborted Rust while remote participants still
+  // retain observations. Resolve them before destroying the shard client.
+  if (tls_thread_)
     abort_txn(tls_thread_);
   sto_tpcc_status destroy_status = STO_TPCC_OK;
   if (tls_thread_) {
@@ -1399,7 +1432,7 @@ void rust_sto_tpcc_wrapper::thread_end() {
     tls_owner_ = nullptr;
   }
   if (tls_benchmark_thread_initialized_) {
-    mbta_wrapper::benchmark_thread_end();
+    mako::benchmark_thread_end();
     tls_benchmark_thread_initialized_ = false;
   }
   require_ok("thread_destroy", destroy_status);
@@ -2002,6 +2035,27 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   return open_index_impl(name, shard_index, -1);
 }
 
+sharded_ordered_index *rust_sto_tpcc_wrapper::open_sharded_index(
+    const std::string &name) {
+  auto guard = catalog_lock_.lock().unwrap();
+  if (const auto found = sharded_tables_.find(name); found != sharded_tables_.end())
+    return found->second.get();
+  const auto shards = BenchmarkConfig::getInstance().getNshards();
+  for (size_t shard = 0; shard < shards; ++shard) {
+    const int id = static_cast<int>(shard);
+    if (tables_by_name_.contains({name, id})) continue;
+    const auto next = next_table_ids_.find(id);
+    if (next != next_table_ids_.end() &&
+        next->second > (id + 1) * mako::NUM_TABLES_PER_SHARD)
+      return nullptr;
+  }
+  std::unique_ptr<sharded_ordered_index> index(sharded_build(name, shards, [this, &name](size_t shard) {
+    return open_index_impl(name, static_cast<int>(shard), -1);
+  }));
+  if (!index) return nullptr;
+  return sharded_tables_.emplace(name, std::move(index)).first->second.get();
+}
+
 abstract_ordered_index *rust_sto_tpcc_wrapper::open_native_warehouse_index(
     const std::string& name, uint32_t owner) {
   auto catalog_guard = catalog_lock_.lock().unwrap();
@@ -2112,7 +2166,7 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index_impl(
   const sto_tpcc_resolved_cache_policy cache_policy =
       tpcc_resolved_cache_policy_for(name);
   sto_tpcc_table *table = nullptr;
-  if (native && tls_thread_)
+  if (!remote && tls_thread_ && tls_owner_ == this)
     require_ok("table_create_on_thread", sto_tpcc_table_create_on_thread(
         db_, tls_thread_, &table_config, cache_policy, &table));
   else if (!remote)
@@ -2194,6 +2248,16 @@ void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
   auto catalog_guard = catalog_lock_.lock().unwrap();
   if (idx == nullptr)
     return;
+
+  for (auto facade = sharded_tables_.begin(); facade != sharded_tables_.end(); ++facade) {
+    if (facade->second.get() == idx) {
+      sharded_tables_.erase(facade);
+      return;
+    }
+    for (size_t shard = 0; auto* leaf = facade->second->shard_for_index(shard); ++shard)
+      if (leaf == idx)
+        throw std::logic_error("Rust STO index is retained by a sharded facade");
+  }
 
   const auto owned = std::find_if(
       tables_.begin(), tables_.end(), [&](const auto &candidate) {
@@ -2395,6 +2459,13 @@ void rust_sto_tpcc_wrapper::require_ok(const char *operation,
 void rust_sto_tpcc_wrapper::require_txn_handle(c_void *txn) {
   if (!tls_thread_ || txn != tls_thread_ || !tls_transaction_active_)
     throw std::runtime_error("invalid or inactive Rust STO transaction handle");
+  // A helper may have created its empty frame before binding a request.
+  // Physical use must retain that request through engine cleanup too.
+  if (tls_protocol_ && !tls_sharding_engine_ &&
+      mako::sharding_admission_enabled() && mako::sharding_has_request()) {
+    mako::sharding_engine_start();
+    tls_sharding_engine_ = true;
+  }
 }
 
 void rust_sto_tpcc_wrapper::require_fast_txn(c_void *txn) {
@@ -2634,10 +2705,10 @@ void rust_sto_tpcc_ordered_index::read_scan_page(
     uint8_t* output, size_t capacity, size_t* output_length) {
   if (mako::sharding_admission_enabled() && !mako::sharding_has_request())
     throw abstract_db::abstract_abort_exception();
-  oi_mbta_scan_page_state state;
-  oi_mbta_scan_require(mako_scan_page_new({input, length}, &state.page));
-  const auto identity = oi_mbta_scan_identity(request);
-  oi_mbta_scan_require(mako_scan_page_identity_matches(state.page, &identity));
+  mako::ScanPageState state;
+  mako::require_scan_status(mako_scan_page_new({input, length}, &state.page));
+  const auto identity = mako::scan_identity(request);
+  mako::require_scan_status(mako_scan_page_identity_matches(state.page, &identity));
   const auto bounds = mako_scan_page_bounds(state.page);
   mako::sharding_require_interval(table_id_, bounds.lo, bounds.has_hi, bounds.hi,
                                   {request.grant, request.snapshot_version});
@@ -2650,7 +2721,7 @@ void rust_sto_tpcc_ordered_index::read_scan_page(
     }
     bool invoke_bytes(const char* key, size_t size, const char* value, size_t n) override {
       uint32_t proceed = 0;
-      oi_mbta_scan_require(mako_scan_page_add(page,
+      mako::require_scan_status(mako_scan_page_add(page,
           {reinterpret_cast<const uint8_t*>(key), size},
           {reinterpret_cast<const uint8_t*>(value), n}, &proceed));
       return proceed != 0;
@@ -2663,7 +2734,7 @@ void rust_sto_tpcc_ordered_index::read_scan_page(
     // terminal and tell the coordinator the page failed.
     throw abstract_db::abstract_abort_exception();
   }
-  oi_mbta_scan_require(mako_scan_page_finish(state.page, output, capacity, output_length));
+  mako::require_scan_status(mako_scan_page_finish(state.page, output, capacity, output_length));
 }
 
 // All segments deliver into the same callback budget. A remote page is part
@@ -2731,7 +2802,7 @@ void rust_sto_tpcc_ordered_index::scan_local(
   if (mako::sharding_admission_enabled() && !mako::sharding_has_request()) {
     if (!owner_->tls_sharding_engine_) throw abstract_db::abstract_abort_exception();
     ScanDelivery delivery(callback, strip_value_metadata);
-    if (delivery.remaining) oi_sharded_full_scan(this, start_key, end_key, reverse, delivery);
+    if (delivery.remaining) mako::sharded_full_scan(this, start_key, end_key, reverse, delivery);
     return;
   }
   const auto target = resolve_point(lcdf::Str(start_key));
@@ -2790,6 +2861,7 @@ void rust_sto_tpcc_wrapper::scan_active_raw(
 void rust_sto_tpcc_wrapper::mutate_protocol(
     const rust_sto_tpcc_ordered_index &index, lcdf::Str key,
     const std::string &value, uint8_t operation, bool lock_now) {
+  require_txn_handle(tls_thread_);
   const std::string_view payload = operation == 2
       ? std::string_view{} : canonical_local_mako_payload(value);
   const auto *key_bytes = reinterpret_cast<const uint8_t *>(key.data());

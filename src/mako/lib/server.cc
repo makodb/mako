@@ -3,21 +3,20 @@
 #include "lib/server.h"
 #include "lib/common.h"
 #include "lib/transport_request_handle.h"
-#include "sto/Interface.hh"
+#include "runtime/worker_context.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
 // After bench.h so the textual std headers are already in (the
 // `import std;` below would otherwise make ticker.h/rcu.h's
 // unqualified lock_guard/allocator references ambiguous).
-#include "sto/Transaction.hh"
-#include "storage/mbta_wrapper.hh"
+#include "runtime/epoch.hh"
 #include "storage/shard_scan_page.hh"
 #if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
 #include "deptran/s_main.h"
-#include "sto/sync_util.hh"
+#include "runtime/sync_util.hh"
 
 import std;
 
@@ -103,11 +102,7 @@ namespace mako
                 reader->read_scan_page(request->sharding, request->payload, request->length,
                     response->payload, sizeof(response->payload), &page_length);
             } else {
-                auto* index = dynamic_cast<mbta_ordered_index*>(table);
-                if (!index || index->get_is_remote()) throw abstract_db::abstract_abort_exception();
-                oi_mbta_full_scan_page(index->mbta, request->sharding,
-                    request->payload, request->length, response->payload,
-                    sizeof(response->payload), &page_length);
+                throw abstract_db::abstract_abort_exception();
             }
             response->length = static_cast<uint32_t>(page_length);
             response->status = ErrorCode::SUCCESS;
@@ -688,31 +683,7 @@ namespace mako
                                   uint16_t table_id, lcdf::Str key,
                                   const std::string& value, uint8_t operation) {
         if (!table) throw abstract_db::abstract_abort_exception();
-        auto* index = dynamic_cast<mbta_ordered_index*>(table);
-        if (!index) {
-            db->shard_mutate(table_id, key, value, operation);
-            return;
-        }
-        if (index->get_is_remote())
-            throw abstract_db::abstract_abort_exception();
-        switch (operation) {
-        case 0:
-            // Admits the point, stages the owned value and locks it.
-            index->shard_put(key, value);
-            return;
-        case 1:
-            // Same owner-side kernel as mbta_wrapper::shard_mutate: admits the
-            // point here instead of re-entering the coordinator-side resolver,
-            // stages the owned value as a real insert and locks it.
-            oi_mbta_shard_insert(index->mbta, key, value);
-            return;
-        case 2:
-            // Stages a real delete (including an absent-key read) and locks it.
-            oi_mbta_shard_remove(index->mbta, key);
-            return;
-        default:
-            throw abstract_db::abstract_abort_exception();
-        }
+        db->shard_mutate(table_id, key, value, operation);
     }
 
     // @unsafe - Native benchmark batch decoding after identity admission; stop

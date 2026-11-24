@@ -8,11 +8,8 @@ license = "MIT"
 publish = false
 
 [features]
-# Exactly one local engine is compiled in. The default is the C ABI facade
-# over the C++ STO/MassTrans engine; `engine-sto` selects the native Rust STO.
-# Build the latter with `--no-default-features --features engine-sto`.
-default = ["engine-c-abi"]
-engine-c-abi = ["mako-engine/c-abi"]
+# Rust is the only transaction backend.
+default = ["engine-sto"]
 engine-sto = ["mako-engine/sto"]
 # Test-only observers and simulated cleanup failures of the Rust STO engine.
 engine-sto-test-hooks = ["engine-sto", "mako-engine/sto-test-hooks"]

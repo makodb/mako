@@ -3,13 +3,15 @@
 /**
  * mako/local_table.hh - Local Table Wrapper implementing ITable
  *
- * This header provides LocalTable, a wrapper around mbta_sharded_ordered_index
+ * This header provides LocalTable, a wrapper around sharded_ordered_index
  * that implements the ITable interface for unified database access.
  */
 
 #include "idb.hh"
 #include "status.hh"
-#include "mako/storage/mbta_sharded_ordered_index.hh"
+#include "mako/storage/resource_exhausted.hh"
+#include "mako/storage/rust_sto_tpcc_wrapper.hh"
+#include "mako/storage/sharded_ordered_index.hh"
 #include "mako/storage/abstract_db.h"
 #include <string>
 
@@ -23,7 +25,7 @@ namespace mako {
 // lowercase trait surface in storage/abstract_ordered_index.h.
 // ============================================================================
 
-inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
+inline mako::Status sharded_Get(sharded_ordered_index *t,
                                      void *txn, const std::string &key,
                                      std::string &value) {
   bool found = t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
@@ -33,14 +35,14 @@ inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
 
 // NOTE: the value must already be mako::Encode()'d by the caller and
 // outlive the commit (the txn'd path stores a pointer, no copy).
-inline mako::Status mbta_sharded_Put(mbta_sharded_ordered_index *t,
+inline mako::Status sharded_Put(sharded_ordered_index *t,
                                      void *txn, const std::string &key,
                                      const std::string &value) {
   t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
   return mako::Status::OK();
 }
 
-inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
+inline mako::Status sharded_Insert(sharded_ordered_index *t,
                                         void *txn, const std::string &key,
                                         const std::string &value) {
   // Check existence first: transInsert silently succeeds for
@@ -56,7 +58,7 @@ inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
   return mako::Status::OK();
 }
 
-inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
+inline mako::Status sharded_Delete(sharded_ordered_index *t,
                                         void *txn, const std::string &key) {
   t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
   return mako::Status::OK();
@@ -64,7 +66,7 @@ inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
 
 
 /**
- * LocalTable - Wrapper around mbta_sharded_ordered_index implementing ITable
+ * LocalTable - Wrapper around sharded_ordered_index implementing ITable
  *
  * This class adapts the local sharded index to the common ITable interface,
  * enabling unified code that works with both local and remote tables.
@@ -74,11 +76,11 @@ class LocalTable : public ITable {
 public:
     // Compatibility constructor for low-level callers that already manage the
     // abstract_db thread precondition themselves.
-    LocalTable(mbta_sharded_ordered_index* index, const std::string& name)
+    LocalTable(sharded_ordered_index* index, const std::string& name)
         : index_(index), name_(name), database_(nullptr) {}
 
     // Facade constructor also enforces the owning database's thread context.
-    LocalTable(mbta_sharded_ordered_index* index, const std::string& name,
+    LocalTable(sharded_ordered_index* index, const std::string& name,
                IDatabase& database)
         : index_(index), name_(name), database_(&database) {}
 
@@ -91,7 +93,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return mbta_sharded_Put(index_, txn, key, value);
+            return sharded_Put(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -108,7 +110,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return mbta_sharded_Get(index_, txn, key, value);
+            return sharded_Get(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -125,7 +127,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return mbta_sharded_Delete(index_, txn, key);
+            return sharded_Delete(index_, txn, key);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -151,7 +153,7 @@ public:
         std::function<bool(const std::string&, const std::string&)> fn_;
     };
 
-    // @safe - Scans local shard only via mbta_sharded_ordered_index::scan().
+    // @safe - Scans local shard only via sharded_ordered_index::scan().
     // In multi-shard deployments, returns NotSupported because a local-only
     // result would be incomplete.
     Status Scan(void* txn,
@@ -253,9 +255,9 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            // Uses mbta_sharded_ordered_index::Insert() which calls transInsert
+            // Uses sharded_ordered_index::Insert() which calls transInsert
             // (native insert OCC semantics) rather than transPut (overwrite semantics).
-            return mbta_sharded_Insert(index_, txn, key, value);
+            return sharded_Insert(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -291,7 +293,7 @@ public:
         try {
             index_->put(lcdf::Str(key), value);  // returns "newly inserted"
             return Status::OK();
-        } catch (const Transaction::TimestampExhausted& ex) {
+        } catch (const storage_resource_exhausted& ex) {
             return Status::IOError(ex.what());
         } catch (...) {
             return Status::IOError("Unknown error in non-transactional Put");
@@ -307,7 +309,7 @@ public:
             return index_->insert(lcdf::Str(key), value)
                        ? Status::OK()
                        : Status::InvalidArgument("key already exists");
-        } catch (const Transaction::TimestampExhausted& ex) {
+        } catch (const storage_resource_exhausted& ex) {
             return Status::IOError(ex.what());
         } catch (...) {
             return Status::IOError("Unknown error in non-transactional Insert");
@@ -323,7 +325,7 @@ public:
             return index_->get(lcdf::Str(key), value, std::string::npos)
                        ? Status::OK()
                        : Status::NotFound();
-        } catch (const Transaction::TimestampExhausted& ex) {
+        } catch (const storage_resource_exhausted& ex) {
             return Status::IOError(ex.what());
         } catch (...) {
             return Status::IOError("Unknown error in non-transactional Get");
@@ -338,7 +340,7 @@ public:
         try {
             return index_->remove(lcdf::Str(key)) ? Status::OK()
                                                    : Status::NotFound();
-        } catch (const Transaction::TimestampExhausted& ex) {
+        } catch (const storage_resource_exhausted& ex) {
             return Status::IOError(ex.what());
         } catch (...) {
             return Status::IOError("Unknown error in non-transactional Delete");
@@ -354,7 +356,7 @@ public:
             std::string unused;
             *exists = index_->get(lcdf::Str(key), unused, std::string::npos);
             return Status::OK();
-        } catch (const Transaction::TimestampExhausted& ex) {
+        } catch (const storage_resource_exhausted& ex) {
             return Status::IOError(ex.what());
         } catch (...) {
             return Status::IOError("Unknown error in non-transactional Exists");
@@ -362,8 +364,8 @@ public:
     }
 
     // @safe - Access underlying index (for advanced operations)
-    mbta_sharded_ordered_index* GetIndex() { return index_; }
-    const mbta_sharded_ordered_index* GetIndex() const { return index_; }
+    sharded_ordered_index* GetIndex() { return index_; }
+    const sharded_ordered_index* GetIndex() const { return index_; }
 
 private:
     bool has_thread_context() const {
@@ -383,9 +385,7 @@ private:
         // null, foreign, or already-resolved handles.
         if (database_ != nullptr &&
             (!database_->OwnsActiveTransaction(txn) ||
-             TThread::txn == nullptr ||
-             txn != static_cast<void*>(TThread::txn) ||
-             !TThread::txn->has_active_state())) {
+             !rust_sto_tpcc_wrapper::current_transaction_active())) {
             return Status::InvalidArgument(
                 "operation requires the current active transaction token");
         }
@@ -396,15 +396,14 @@ private:
         if (!has_thread_context()) return missing_thread_context();
         if (database_ != nullptr &&
             (database_->HasUnresolvedTransaction() ||
-             (TThread::txn != nullptr &&
-              TThread::txn->has_active_state()))) {
+             rust_sto_tpcc_wrapper::current_transaction_active())) {
             return Status::InvalidArgument(
                 "non-transactional operation cannot run inside a transaction");
         }
         return Status::OK();
     }
 
-    mbta_sharded_ordered_index* index_;  // Borrowed pointer (not owned)
+    sharded_ordered_index* index_;  // Borrowed pointer (not owned)
     std::string name_;
     IDatabase* database_;  // Borrowed when constructed by a DB facade
 };

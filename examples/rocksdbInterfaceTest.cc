@@ -386,35 +386,11 @@ void test_aborted_attempt_lifecycle(mako::IDatabase* db) {
     mako::ITable* table = db->GetTable("aborted_attempt_table");
     VERIFY(table != nullptr, "backend-abort lifecycle table opens");
 
-    // Inject the same adapter flag that MassTrans::atomicRead sets on a hot
-    // MV conflict. Put must not report success with an unconsumed abort flag.
-    void* flagged_txn = db->BeginTransaction();
-    TThread::transget_without_throw = true;
-    const mako::Status flagged_status =
-        table->Put(flagged_txn, "flagged", mako::Encode("value"));
-    VERIFY(flagged_status.IsIOError(),
-           "transactional Put surfaces the silent-abort flag");
-    VERIFY(!TThread::transget_without_throw,
-           "transactional Put consumes the silent-abort flag");
-    VERIFY(TThread::txn != nullptr && !TThread::txn->has_active_state(),
-           "silent-abort propagation resolves the native attempt");
-    VERIFY(table->Put("flagged_nontxn", "blocked").IsInvalidArgument(),
-           "an unresolved aborted attempt blocks non-transactional work");
-    bool flagged_commit_reported_abort = false;
-    try {
-        db->Commit(flagged_txn);
-    } catch (const abstract_db::abstract_abort_exception&) {
-        flagged_commit_reported_abort = true;
-    }
-    VERIFY(flagged_commit_reported_abort,
-           "Commit cannot publish after an operation reports silent abort");
-    db->Rollback(flagged_txn);
-
     // Model the state after a real atomicRead conflict: native cleanup has
     // completed, but the public attempt still needs one caller resolution.
     void* aborted_txn = db->BeginTransaction();
-    Sto::abort_without_throw();
-    VERIFY(TThread::txn != nullptr && !TThread::txn->has_active_state(),
+    rust_sto_tpcc_wrapper::abort_current_thread_transaction();
+    VERIFY(!rust_sto_tpcc_wrapper::current_transaction_active(),
            "injected backend abort resolves native transaction state");
 
     bool commit_reported_abort = false;
@@ -459,7 +435,7 @@ void test_aborted_attempt_lifecycle(mako::IDatabase* db) {
            "non-transactional work resumes after cleanup Rollback");
 
     void* rollback_txn = db->BeginTransaction();
-    Sto::abort_without_throw();
+    rust_sto_tpcc_wrapper::abort_current_thread_transaction();
     db->Rollback(rollback_txn);
     bool resolved_rollback_rejected = false;
     try {
@@ -469,49 +445,6 @@ void test_aborted_attempt_lifecycle(mako::IDatabase* db) {
     }
     VERIFY(resolved_rollback_rejected,
            "direct cleanup of a backend-aborted attempt is single-use");
-
-    void* exhausted_txn = db->BeginTransaction();
-    VERIFY(table->Put(exhausted_txn, "exhausted",
-                      mako::Encode("value")).ok(),
-           "timestamp-exhaustion transaction stages a write");
-    TThread::txn->maxTimestampReadSet = 1;
-    bool exhaustion_reported = false;
-    {
-        auto& clock = sync_util::sync_logger::legacy_distributed_timestamp_state;
-        const uint32_t saved = clock.exchange(
-            Transaction::max_mako_timestamp + 1,
-            std::memory_order_acq_rel);
-        struct restore_timestamp_clock {
-            std::atomic<uint32_t>& clock;
-            uint32_t saved;
-            ~restore_timestamp_clock() {
-                clock.store(saved, std::memory_order_release);
-            }
-        } restore{clock, saved};
-        try {
-            db->Commit(exhausted_txn);
-        } catch (const Transaction::TimestampExhausted&) {
-            exhaustion_reported = true;
-        }
-    }
-    VERIFY(exhaustion_reported,
-           "Commit preserves the native timestamp-exhaustion error");
-    VERIFY(db->HasUnresolvedTransaction(),
-           "typed native abort remains rollback-pending in the facade");
-    bool exhausted_recommit_rejected = false;
-    try {
-        db->Commit(exhausted_txn);
-    } catch (const std::logic_error&) {
-        exhausted_recommit_rejected = true;
-    }
-    VERIFY(exhausted_recommit_rejected,
-           "rollback-pending timestamp failure cannot commit again");
-    db->Rollback(exhausted_txn);
-    VERIFY(!db->HasUnresolvedTransaction(),
-           "Rollback resolves the timestamp-exhausted facade attempt");
-    std::string absent;
-    VERIFY(table->Get("exhausted", absent).IsNotFound(),
-           "timestamp-exhausted write remains absent");
 
     VERIFY_PASS("Backend-aborted attempt lifecycle PASSED");
 }
@@ -945,13 +878,13 @@ int main(int argc, char* argv[]) {
     options.shard_index = 0;
 
     mako::Options unsupported_engine_options = options;
-    unsupported_engine_options.storage_engine = "rust";
+    unsupported_engine_options.storage_engine = "cpp";
     mako::DB* unsupported_engine_db = nullptr;
     mako::Status unsupported_engine_status = mako::DB::Open(
         unsupported_engine_options, "/tmp/mako_unsupported_engine",
         &unsupported_engine_db);
     VERIFY(unsupported_engine_status.IsNotSupported(),
-           "DB::Open rejects the Rust TPC-C adapter on the C++ facade");
+           "DB::Open rejects the retired C++ transaction backend");
     VERIFY(unsupported_engine_db == nullptr,
            "unsupported engine rejection leaves output null and admission available");
 
@@ -1035,7 +968,7 @@ int main(int argc, char* argv[]) {
         }
         VERIFY(nested_begin_rejected,
                "nested BeginTransaction is rejected without replacing the active transaction");
-        VERIFY(TThread::txn != nullptr && TThread::txn->has_active_state(),
+        VERIFY(rust_sto_tpcc_wrapper::current_transaction_active(),
                "rejected nested BeginTransaction preserves the original transaction");
 
         int foreign_token_storage = 0;
@@ -1119,7 +1052,9 @@ int main(int argc, char* argv[]) {
 
     // A raw transaction must be resolved by its owner. InitThread rejects it
     // before changing the stable ID, mode, topology, or facade reservation.
-    Sto::start_transaction();
+    db->GetDB()->thread_init(true);
+    str_arena raw_arena;
+    void* raw_txn = db->GetDB()->new_txn(0, raw_arena, nullptr);
     const int active_transaction_thread_id = TThread::id();
     bool active_transaction_rejected = false;
     try {
@@ -1133,7 +1068,8 @@ int main(int argc, char* argv[]) {
            "rejected attachment does not change the transaction thread ID");
     VERIFY(!db->HasThreadContext(),
            "rejected active-transaction attachment reserves no facade context");
-    Sto::silent_abort();
+    db->GetDB()->abort_txn(raw_txn);
+    db->GetDB()->thread_end();
 
     // Reattach on the same OS thread. This reuses its quiesced RCU slot and
     // Sto TLS Transaction without consuming another finite worker ID.
@@ -1144,8 +1080,8 @@ int main(int argc, char* argv[]) {
                "reattachment preserves the OS thread's native STO ID");
         VERIFY(TThread::getLocalPartitionID() == first_local_pid,
                "reattachment preserves the OS thread's local partition ID");
-        VERIFY(TThread::txn != nullptr &&
-                   TThread::txn->threadid() == first_thread_id,
+        VERIFY(rust_sto_tpcc_wrapper::current_transaction_active() &&
+                   TThread::id() == first_thread_id,
                "reattachment refreshes Sto's cached native thread ID");
         db->Rollback(txn);
     }
