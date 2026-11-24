@@ -219,6 +219,12 @@ pub struct RunningShard {
     _network: Arc<Network>,
 }
 impl RunningShard {
+    pub fn address(&self) -> &str {
+        self.server
+            .as_ref()
+            .expect("running shard listener")
+            .address()
+    }
     pub fn start(
         store: Arc<Store>,
         network: Arc<Network>,
@@ -294,10 +300,20 @@ impl RunningShard {
                         )));
                     }
                 }
-                Message::Migration { .. } => respond(Reply::Error(Error::new(
-                    ErrorCode::Invalid,
-                    "migration host has not started",
-                ))),
+                Message::Migration {
+                    owner,
+                    operation,
+                    payload,
+                } => {
+                    if owner != store.owner || stopped.load(Ordering::Acquire) {
+                        respond(Reply::Error(Error::new(
+                            ErrorCode::Closed,
+                            "migration endpoint is unavailable",
+                        )));
+                    } else {
+                        crate::migration::dispatch(owner, operation, payload, respond);
+                    }
+                }
             },
         )?);
         Ok(running)

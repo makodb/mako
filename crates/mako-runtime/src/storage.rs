@@ -74,7 +74,9 @@ pub struct Store {
     pub log: Arc<dyn CommitLog>,
     tables: RwLock<BTreeMap<TableKey, Table>>,
     quarantine: parking_lot::Mutex<Vec<Protection>>,
+    materializer: RwLock<Option<Arc<Materializer>>>,
 }
+type Materializer = dyn Fn(TableKey) -> Result<Table> + Send + Sync;
 impl Store {
     pub fn new(owner: u32, migration: bool, log: Arc<dyn CommitLog>) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
@@ -86,6 +88,7 @@ impl Store {
             log,
             tables: RwLock::new(BTreeMap::new()),
             quarantine: parking_lot::Mutex::new(Vec::new()),
+            materializer: RwLock::new(None),
         }))
     }
     pub fn open(&self, worker: &mut sto::Worker, key: TableKey, log_id: u16) -> Result<Table> {
@@ -118,11 +121,28 @@ impl Store {
         Ok(table)
     }
     pub fn table(&self, key: TableKey) -> Result<Table> {
-        self.tables
-            .read()
-            .get(&key)
-            .cloned()
-            .ok_or_else(|| Error::new(ErrorCode::Invalid, "table is not open on this shard"))
+        if let Some(table) = self.existing(key) {
+            return Ok(table);
+        }
+        let materializer = self.materializer.read().clone();
+        materializer
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "table is not open on this shard"))?(
+            key
+        )
+    }
+    pub(crate) fn existing(&self, key: TableKey) -> Option<Table> {
+        self.tables.read().get(&key).cloned()
+    }
+    pub(crate) fn set_materializer(&self, materializer: Arc<Materializer>) -> Result<()> {
+        let mut slot = self.materializer.write();
+        if slot.is_some() {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "table materializer already installed",
+            ));
+        }
+        *slot = Some(materializer);
+        Ok(())
     }
     pub(crate) fn quarantine(&self, pin: Protection) {
         self.quarantine.lock().push(pin);
@@ -161,6 +181,16 @@ pub struct Protection {
 }
 impl Protection {
     fn route(&self, access: &Access) -> Result<Option<RoutedGrant>> {
+        let governed = if self.snapshot.is_some() {
+            self.coordinates(access)?;
+            runtime()
+                .catalog
+                .read()
+                .by_id(access.table.table)
+                .is_some_and(|entry| entry.kind == mako_sharding::catalog::TableKind::Governed)
+        } else {
+            false
+        };
         if let Some(route) = access.route {
             if route.owner != self.owner {
                 return Err(Error::new(
@@ -168,14 +198,14 @@ impl Protection {
                     "request belongs to another shard",
                 ));
             }
-            Ok(Some(RoutedGrant {
+            Ok(governed.then_some(RoutedGrant {
                 grant: Grant {
                     owner: route.owner,
                     ownership_version: route.ownership_version,
                 },
                 snapshot_version: route.snapshot_version,
             }))
-        } else if self.snapshot.is_some() {
+        } else if governed {
             Err(Error::new(
                 ErrorCode::RouteChanged,
                 "routed admission is required",

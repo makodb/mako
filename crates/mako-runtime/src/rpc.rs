@@ -75,6 +75,7 @@ impl Service for RpcService {
 
 pub struct RpcServer {
     server: Option<Server>,
+    address: String,
 }
 impl RpcServer {
     pub fn start(
@@ -94,9 +95,26 @@ impl RpcServer {
                 format!("SRPC listen failed: {status}"),
             ));
         }
+        let port = server.get_bound_port();
+        if port <= 0 {
+            return Err(Error::new(
+                ErrorCode::Transport,
+                "SRPC did not report its listening port",
+            ));
+        }
+        let host = address
+            .to_str()
+            .expect("address originated as UTF-8")
+            .rsplit_once(':')
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "listen address has no port"))?
+            .0;
         Ok(Self {
             server: Some(server),
+            address: format!("{host}:{port}"),
         })
+    }
+    pub fn address(&self) -> &str {
+        &self.address
     }
     pub fn shutdown(&mut self) {
         self.server.take();

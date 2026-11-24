@@ -147,7 +147,7 @@ impl Runtime {
     fn materialize(&self, d: &mut WarehouseDirectory, key: HandleKey) -> Result<usize,Status> {
         let handle = d.cached(key)?;
         if handle != 0 { return Ok(handle); }
-        let opener = *self.openers.lock().get(&key.owner).ok_or(Status::NotFound)?;
+        let opener = self.openers.lock().get(&key.owner).ok_or(Status::NotFound)?.clone();
         let _opening = self.engine_open.lock();
         let handle = opener.open(key.table,key.warehouse,key.owner,key.proxy)?;
         checked(d.register(key,handle))?;
@@ -246,7 +246,7 @@ impl Runtime {
             (Coordinates::Raw,false) => {
                 self.handle_live(owner)?;
                 if let Some(handle) = self.raw.lock().get(&(table,owner,false)) { return Ok(*handle); }
-                self.raw_handle(table,owner,false,self.node(owner)?.host)
+                self.raw_handle(table,owner,false,self.node(owner)?.host.clone())
             },
             _ => Err(Status::Invalid),
         }
@@ -255,7 +255,7 @@ impl Runtime {
         if self.catalog.read().by_id(table).ok_or(Status::NotFound)?.coordinates != Coordinates::Raw {
             return Err(Status::Invalid);
         }
-        self.raw_handle(table,origin,true,self.node(origin)?.host)
+        self.raw_handle(table,origin,true,self.node(origin)?.host.clone())
     }
     pub fn route(&self, table: u64, coordinate: &[u8]) -> Result<RoutedGrant,Status> {
         if let Some(cache) = &*self.cache.read() {
@@ -387,7 +387,7 @@ impl Runtime {
         let (migration_tx,migration_rx) = mpsc::channel();
         let snapshot = self.snapshot()?;
         let admission = Arc::new(AdmissionSnapshot::capture(&participant,Arc::clone(&snapshot)));
-        let node = Arc::new(Node { owner, nodes: count, migration, host, hello,
+        let node = Arc::new(Node { owner, nodes: count, migration, host: host.clone(), hello,
             local: Mutex::new(Local { participant,snapshot,
                 store: EngineStore {owner,host},plans: HashMap::new(),cuts: HashMap::new(),
                 ready: HashSet::new(),metadata: participant_log }),
@@ -750,7 +750,7 @@ impl Node {
                 ControlResult { status: Status::Ok, certificate: Some(Certificate::Ready),cleanup: Cleanup::None }
             } else {
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:None})?;
-                let source = RemoteSource::new(self.host,&payload);
+                let source = RemoteSource::new(self.host.clone(),&payload);
                 let Local {participant,store,..} = &mut *local;
                 let result = transfer::execute_final(participant,store,&plan,&source);
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:Some(&result)})?;
@@ -960,7 +960,7 @@ struct EngineStore { owner: u32, host: Host }
 impl EngineStore {
     fn materialize(&self, table: u64) -> Result<(),Status> {
         let coordinates = runtime().catalog.read().by_id(table).ok_or(Status::NotFound)?.coordinates;
-        if coordinates == Coordinates::Raw {runtime().raw_handle(table,self.owner,false,self.host)?;}
+        if coordinates == Coordinates::Raw {runtime().raw_handle(table,self.owner,false,self.host.clone())?;}
         Ok(())
     }
 }

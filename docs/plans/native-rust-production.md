@@ -165,3 +165,21 @@ these existing components while preserving the current application contracts.
   `/tmp/mako-native-rust-runtime-cmake-01.log` also confirms the new CMake
   integration target and adapter target pass. Native sharding Host callbacks
   and process bootstrap are the next step, not yet connected by this checkpoint.
++ Stage 3 migration-host checkpoint: `mako-runtime::migration` now owns native
+  table provisioning, raw/warehouse handle identities, sharding Host callbacks,
+  native SRPC control delivery, epoch cuts and stop/join. It reuses the existing
+  sharding actors and storage verbs. Callback anchors own Weak references so
+  failed startup and concurrent shutdown cannot leave dangling host pointers.
++ `/tmp/mako-native-rust-migration-integration-02.log`: 15 native runtime cases
+  and all-target Clippy passed. The relocation case holds an admitted transaction
+  across source freeze, commits a later value, then checks final capture,
+  destination reads and source cleanup. It also relocates a warehouse into a
+  lazily provisioned destination and checks local replicated-reference reads.
+  A separate failed-cold-start case exercises retained opener callbacks after
+  their owner has gone. The first test run exposed a test-port reservation race;
+  listeners now support port zero and report their actual bound address.
++ `/tmp/mako-native-rust-cluster-tests-01.log`: all 69 existing sharding library
+  tests passed after adding owned callback anchors. The previous native SRPC
+  participant/coordinator checkpoint is committed as `a392f4e68`.
++ Stage 3 remains in progress. Multi-process coverage, complete paged/routed
+  scan delivery, gateway behavior and the production process entry point remain.

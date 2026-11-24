@@ -2,6 +2,7 @@
 //! lifetime contract. No routing, role, generation or lease decision lives here.
 #![allow(unsafe_code)]
 use std::ffi::c_void;
+use std::sync::Arc;
 use crate::types::{KeyRange, Row, Status};
 use crate::wire::{checked, status};
 
@@ -41,20 +42,29 @@ pub struct HostAbi {
 }
 /// The C++ owner keeps context/DB alive until stop_node joins every borrower.
 /// Context is an address token, not dereferenced or owned by Rust.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Host {
+    _owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
     context: usize, enter: Enter, leave: Leave, open: Open, scan: Scan,
     put: Put, remove: Remove, peer: Peer, epoch_cut: EpochCut, epoch_drained: EpochDrained,
 }
 impl Host {
     pub unsafe fn from_abi(abi: &HostAbi) -> Result<Self, Status> {
-        Ok(Self { context: abi.context as usize,
+        Ok(Self { _owner: None, context: abi.context as usize,
             enter: abi.thread_enter.ok_or(Status::Invalid)?, leave: abi.thread_leave.ok_or(Status::Invalid)?,
             open: abi.open.ok_or(Status::Invalid)?, scan: abi.scan_next.ok_or(Status::Invalid)?,
             put: abi.put.ok_or(Status::Invalid)?, remove: abi.remove.ok_or(Status::Invalid)?,
             peer: abi.peer_call.ok_or(Status::Invalid)?,
             epoch_cut: abi.epoch_cut.ok_or(Status::Invalid)?,
             epoch_drained: abi.epoch_drained.ok_or(Status::Invalid)? })
+    }
+    /// As from_abi, with an owned context anchor retained by every host clone.
+    /// Callbacks may upgrade a Weak application owner through that anchor and
+    /// safely reject calls after shutdown, including a failed cold start.
+    pub unsafe fn from_owned_abi<T: std::any::Any + Send + Sync>(abi: &HostAbi, owner: Arc<T>) -> Result<Self, Status> {
+        let mut host = unsafe { Self::from_abi(abi)? };
+        host._owner = Some(owner);
+        Ok(host)
     }
     pub fn enter(&self, owner: u32) -> Result<(), Status> {
         checked(status(unsafe { (self.enter)(self.context as *mut c_void,owner) }))
@@ -152,10 +162,13 @@ impl Completion {
         unsafe { (self.sink)(self.context as *mut c_void,code as u32,Bytes::from_slice(&payload)) }
     }
 }
-#[derive(Clone, Copy)]
-pub struct Opener { context: usize, open: WarehouseOpen }
+#[derive(Clone)]
+pub struct Opener { context: usize, open: WarehouseOpen, _owner: Option<Arc<dyn std::any::Any + Send + Sync>> }
 impl Opener {
-    pub unsafe fn new(context: *mut c_void, open: WarehouseOpen) -> Self { Self { context: context as usize,open } }
+    pub unsafe fn new(context: *mut c_void, open: WarehouseOpen) -> Self { Self { context: context as usize,open, _owner: None } }
+    pub unsafe fn new_owned<T: std::any::Any + Send + Sync>(context: *mut c_void, open: WarehouseOpen, owner: Arc<T>) -> Self {
+        Self { context: context as usize, open, _owner: Some(owner) }
+    }
     pub fn same(&self, other: &Self) -> bool {
         self.context == other.context && std::ptr::fn_addr_eq(self.open,other.open)
     }
