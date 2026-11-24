@@ -24,4 +24,6 @@ pub mod rpc;
 mod scan;
 #[cfg(feature = "native-storage")]
 pub mod storage;
+#[cfg(feature = "native-storage")]
+pub mod tpcc;
 pub mod wire;

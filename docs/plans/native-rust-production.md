@@ -302,3 +302,17 @@ these existing components while preserving the current application contracts.
   lifecycle. Only after those gates pass will the native profile become default.
   Stage 6 then removes replaced C++/transpiler paths and runs the final proof,
   storage-boundary and dependency audits.
++ TPC-C data codecs, deterministic bounded loading and all five transaction
+  bodies now use the native shard client. Physical keys preserve origin-local
+  warehouse IDs, customer data at district+100, and delivery balances at
+  district+200. Loader progress and completion share ordinary transaction
+  durability; incomplete loads verify their committed prefix and completed
+  loads do not overwrite later workload changes. History date reservations
+  retain a restart-safe high-water mark.
++ `/tmp/mako-native-rust-tpcc-load-tests-01.log`: all-target Clippy and three
+  focused application cases passed. Concrete codec vectors match existing
+  fused-kernel layouts; interrupted loading resumes; two native shards execute
+  NewOrder, Payment, Delivery, OrderStatus and StockLevel. A missing late item
+  aborts the order header and prior remote stock work. Workload scheduling,
+  executable/CLI/config ports, persistent workload checks, and the default
+  switch remain outstanding. Stage 5 is still in progress.
