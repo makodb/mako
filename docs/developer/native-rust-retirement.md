@@ -5,6 +5,10 @@ storage dependency and invokes Cargo; it does not translate Rust to C++.
 `NATIVE_RUST` is the default production profile. `ROCKSDB_RAFT` remains the
 separate direct-storage service profile.
 
+The migration is complete. The [completed plan](../plans/native-rust-production.md#completion-evidence)
+records the production build, dependency audits, regression/proof gates and
+full ASan, UBSan and TSan qualification, with their tested revisions.
+
 ## Remaining native code
 
 `cmake/native-storage-sources.txt` lists the 16 first-party C++ production

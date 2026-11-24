@@ -3,6 +3,10 @@
 Requested 2026-11-24. Worktree `/var/tmp/mako-shard-rust`, branch
 `sharding-on-rust-engine`, starting revision `4703ec10a`.
 
+All six stages are complete. The final implementation and sanitizer-driver
+revision is `7b54fa72e`; the completion record below documents the tested
+revisions and remaining supported-mode limits.
+
 ## Objective and completion criteria
 
 Remove Paxos. Rewrite the remaining first-party application and integration
@@ -40,7 +44,7 @@ Completion requires:
 | 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Complete |
 | 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Complete |
 | 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | Complete |
-| 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | In progress |
+| 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | Complete |
 
 Stages may overlap where a dependency requires it. A stage is complete only
 after its checks pass; failures and remaining gaps stay recorded here. Work
@@ -586,3 +590,43 @@ these existing components while preserving the current application contracts.
   Nested storage documentation now describes the native application and
   current test targets. Stale comments about a C++ Raft/Paxos identity mirror
   were removed; the Raft protocol and SRPC regression logic are unchanged.
+
+## Completion evidence
+
+The fresh ASan and TSan gates passed end to end at `7b54fa72e`. UBSan passed
+at `f7183cf72`. Between those revisions, changes were limited to documentation,
+comments, and archive discovery in the ASan/TSan instrumentation audit. No
+application behavior changed. Each gate checked that HEAD and the working
+tree remained unchanged throughout its run.
+
+| Gate | Retained evidence | Result |
+| --- | --- | --- |
+| ASan | `build_native_san_address_05/rust-sto-sanitizer-manifest.txt`, `/tmp/mako-native-rust-sanitizer-address-05.log` | Passed; 92 executables use one instrumented std; compiler hooks, exact quarantine reruns and leak negative control checked. |
+| UBSan | `build_native_san_undefined_04/rust-sto-sanitizer-manifest.txt`, `/tmp/mako-native-rust-sanitizer-undefined-04.log` | Passed; 94 executables use one std. Native C/C++ is instrumented; Rust UBSan instrumentation is not claimed. |
+| TSan | `build_native_san_thread_05/rust-sto-sanitizer-manifest.txt`, `/tmp/mako-native-rust-sanitizer-thread-05.log` | Passed; 92 executables use one instrumented std; all 38 RocksDB consumers link the pinned, instrumented library. |
+
+Every sanitizer lane passed 334 independent transaction cases, 284 tree cases,
+84 adapter cases and 53 runtime cases. Cache qualification also passed: 26
+ASan executions, 10 UBSan executions and 12 TSan executions. ASan and TSan
+run the Loom models separately without sanitizer instrumentation, as recorded
+in the cache reports; these model executions passed.
+
+The earlier checkpoints retain the other completion evidence: all twelve
+optimized production programs and their dependency audit; 53 runtime cases
+in both debug and release; the workload topology matrix; 83 external Redis
+correctness tests; 238 separate C++ storage tests and 1000 fuzz inputs; native
+SRPC independence with C++ tools disabled; sharding/host proof gates and
+negative controls; and the direct RocksDB/Raft fault, snapshot and restart
+scenarios. Clippy, doctests and workflow parsing passed.
+
+Production C++ is limited to the 16 sources in
+`cmake/native-storage-sources.txt`, their storage-only header dependencies,
+and external RocksDB. SRPC retains its nine pinned C platform bindings and
+architecture fiber assembly. Paxos, the C++ application backend and the
+SRPC/Raft Rust-to-C++ build paths are removed.
+
+The [retirement map](../developer/native-rust-retirement.md) records the
+supported-mode limits: live migration rejects replicated or locally persistent
+storage; old C++ WAL import and a new durable distributed coordinator protocol
+are outside this migration. Unknown installed outcomes remain fenced. The
+completion commit changes only documentation.
