@@ -48,6 +48,10 @@ fn check(status: Status) -> Result<()> {
 }
 
 pub trait CommitLog: Send + Sync {
+    fn health(&self) -> Result<()> {
+        Ok(())
+    }
+    fn shutdown(&self) {}
     fn replica_status(&self, owner: u32) -> ReplicaStatus {
         ReplicaStatus {
             owner,

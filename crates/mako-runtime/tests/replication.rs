@@ -362,6 +362,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
                     1,
                     16,
                     gateway::Config {
+                        replicas: BTreeMap::new(),
                         schema: schema.clone(),
                         endpoints: BTreeMap::new(),
                         workers: 1,
@@ -412,6 +413,38 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         owner: 1,
         ..target()
     };
+    let proxy_schema = Schema::new(
+        vec![TableSpec {
+            id: 1,
+            name: "rows".into(),
+            kind: Kind::Governed,
+            warehouse: false,
+            initial_owner: 0,
+        }],
+        2,
+        0,
+    )
+    .unwrap();
+    let proxy = RunningShard::start_with_gateway(
+        local.clone(),
+        network.clone(),
+        "127.0.0.1:0",
+        2,
+        1,
+        16,
+        gateway::Config {
+            schema: proxy_schema,
+            endpoints: BTreeMap::new(),
+            replicas: BTreeMap::from([(0, group.clone())]),
+            workers: 1,
+        },
+    )
+    .unwrap();
+    let mut forwarded =
+        GatewayClient::connect(proxy.address().to_owned(), Duration::from_secs(5)).unwrap();
+    forwarded
+        .put(target(), b"forwarded", b"before failover")
+        .unwrap();
     let mut coordinator = Client::new(
         network.clone(),
         BTreeMap::new(),
@@ -455,6 +488,13 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     drop(replicas[first].take());
     wait(|| leader(&replicas).is_some());
     let mut resumed = sdk();
+    assert_eq!(
+        forwarded.get(target(), b"forwarded").unwrap().as_deref(),
+        Some(b"before failover".as_slice())
+    );
+    forwarded
+        .put(target(), b"forwarded", b"after failover")
+        .unwrap();
     // Retry the original identity after losing its response/connection. A
     // newly elected gateway returns the old INSERT result without repeating it.
     assert!(resumed.insert(target(), b"receipt", b"original").unwrap());
@@ -479,5 +519,6 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         .find_leader(0, &wrong, Duration::from_secs(1))
         .is_err());
     drop(worker);
+    drop(proxy);
     drop(servers);
 }

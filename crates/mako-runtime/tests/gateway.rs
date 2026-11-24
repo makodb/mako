@@ -121,6 +121,7 @@ fn native_gateway_retains_mutation_result_bits_and_exact_read_bytes() {
         1,
         16,
         gateway::Config {
+            replicas: BTreeMap::new(),
             schema: schema(0, 1),
             endpoints: BTreeMap::new(),
             workers: 2,
@@ -214,6 +215,7 @@ fn unknown_gateway_commit_is_not_reexecuted_or_reported_as_an_abort() {
         1,
         16,
         gateway::Config {
+            replicas: BTreeMap::new(),
             schema: schema(0, 1),
             endpoints: BTreeMap::new(),
             workers: 1,
@@ -256,6 +258,7 @@ fn forwarded_gateway_resolves_lost_reply_without_replaying_effect() {
         1,
         16,
         gateway::Config {
+            replicas: BTreeMap::new(),
             schema: schema.clone(),
             endpoints: BTreeMap::new(),
             workers: 1,
@@ -295,6 +298,7 @@ fn forwarded_gateway_resolves_lost_reply_without_replaying_effect() {
         1,
         16,
         gateway::Config {
+            replicas: BTreeMap::new(),
             schema,
             endpoints: BTreeMap::from([(1, proxy.address().to_owned())]),
             workers: 1,

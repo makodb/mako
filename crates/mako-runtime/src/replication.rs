@@ -391,6 +391,12 @@ impl Drop for Permit {
     }
 }
 impl CommitLog for ReplicatedLog {
+    fn health(&self) -> Result<()> {
+        ReplicatedLog::health(self)
+    }
+    fn shutdown(&self) {
+        ReplicatedLog::shutdown(self);
+    }
     fn replica_status(&self, owner: u32) -> wire::ReplicaStatus {
         let Some(binding) = self.binding.get() else {
             return wire::ReplicaStatus {
@@ -489,5 +495,135 @@ impl CommitLog for ReplicatedLog {
             return Err(Error::new(ErrorCode::Unknown, error.to_string()));
         }
         Ok(())
+    }
+}
+
+/// Local disk persistence uses the same atomic row/receipt store and recovery
+/// path, without a consensus host or replication thread.
+pub struct LocalLog {
+    state: OnceLock<Arc<State>>,
+}
+impl LocalLog {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: OnceLock::new(),
+        })
+    }
+    pub fn start(
+        &self,
+        store: &Arc<Store>,
+        schema: Arc<Schema>,
+        durable: Arc<DurableRows>,
+    ) -> Result<()> {
+        if self.state.get().is_some() {
+            return Err(storage("local persistence already started"));
+        }
+        let replay = Replay::start(store, schema.clone())?;
+        let state = Arc::new(State {
+            gate: Mutex::new(Gate::default()),
+            durable,
+            replay,
+            schema,
+        });
+        state.restore()?;
+        if state.durable.position()?.index == 0 {
+            state
+                .durable
+                .advance(sto_rocksdb::Position { index: 1, term: 1 })?;
+        }
+        self.state
+            .set(state)
+            .map_err(|_| storage("local persistence already started"))
+    }
+    fn state(&self) -> Result<&Arc<State>> {
+        self.state
+            .get()
+            .ok_or_else(|| storage("local persistence not started"))
+    }
+    fn publish(
+        &self,
+        bytes: &[u8],
+        time_term: u32,
+        receipt: Option<&wire::GatewayReceipt>,
+    ) -> Result<()> {
+        let state = self.state()?;
+        let mut gate = state.gate.lock();
+        let result: Result<()> = (|| {
+            State::ensure(&gate)?;
+            let rows = if bytes.is_empty() && receipt.is_some() {
+                Vec::new()
+            } else {
+                redo::decode_legacy(bytes, time_term)?
+            };
+            for row in &rows {
+                state.schema.key_for_log(row.table)?;
+            }
+            let previous = state.durable.position()?;
+            let index = previous
+                .index
+                .checked_add(1)
+                .ok_or_else(|| storage("local log position exhausted"))?;
+            let source = wire::encode(&(1u32, index, &rows, receipt))?;
+            state.durable.apply_gateway(
+                sto_rocksdb::Position { index, term: 1 },
+                &source,
+                &rows,
+                receipt,
+            )?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            gate.fault = Some(error.to_string());
+            return Err(Error::new(ErrorCode::Unknown, error.to_string()));
+        }
+        Ok(())
+    }
+}
+struct LocalPermit(Arc<State>);
+impl CommitPermit for LocalPermit {
+    fn check(&self) -> Result<()> {
+        State::ensure(&self.0.gate.lock())
+    }
+}
+impl Drop for LocalPermit {
+    fn drop(&mut self) {
+        self.0.gate.lock().active -= 1;
+    }
+}
+impl CommitLog for LocalLog {
+    fn health(&self) -> Result<()> {
+        State::ensure(&self.state()?.gate.lock())
+    }
+    fn admit(&self) -> Result<Box<dyn CommitPermit>> {
+        let state = self.state()?;
+        let mut gate = state.gate.lock();
+        State::ensure(&gate)?;
+        gate.active = gate
+            .active
+            .checked_add(1)
+            .ok_or_else(|| storage("local admission count exhausted"))?;
+        Ok(Box::new(LocalPermit(state.clone())))
+    }
+    fn retains_gateway_receipts(&self) -> bool {
+        true
+    }
+    fn gateway_receipt(
+        &self,
+        request: &wire::GatewayRequest,
+    ) -> Result<Option<wire::GatewayResponse>> {
+        let state = self.state()?;
+        State::ensure(&state.gate.lock())?;
+        state.durable.gateway_receipt(request)
+    }
+    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
+        self.publish(bytes, time_term, None)
+    }
+    fn append_gateway(
+        &self,
+        bytes: &[u8],
+        time_term: u32,
+        receipt: &wire::GatewayReceipt,
+    ) -> Result<()> {
+        self.publish(bytes, time_term, Some(receipt))
     }
 }

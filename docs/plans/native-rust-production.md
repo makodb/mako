@@ -38,8 +38,8 @@ Completion requires:
 | 1 | Delete Paxos protocol, worker, services and selection. Preserve shared Raft state under neutral names. | Raft builds and relevant regression tests; removed protocol rejected; source/symbol audit. | Complete |
 | 2 | Establish a storage-only native build and an idiomatic Rust application API over STO/Masstree. Separate storage runtime from worker/replay policy. | Cargo links against only the explicit Masstree native dependency set; local transaction/application tests pass. | Complete |
 | 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Complete |
-| 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | In progress |
-| 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | Pending |
+| 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Complete |
+| 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | In progress |
 | 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | Pending |
 
 Stages may overlap where a dependency requires it. A stage is complete only
@@ -283,3 +283,22 @@ these existing components while preserving the current application contracts.
 + Remaining stage-4 work is configuration wiring for replica groups and supported
   local disk persistence. The core replicated path and its client recovery checks
   are implemented; production-default and workload retirement are still pending.
++ Stage 4 is complete. Native configuration now carries replica groups for
+  gateway forwarding, and the forwarding test continues through a leader change.
+  Local disk persistence uses the same atomic row/receipt store and owned replay
+  path without starting Raft. Creation is explicit, sync policy is recorded, and
+  uncertain local writes fence the node. Durable startup uses transactional
+  loading; live migration still has no supported durable restart protocol and
+  cannot be combined with these persistence settings.
++ `/tmp/mako-native-rust-persistence-final-01.log`: all 30 runtime cases and
+  all-target application Clippy passed. The local disk case recovers committed
+  rows and exact client receipts after SIGKILL. CMake built `mako_node` plus the
+  existing native `rocksdb_raft_server`, `rocksdb_raft_client` and
+  `rocksdb_raft_bench`, using Cargo/SRPC directly.
++ Stage 5 pacing: first port TPC-C schemas/codecs, loaders and supported
+  transactions through the native application API, with local/sharded/replicated
+  behavior checks. Then port benchmark/simple-transaction entry points and
+  supported YAML/CLI workflows, including replica-group configuration and worker
+  lifecycle. Only after those gates pass will the native profile become default.
+  Stage 6 then removes replaced C++/transpiler paths and runs the final proof,
+  storage-boundary and dependency audits.

@@ -134,6 +134,8 @@ fn separate_process_migration_moves_raw_and_lazy_warehouse_tables() {
         drop(socket);
         let owner = owner as u32;
         children.push(Process::spawn(Config {
+            persistence: None,
+            replica_groups: BTreeMap::new(),
             owner,
             nodes: 2,
             listen: peers[&owner].clone(),
@@ -264,6 +266,8 @@ fn target(owner: u32) -> Target {
 #[test]
 fn separate_process_clocks_commit_and_abort_through_native_srpc() {
     let mut child = Process::start(Config {
+        persistence: None,
+        replica_groups: BTreeMap::new(),
         owner: 1,
         nodes: 2,
         listen: "127.0.0.1:0".into(),
@@ -377,6 +381,8 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
     let raft_address = socket.local_addr().unwrap().to_string();
     drop(socket);
     let mut config = Config {
+        persistence: None,
+        replica_groups: BTreeMap::new(),
         owner: 0,
         nodes: 1,
         listen: "127.0.0.1:0".into(),
@@ -483,6 +489,90 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
     assert_eq!(
         client.get(target(0), b"a").unwrap().as_deref(),
         Some(b"after recovery".as_slice())
+    );
+    recovered.stop();
+}
+
+#[test]
+#[cfg(feature = "replication")]
+fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
+    use mako_runtime::node::PersistenceConfig;
+    use mako_sharding::gateway as core;
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config {
+        owner: 0,
+        nodes: 1,
+        listen: "127.0.0.1:0".into(),
+        tables: vec![TableSpec {
+            id: 1,
+            name: "rows".into(),
+            kind: Kind::Governed,
+            warehouse: false,
+            initial_owner: 0,
+        }],
+        workers: 1,
+        gateway_workers: 1,
+        queue_capacity: 16,
+        warehouses_per_shard: 0,
+        peers: BTreeMap::new(),
+        migration: false,
+        initial: Vec::new(),
+        replication: None,
+        replica_groups: BTreeMap::new(),
+        persistence: Some(PersistenceConfig {
+            directory: root.path().to_owned(),
+            create: true,
+            sync_writes: true,
+        }),
+    };
+    let request = GatewayRequest {
+        client: (1 << 63) + 305,
+        sequence: 1,
+        session: 0,
+        kind: core::INSERT,
+        target: Some(target(0)),
+        key: b"row".to_vec(),
+        value: b"original".to_vec(),
+        forwarded: false,
+    };
+    let network = Network::default();
+    let mut server = Process::start(config.clone());
+    let expected = match network
+        .call(
+            &server.address,
+            Message::Gateway(request.clone()),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+    {
+        Reply::Gateway(reply) => reply,
+        reply => panic!("insert response: {reply:?}"),
+    };
+    assert_eq!(expected.outcome, core::COMMITTED);
+    assert!(expected.op_result);
+    let mut client =
+        GatewayClient::connect(server.address.clone(), Duration::from_secs(5)).unwrap();
+    client.put(target(0), b"row", b"later value").unwrap();
+    server.crash();
+    drop(server);
+    config.persistence.as_mut().unwrap().create = false;
+    let mut recovered = Process::start(config);
+    match network
+        .call(
+            &recovered.address,
+            Message::Gateway(request),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+    {
+        Reply::Gateway(reply) => assert_eq!(reply, expected),
+        reply => panic!("receipt response: {reply:?}"),
+    }
+    let mut client =
+        GatewayClient::connect(recovered.address.clone(), Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        client.get(target(0), b"row").unwrap().as_deref(),
+        Some(b"later value".as_slice())
     );
     recovered.stop();
 }

@@ -37,6 +37,7 @@ impl CommitLog for GatewayLog<'_> {
 pub struct Config {
     pub schema: Arc<Schema>,
     pub endpoints: BTreeMap<u32, String>,
+    pub replicas: BTreeMap<u32, ReplicaSet>,
     pub workers: usize,
 }
 enum Work {
@@ -47,6 +48,7 @@ struct State {
     store: Arc<Store>,
     schema: Arc<Schema>,
     endpoints: BTreeMap<u32, String>,
+    replicas: BTreeMap<u32, ReplicaSet>,
     network: Arc<Network>,
     admission: Mutex<core::Gateway>,
 }
@@ -105,6 +107,7 @@ impl RunningGateway {
             store,
             schema: config.schema,
             endpoints: config.endpoints,
+            replicas: config.replicas,
             network,
         });
         let mut running = Self {
@@ -274,14 +277,25 @@ impl State {
             .as_ref()
             .expect("storage request has route")
             .owner;
-        let Some(endpoint) = self.endpoints.get(&owner) else {
-            return terminal(2, core::ABORTED, false, Vec::new());
+        let endpoint = if let Some(replicas) = self.replicas.get(&owner) {
+            match self
+                .network
+                .find_leader(owner, replicas, Duration::from_secs(3))
+            {
+                Ok(endpoint) => endpoint,
+                Err(_) => return terminal(1, core::UNKNOWN, false, Vec::new()),
+            }
+        } else {
+            let Some(endpoint) = self.endpoints.get(&owner) else {
+                return terminal(2, core::ABORTED, false, Vec::new());
+            };
+            endpoint.clone()
         };
         let mut forwarded = request.clone();
         forwarded.session = 0;
         forwarded.forwarded = true;
         match self.network.call(
-            endpoint,
+            &endpoint,
             Message::Gateway(forwarded),
             Duration::from_secs(3),
         ) {

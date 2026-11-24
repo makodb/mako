@@ -30,6 +30,15 @@ pub struct ReplicaConfig {
     #[serde(default = "durable")]
     pub sync_writes: bool,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistenceConfig {
+    pub directory: PathBuf,
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default = "durable")]
+    pub sync_writes: bool,
+}
 fn durable() -> bool {
     true
 }
@@ -72,16 +81,42 @@ pub struct Config {
     pub initial: Vec<InitialRow>,
     #[serde(default)]
     pub replication: Option<ReplicaConfig>,
+    #[serde(default)]
+    pub persistence: Option<PersistenceConfig>,
+    #[serde(default)]
+    pub replica_groups: BTreeMap<u32, ReplicaSet>,
 }
 impl Config {
     pub fn schema(&self) -> Result<Arc<Schema>> {
+        if self.replica_groups.iter().any(|(owner, group)| {
+            *owner >= self.nodes
+                || group.endpoints.is_empty()
+                || group.endpoints.iter().any(String::is_empty)
+        }) {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "invalid shard replica group",
+            ));
+        }
+        if self.persistence.is_some() && self.replication.is_some() {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "configure local persistence or Raft, not both",
+            ));
+        }
+        if self.persistence.is_some() && self.migration {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "durable restart of live migration is unsupported by the sharding runtime",
+            ));
+        }
         if self.replication.is_some() && self.migration {
             return Err(Error::new(
                 ErrorCode::Invalid,
                 "live migration with replication replay is unsupported by the sharding runtime",
             ));
         }
-        if self.replication.is_some() && !self.initial.is_empty() {
+        if (self.replication.is_some() || self.persistence.is_some()) && !self.initial.is_empty() {
             return Err(Error::new(
                 ErrorCode::Invalid,
                 "load replicated rows through transactions after leader readiness",
@@ -164,7 +199,7 @@ impl RunningNode {
     pub fn start(mut config: Config) -> Result<Self> {
         let schema = config.schema()?;
         #[cfg(not(feature = "replication"))]
-        if config.replication.is_some() {
+        if config.replication.is_some() || config.persistence.is_some() {
             return Err(Error::new(
                 ErrorCode::Invalid,
                 "this executable was built without native Raft support",
@@ -176,10 +211,17 @@ impl RunningNode {
             .as_ref()
             .map(|_| crate::replication::ReplicatedLog::new(std::time::Duration::from_secs(10)))
             .transpose()?;
+        #[cfg(feature = "replication")]
+        let persistent = config
+            .persistence
+            .as_ref()
+            .map(|_| crate::replication::LocalLog::new());
         let log: Arc<dyn CommitLog> = {
             #[cfg(feature = "replication")]
             if let Some(replication) = &replication {
                 replication.clone() as Arc<dyn CommitLog>
+            } else if let Some(persistent) = &persistent {
+                persistent.clone() as Arc<dyn CommitLog>
             } else {
                 Arc::new(VolatileLog)
             }
@@ -222,6 +264,31 @@ impl RunningNode {
         }
         if config.migration {
             schema.install()?;
+        }
+        #[cfg(feature = "replication")]
+        if let (Some(persistent), Some(settings)) = (&persistent, &config.persistence) {
+            let directory = settings.directory.join("rows");
+            if !settings.create && !directory.join("CURRENT").is_file() {
+                return Err(Error::new(
+                    ErrorCode::Invalid,
+                    "local database missing; create must be explicit",
+                ));
+            }
+            let mut specs = config.tables.clone();
+            specs.sort_by_key(|spec| spec.id);
+            let identity = crate::wire::encode(&(
+                config.owner,
+                config.nodes,
+                config.warehouses_per_shard,
+                specs,
+            ))?;
+            let rows = crate::durable::DurableRows::open(
+                &directory,
+                u64::from(config.owner),
+                settings.sync_writes,
+                &identity,
+            )?;
+            persistent.start(&store, schema.clone(), rows)?;
         }
         #[cfg(feature = "replication")]
         if let (Some(replication), Some(settings)) = (&replication, &config.replication) {
@@ -273,6 +340,7 @@ impl RunningNode {
             gateway::Config {
                 schema: schema.clone(),
                 endpoints: config.peers.clone(),
+                replicas: config.replica_groups.clone(),
                 workers: config.gateway_workers as usize,
             },
         )?;
@@ -315,11 +383,7 @@ impl RunningNode {
         self.migration.as_ref().is_none_or(RunningMigration::ready)
     }
     pub fn health(&self) -> Result<()> {
-        #[cfg(feature = "replication")]
-        if let Some(replication) = &self.replication {
-            return replication.health();
-        }
-        Ok(())
+        self.store.log.health()
     }
     pub fn shutdown(&mut self) {
         self.server.take();
