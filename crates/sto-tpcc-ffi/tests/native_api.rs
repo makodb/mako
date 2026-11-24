@@ -7,6 +7,44 @@ use std::{ops::Bound, sync::Arc};
 use sto_tpcc_ffi::native::*;
 
 #[test]
+fn owned_replay_preserves_source_metadata_tombstones_and_clock() {
+    let db = Database::new(DatabaseConfig::default()).unwrap();
+    let mut worker = db.worker().unwrap();
+    let table = worker.create_table(TableConfig::default()).unwrap();
+    worker.replay(&table, b"row", Some(b"latest"), 900).unwrap();
+    worker.replay(&table, b"row", Some(b"old"), 800).unwrap();
+    worker
+        .replay(&table, b"row", Some(b"duplicate"), 900)
+        .unwrap();
+    let mut participant = worker.begin_participant(0).unwrap();
+    let read = participant.get(&table, b"row").unwrap();
+    assert_eq!(read.value.as_deref(), Some(b"latest".as_slice()));
+    assert_eq!(read.time_term, 900);
+    assert!(participant.timestamp().unwrap() > 90);
+    drop(participant);
+    worker.replay(&table, b"row", None, 1000).unwrap();
+    worker
+        .replay(&table, b"row", Some(b"stale resurrect"), 950)
+        .unwrap();
+    let mut participant = worker.begin_participant(0).unwrap();
+    let read = participant.get(&table, b"row").unwrap();
+    assert_eq!(read.value, None);
+    assert_eq!(read.time_term, 1000);
+    drop(participant);
+    assert_eq!(table.len(), 0);
+    drop(worker);
+    let other = Database::new(DatabaseConfig::default()).unwrap();
+    let mut other_worker = other.worker().unwrap();
+    assert_eq!(
+        other_worker
+            .replay(&table, b"row", Some(b"foreign"), 1100)
+            .unwrap_err()
+            .kind,
+        ErrorKind::InvalidUse
+    );
+}
+
+#[test]
 fn owned_api_preserves_crud_scan_abort_and_table_lifetime() {
     fn shared<T: Send + Sync>() {}
     shared::<Database>();

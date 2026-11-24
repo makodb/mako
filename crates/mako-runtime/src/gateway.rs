@@ -364,6 +364,10 @@ impl State {
                     return failed(error, false);
                 }
             };
+            if let Err(error) = protection.check() {
+                drop(participant);
+                return failed(error, false);
+            }
             match participant
                 .commit(0, &mut LogCallbacks(&*self.store.log))
                 .map_err(engine)

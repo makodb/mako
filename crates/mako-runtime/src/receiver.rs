@@ -122,6 +122,7 @@ fn execute(
     identity: Identity,
     action: &Action,
 ) -> Result<Value> {
+    protection.check()?;
     match action {
         Action::ScanPage { access, request } => {
             crate::scan::produce(store, protection, participant, identity, access, request)

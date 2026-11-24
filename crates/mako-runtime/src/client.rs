@@ -404,7 +404,12 @@ impl Transaction<'_, '_> {
         if let Some(error) = &self.failed {
             return Err(error.clone());
         }
-        let result = operation(self);
+        let result = self
+            .protection
+            .as_ref()
+            .expect("transaction epoch")
+            .check()
+            .and_then(|()| operation(self));
         if let Err(error) = &result {
             self.failed = Some(error.clone());
         }
@@ -593,6 +598,9 @@ impl Transaction<'_, '_> {
         })
     }
     pub fn commit(mut self) -> Result<()> {
+        if let Err(error) = self.protection.as_ref().expect("transaction epoch").check() {
+            self.failed.get_or_insert(error);
+        }
         if let Some(error) = self.failed.take() {
             self.abort_inner()?;
             return Err(error);

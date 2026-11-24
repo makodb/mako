@@ -152,6 +152,26 @@ impl Schema {
             Err(Error::new(ErrorCode::Invalid, "warehouse on raw table"))
         }
     }
+    pub fn key_for_log(&self, log_id: u16) -> Result<TableKey> {
+        for (table, base) in self.tables.values() {
+            let width = if table.warehouse { self.total } else { 1 };
+            if u32::from(log_id) >= u32::from(*base) && u32::from(log_id) < u32::from(*base) + width
+            {
+                return Ok(TableKey {
+                    table: table.id,
+                    warehouse: if table.warehouse {
+                        u32::from(log_id - base) + 1
+                    } else {
+                        0
+                    },
+                });
+            }
+        }
+        Err(Error::new(
+            ErrorCode::Invalid,
+            "unknown physical table log ID",
+        ))
+    }
     pub fn target(
         &self,
         key: TableKey,

@@ -62,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut announced = false;
     while !STOP.load(Ordering::Relaxed) {
+        node.health()?;
         if !announced && node.ready() {
             println!("MAKO_READY {}", node.address());
             std::io::stdout().flush()?;

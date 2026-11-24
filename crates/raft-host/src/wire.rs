@@ -141,7 +141,7 @@ impl raft_store::Codec<Command> for CommandCodec {
     }
     fn decode(&self, bytes: &[u8]) -> Result<Command, String> {
         match bytes.split_first() {
-            Some((0, rest)) if rest.is_empty() => Ok(Command(None)),
+            Some((0, [])) => Ok(Command(None)),
             Some((1, rest)) => Ok(Command(Some(Arc::from(rest)))),
             _ => Err("invalid host command record".into()),
         }

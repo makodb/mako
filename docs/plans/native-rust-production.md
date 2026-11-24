@@ -230,3 +230,37 @@ these existing components while preserving the current application contracts.
   Reuse the native Raft host and existing RocksDB checkpoint machinery. Local
   proposals must not replay into their own locked Masstree rows; snapshots must
   use committed durable state and retain uncertain-outcome fencing.
++ Stage 4 replay/replication checkpoint: owned `Worker::replay` delegates to
+  the existing STO compare/apply path. A checked Rust decoder consumes complete
+  local log frames before exposing rows. `DurableRows` uses the existing
+  sto-rocksdb atomic batch and checkpoint-generation implementation, retaining
+  source metadata and tombstones. Schema identities and applied-entry hashes
+  reject mismatched reopen, snapshot and replay inputs.
++ The native Raft application adapter keeps owned pending proposal identities
+  so a leader never replays into its own retained locks. Followers apply through
+  a dedicated affine worker. Quorum admission guards every transaction; changed
+  leadership invalidates guards. Unknown installed outcomes fence the replica
+  until restart rebuilds RAM from committed durable state. A former leader with
+  live speculative transactions also requires recovery before foreign replay.
++ `/tmp/mako-native-rust-replication-integration-03.log`: all 28 runtime cases,
+  all-target Clippy for changed application/adapter crates, and the native CMake
+  server target passed. Cases cover real Raft commits, tombstones, checkpoint
+  transfer to a missing peer, failover, lost-quorum fencing, and a native server
+  restart in a fresh process. The first process-restart run exposed readiness
+  being reported from the previous applied term; readiness now requires a known
+  leader and an applied prefix in the current Raft term.
++ `/tmp/mako-native-rust-durable-01.log`: durable rows, schema refusal, duplicate
+  position checks, tombstones and checkpoint-generation tests passed. Its owned
+  replay test initially attached two native workers on one OS thread; the test
+  now releases the first worker before checking foreign-database rejection.
+  `/tmp/mako-native-rust-replication-check-01.log` confirms that replay case passes.
++ The existing runtime explicitly rejects live migration with replication replay
+  (`src/cluster/runtime.rs`); native configuration preserves that restriction.
+  Migration metadata restart remains inspection-only, as before. Replicated
+  loading must use committed transactions after leader readiness, never the
+  volatile process's initial-row shortcut. This port does not promise a new
+  combined migration/consensus recovery protocol.
++ Stage 4 remains in progress: durable client retry receipts and routing after
+  replica leadership changes need review and coverage, along with supported
+  persistence/configuration workflows. Stages 5 and 6 remain outstanding. No
+  default switch or C++ application retirement is claimed by this checkpoint.

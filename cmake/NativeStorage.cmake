@@ -74,7 +74,7 @@ set(_cargo_manifest "${CMAKE_SOURCE_DIR}/crates/Cargo.toml")
 add_custom_target(mako_node ALL
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime --features native-storage --bin mako_node
+        -p mako-runtime --features replication --bin mako_node
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${MAKO_NATIVE_CARGO_TARGET}/debug/mako_node" "${CMAKE_BINARY_DIR}/mako_node"
     DEPENDS mako_native_storage

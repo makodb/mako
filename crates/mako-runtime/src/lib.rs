@@ -4,6 +4,8 @@
 pub mod admission;
 #[cfg(feature = "native-storage")]
 pub mod client;
+#[cfg(feature = "durable-storage")]
+pub mod durable;
 pub mod epoch;
 #[cfg(feature = "native-storage")]
 pub mod gateway;
@@ -14,6 +16,9 @@ pub mod migration;
 pub mod node;
 #[cfg(feature = "native-storage")]
 pub mod receiver;
+pub mod redo;
+#[cfg(feature = "replication")]
+pub mod replication;
 pub mod rpc;
 #[cfg(feature = "native-storage")]
 mod scan;

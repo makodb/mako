@@ -5,11 +5,34 @@ use crate::{
     migration::{RunningMigration, Schema, TableSpec},
     receiver::RunningShard,
     rpc::Network,
-    storage::{engine, Store, VolatileLog},
+    storage::{engine, CommitLog, Store, VolatileLog},
     wire::*,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplicaPeer {
+    pub id: u16,
+    pub address: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplicaConfig {
+    pub group: u64,
+    pub id: u16,
+    pub listen: String,
+    pub peers: Vec<ReplicaPeer>,
+    pub directory: PathBuf,
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default = "durable")]
+    pub sync_writes: bool,
+}
+fn durable() -> bool {
+    true
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,9 +70,23 @@ pub struct Config {
     pub migration: bool,
     #[serde(default)]
     pub initial: Vec<InitialRow>,
+    #[serde(default)]
+    pub replication: Option<ReplicaConfig>,
 }
 impl Config {
     pub fn schema(&self) -> Result<Arc<Schema>> {
+        if self.replication.is_some() && self.migration {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "live migration with replication replay is unsupported by the sharding runtime",
+            ));
+        }
+        if self.replication.is_some() && !self.initial.is_empty() {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "load replicated rows through transactions after leader readiness",
+            ));
+        }
         if self.owner >= self.nodes
             || self.workers == 0
             || self.gateway_workers == 0
@@ -120,11 +157,38 @@ pub struct RunningNode {
     pub store: Arc<Store>,
     pub schema: Arc<Schema>,
     pub network: Arc<Network>,
+    #[cfg(feature = "replication")]
+    replication: Option<Arc<crate::replication::ReplicatedLog>>,
 }
 impl RunningNode {
     pub fn start(mut config: Config) -> Result<Self> {
         let schema = config.schema()?;
-        let store = Store::new(config.owner, config.migration, Arc::new(VolatileLog))?;
+        #[cfg(not(feature = "replication"))]
+        if config.replication.is_some() {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "this executable was built without native Raft support",
+            ));
+        }
+        #[cfg(feature = "replication")]
+        let replication = config
+            .replication
+            .as_ref()
+            .map(|_| crate::replication::ReplicatedLog::new(std::time::Duration::from_secs(10)))
+            .transpose()?;
+        let log: Arc<dyn CommitLog> = {
+            #[cfg(feature = "replication")]
+            if let Some(replication) = &replication {
+                replication.clone() as Arc<dyn CommitLog>
+            } else {
+                Arc::new(VolatileLog)
+            }
+            #[cfg(not(feature = "replication"))]
+            {
+                Arc::new(VolatileLog)
+            }
+        };
+        let store = Store::new(config.owner, config.migration, log)?;
         {
             let mut loader = store.database.worker().map_err(engine)?;
             for spec in &config.tables {
@@ -159,6 +223,45 @@ impl RunningNode {
         if config.migration {
             schema.install()?;
         }
+        #[cfg(feature = "replication")]
+        if let (Some(replication), Some(settings)) = (&replication, &config.replication) {
+            let mut specs = config.tables.clone();
+            specs.sort_by_key(|spec| spec.id);
+            let identity = crate::wire::encode(&(
+                config.owner,
+                config.nodes,
+                config.warehouses_per_shard,
+                specs,
+            ))?;
+            let rows = crate::durable::DurableRows::open(
+                &settings.directory.join("rows"),
+                settings.group,
+                settings.sync_writes,
+                &identity,
+            )?;
+            replication.start(
+                raft_host::Config {
+                    group: settings.group,
+                    node: settings.id,
+                    listen: settings.listen.clone(),
+                    peers: settings
+                        .peers
+                        .iter()
+                        .map(|peer| raft_host::Peer {
+                            id: peer.id,
+                            address: peer.address.clone(),
+                        })
+                        .collect(),
+                    directory: settings.directory.join("raft"),
+                    create: settings.create,
+                    sync_writes: settings.sync_writes,
+                    ..raft_host::Config::default()
+                },
+                &store,
+                schema.clone(),
+                rows,
+            )?;
+        }
         let network = Arc::new(Network::default());
         let server = RunningShard::start_with_gateway(
             store.clone(),
@@ -182,6 +285,8 @@ impl RunningNode {
             store,
             schema,
             network,
+            #[cfg(feature = "replication")]
+            replication,
         };
         if config.migration {
             node.migration = Some(RunningMigration::start(
@@ -197,11 +302,32 @@ impl RunningNode {
         self.server.as_ref().expect("running node").address()
     }
     pub fn ready(&self) -> bool {
+        #[cfg(feature = "replication")]
+        if let Some(replication) = &self.replication {
+            return replication.health().is_ok()
+                && replication.host().is_ok_and(|host| {
+                    let status = host.status();
+                    status.leader.is_some()
+                        && status.applied.index > 0
+                        && status.applied.term == status.term
+                });
+        }
         self.migration.as_ref().is_none_or(RunningMigration::ready)
+    }
+    pub fn health(&self) -> Result<()> {
+        #[cfg(feature = "replication")]
+        if let Some(replication) = &self.replication {
+            return replication.health();
+        }
+        Ok(())
     }
     pub fn shutdown(&mut self) {
         self.server.take();
         self.migration.take();
+        #[cfg(feature = "replication")]
+        if let Some(replication) = self.replication.take() {
+            replication.shutdown();
+        }
     }
 }
 impl Drop for RunningNode {

@@ -139,6 +139,7 @@ fn separate_process_migration_moves_raw_and_lazy_warehouse_tables() {
             warehouses_per_shard: 1,
             peers: peers.clone(),
             migration: true,
+            replication: None,
             initial: if owner == 0 {
                 vec![
                     InitialRow {
@@ -274,6 +275,7 @@ fn separate_process_clocks_commit_and_abort_through_native_srpc() {
         warehouses_per_shard: 0,
         peers: BTreeMap::new(),
         migration: false,
+        replication: None,
         initial: Vec::new(),
     });
     let mut gateway =
@@ -358,4 +360,68 @@ fn separate_process_clocks_commit_and_abort_through_native_srpc() {
         Some(b"after abort".as_slice())
     );
     child.stop();
+}
+
+#[test]
+#[cfg(feature = "replication")]
+fn replicated_server_recovers_rows_in_a_fresh_process() {
+    use mako_runtime::node::{ReplicaConfig, ReplicaPeer};
+    let root = tempfile::tempdir().unwrap();
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let raft_address = socket.local_addr().unwrap().to_string();
+    drop(socket);
+    let mut config = Config {
+        owner: 0,
+        nodes: 1,
+        listen: "127.0.0.1:0".into(),
+        tables: vec![TableSpec {
+            id: 1,
+            name: "rows".into(),
+            kind: Kind::Governed,
+            warehouse: false,
+            initial_owner: 0,
+        }],
+        workers: 1,
+        gateway_workers: 1,
+        queue_capacity: 16,
+        warehouses_per_shard: 0,
+        peers: BTreeMap::new(),
+        migration: false,
+        initial: Vec::new(),
+        replication: Some(ReplicaConfig {
+            group: 40,
+            id: 1,
+            listen: raft_address.clone(),
+            peers: vec![ReplicaPeer {
+                id: 1,
+                address: raft_address,
+            }],
+            directory: root.path().to_owned(),
+            create: true,
+            sync_writes: true,
+        }),
+    };
+    let mut first = Process::start(config.clone());
+    let mut client =
+        GatewayClient::connect(first.address.clone(), Duration::from_secs(10)).unwrap();
+    client.put(target(0), b"a", b"durable").unwrap();
+    client.put(target(0), b"deleted", b"temporary").unwrap();
+    assert!(client.remove(target(0), b"deleted").unwrap());
+    first.stop();
+    drop(first);
+    config.replication.as_mut().unwrap().create = false;
+    let mut recovered = Process::start(config);
+    let mut client =
+        GatewayClient::connect(recovered.address.clone(), Duration::from_secs(10)).unwrap();
+    assert_eq!(
+        client.get(target(0), b"a").unwrap().as_deref(),
+        Some(b"durable".as_slice())
+    );
+    assert_eq!(client.get(target(0), b"deleted").unwrap(), None);
+    client.put(target(0), b"a", b"after recovery").unwrap();
+    assert_eq!(
+        client.get(target(0), b"a").unwrap().as_deref(),
+        Some(b"after recovery".as_slice())
+    );
+    recovered.stop();
 }

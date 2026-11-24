@@ -48,9 +48,20 @@ fn check(status: Status) -> Result<()> {
 }
 
 pub trait CommitLog: Send + Sync {
+    fn admit(&self) -> Result<Box<dyn CommitPermit>> {
+        Ok(Box::new(()))
+    }
     /// Return success only after the configured durability contract is met.
     /// A failure occurs after local installation and therefore fences the lane.
     fn append(&self, bytes: &[u8], time_term: u32) -> Result<()>;
+}
+pub trait CommitPermit: Send + Sync {
+    fn check(&self) -> Result<()>;
+}
+impl CommitPermit for () {
+    fn check(&self) -> Result<()> {
+        Ok(())
+    }
 }
 /// Explicit policy for a non-replicated, non-persistent shard.
 pub struct VolatileLog;
@@ -155,6 +166,7 @@ impl Store {
             .collect()
     }
     pub fn protect(&self) -> Result<Protection> {
+        let permit = self.log.admit()?;
         let pin = self.epochs.enter();
         let snapshot = if self.migration {
             Some(
@@ -167,6 +179,7 @@ impl Store {
             None
         };
         Ok(Protection {
+            permit,
             _pin: pin,
             snapshot,
             owner: self.owner,
@@ -175,6 +188,7 @@ impl Store {
 }
 
 pub struct Protection {
+    permit: Box<dyn CommitPermit>,
     _pin: Pin,
     snapshot: Option<Arc<AdmissionSnapshot>>,
     owner: u32,
@@ -185,6 +199,9 @@ pub(crate) struct ScanSegment {
     pub route: Route,
 }
 impl Protection {
+    pub(crate) fn check(&self) -> Result<()> {
+        self.permit.check()
+    }
     pub(crate) fn captured_route(&self, table: u64, coordinate: &[u8]) -> Result<Route> {
         let snapshot = self
             .snapshot
@@ -239,6 +256,7 @@ impl Protection {
         Ok(segments)
     }
     fn route(&self, access: &Access) -> Result<Option<RoutedGrant>> {
+        self.check()?;
         let governed = if self.snapshot.is_some() {
             self.coordinates(access)?;
             runtime()

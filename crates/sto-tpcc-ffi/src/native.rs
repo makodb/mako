@@ -173,6 +173,42 @@ impl Worker {
         })
     }
 
+    /// Apply decided source metadata through the existing compare/replay rule.
+    /// This is an independent local transaction, never part of a live participant.
+    pub fn replay(
+        &mut self,
+        table: &Table,
+        key: &[u8],
+        value: Option<&[u8]>,
+        time_term: u32,
+    ) -> Result<()> {
+        if self.raw.active.is_some() || self.raw.protocol.is_uncertain() {
+            return Err(invalid(
+                "cannot replay during a transaction or unresolved outcome",
+            ));
+        }
+        self.pin(table)?;
+        let bytes = value.unwrap_or_default();
+        // SAFETY: the affine worker is exclusive, table is retained and checked
+        // against its database, and input slices remain borrowed through commit.
+        let result = checked(unsafe {
+            protocol::sto_tpcc_replay_apply(
+                &mut *self.raw,
+                &*table.inner,
+                key.as_ptr(),
+                key.len(),
+                bytes.as_ptr(),
+                bytes.len(),
+                u32::from(value.is_none()),
+                time_term,
+            )
+        });
+        if self.raw.active.is_none() {
+            self.pinned.clear();
+        }
+        result
+    }
+
     /// Explicit cleanup is also available after an application forgets a
     /// transaction guard. An uncertain distributed outcome is never called an
     /// abort; the underlying protocol returns its corresponding error.

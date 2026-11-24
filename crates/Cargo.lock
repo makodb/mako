@@ -399,12 +399,17 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "libc",
+ "mako-clock",
  "mako-sharding",
  "parking_lot",
+ "raft-host",
  "serde",
  "serde_json",
+ "sha2",
  "srpc",
+ "sto-rocksdb",
  "sto-tpcc-ffi",
+ "tempfile",
 ]
 
 [[package]]
