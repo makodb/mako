@@ -1142,8 +1142,7 @@ int main(int argc, char **argv) {
     std::string paxos_proc_name = std::string(argv[4 + arg_offset]);
     int is_replicated = std::stoi(argv[5 + arg_offset]);
 
-    // Set replication type if provided. The default is raft; paxos must be
-    // named and is deprecated and untested (src/deptran/paxos/DEPRECATED.md).
+    // Validate an explicit replication selection. Raft is the only protocol.
     std::string replication_type = "raft";
     if (effective_argc == 7) {
         replication_type = argv[6 + arg_offset];
@@ -1165,18 +1164,8 @@ int main(int argc, char **argv) {
             + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
 
-    std::string replication_type_normalized = replication_type;
-    std::transform(replication_type_normalized.begin(),
-                   replication_type_normalized.end(),
-                   replication_type_normalized.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const bool use_raft_replication = (replication_type_normalized == "raft");
-
-    // Use replication-specific config files.
-    std::string replication_mode_config = use_raft_replication
-        ? "../config/raft.yml"
-        : "../config/paxos.yml";
-    std::string replication_config_prefix = use_raft_replication ? "raft" : "paxos";
+    const std::string replication_mode_config = "../config/raft.yml";
+    const std::string replication_config_prefix = "raft";
 
     // Test wrappers set MAKO_PAXOS_CONFIG_DIR to redirect the replication
     // config to a tmp dir with randomized ports (avoids 45xxx/46xxx range

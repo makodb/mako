@@ -1206,12 +1206,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/config.cc
     src/deptran/frame.cc
     src/deptran/legacy_raft_log_payload.cc
-    src/deptran/paxos/commo.cc
-    src/deptran/paxos/coordinator.cc
-    src/deptran/paxos/frame.cc
-    src/deptran/paxos/server.cc
-    src/deptran/paxos/service.cc
-    src/deptran/paxos_worker.cc
     src/deptran/raft/application_log.cc
     src/deptran/raft/frame.cc
     src/deptran/raft/raft_transport.cc
@@ -1224,11 +1218,9 @@ set(DEPTRAN_CORE_SRC
     src/deptran/view_data.cc
 )
 
-# Runtime replication switching: compile BOTH Paxos and Raft helpers
-# The replication_helper.cc dispatcher routes calls based on runtime configuration
+# Raft is the only replication implementation.
 set(TXLOG_HELPER_SRC
     src/deptran/replication_helper.cc
-    src/deptran/paxos_main_helper.cc
     src/deptran/raft_main_helper.cc
 )
 
@@ -1731,7 +1723,6 @@ endif()
 set(DEPTRAN_BORROW_SRC
     src/deptran/communicator.cc
     # src/deptran/server_worker.cc  # Excluded: false positives from srpc header functions
-    src/deptran/paxos_worker.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
 )
@@ -2914,8 +2905,7 @@ if(TARGET sto_tpcc_bench)
         RUN_SERIAL TRUE
         TIMEOUT 30)
 
-    # Replicated scenarios run Raft only. The Paxos ones were removed when
-    # Paxos was deprecated (src/deptran/paxos/DEPRECATED.md).
+    # Replicated scenarios run Raft only.
     foreach(_protocol_engine IN ITEMS rust)
         foreach(_protocol_replication IN ITEMS none raft)
             set(_protocol_test

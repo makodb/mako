@@ -4,6 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+The active native-Rust migration is tracked in
+`docs/plans/native-rust-production.md`. The owner requested removal of Paxos,
+native Rust application code, and direct native SRPC on 2026-11-24. That request
+supersedes the earlier dual-compile/transpiler end state below. During the
+staged migration, existing C++ consumers are validated until their Rust
+replacements preserve the required behavior.
+
 This repository contains **Mako**, a speculative distributed transaction system
 with geo-replication (OSDI'25). Mako descends from the original Janus codebase
 (OSDI'16), but the standalone Janus and Mencius protocol implementations have
@@ -49,7 +56,7 @@ make -j32
 
 # Raft replication tests: 1 and 2 shards, on dbtest and on simple transaction
 # (Docker). There is no Paxos suite: Paxos is deprecated and its tests were
-# removed (src/deptran/paxos/DEPRECATED.md).
+# removed with the protocol.
 ./docker_build.sh ci shard1ReplicationRaft
 ./docker_build.sh ci shard2ReplicationRaft
 ./docker_build.sh ci shard1ReplicationSimpleRaft
@@ -84,7 +91,7 @@ BUILD_DIR=build_docker ./ci/ci.sh raftLabTest
 ## Code Architecture
 
 ### Core Directory Structure
-- `src/deptran/`: Raft replication, the deprecated Paxos implementation, and their shared runtime support
+- `src/deptran/`: Raft replication and application runtime support; Paxos is removed
 - `src/mako/`: Mako system with Masstree storage engine and speculative execution
 - `src/mako/benchmarks/`: Benchmark workloads and drivers (TPC-C in `tpcc.cc`, the `dbtest` driver)
 - `src/srpc/`: Custom RPC framework and networking layer
@@ -122,19 +129,11 @@ The original Silo `txn`/`txn_btree`/`txn_proto2` engine was removed earlier
 engine. The project-wide `janus::` C++ namespace remains for compatibility.
 - **Raft** (`src/deptran/raft/`): the supported and tested replication engine, and
   the default: a replicated run that names no protocol runs Raft.
-- **Paxos** (`src/deptran/paxos/`, `src/deptran/paxos_worker.*`,
-  `src/deptran/paxos_main_helper.cc`): **DEPRECATED** (owner's decision of
-  2026-11-22). It is still compiled into every build, but no test covers it
-  and it must not be extended. It runs only when selected explicitly, with
-  `--replication paxos` or a mode file whose `ab` says `paxos` or
-  `multi_paxos` (`config/paxos.yml`); an explicit flag wins over the files. A
-  process that starts it logs one `[PAXOS-DEPRECATED]` warning from
-  `paxos_impl::setup`. Many names that say "paxos" are shared with Raft
-  and are NOT deprecated
-  (`shutdown_paxos`, `ElectionState`, `PaxosStatus`, `--paxos-proc-name`,
-  `MAKO_PAXOS_CONFIG_DIR`, `bash/shard.sh`, and others).
-  `src/deptran/paxos/DEPRECATED.md` has the file set, the shared names and the
-  files that must not be edited.
+- **Paxos is removed** by the owner's decision of 2026-11-24. The old
+  implementation, RPC service, payloads and configuration mode are deleted.
+  Replication selection accepts Raft only. Some application names still say
+  "paxos" for compatibility with the existing Raft scripts; those are being
+  replaced with the native Rust application, and do not select a protocol.
 
 ### Transport Layer Architecture
 
@@ -172,11 +171,8 @@ is `SrpcRequestHandle`.
 - **Build configuration**: Controlled via CMake flags. (`PAXOS_LIB_ENABLED` is read by no build file in this tree; only legacy scripts under `src/mako` mention it.)
 
 ### Key Classes and Components
-- `Coordinator`: Coordinates distributed transactions across shards. Its only subclasses are the deprecated Paxos ones (`CoordinatorMultiPaxos`)
 - `TxLogServer`: The replication-engine INTERFACE implemented by the Raft
-  server and the deprecated Paxos server (`src/deptran/scheduler.h`). It holds no state: it was six
-  shared data members until they were moved down into the two
-  concrete servers, because implementation inheritance has no Rust spelling.
+  server (`src/deptran/scheduler.h`). It holds no state.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)

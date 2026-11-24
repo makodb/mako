@@ -6,17 +6,6 @@ using srpc::Fiber;
 
 namespace janus;
 
-abstract service MultiPaxos {
-  defer ForwardToLearnerServer(i32 par_id,
-                               uint64_t slot,
-                               ballot_t ballot,
-                               Command cmd | uint64_t ret_slot, ballot_t ret_ballot);
-
-  defer BulkAccept(Command cmd | i32 ballot, i32 val);
-  defer SyncLog(Command cmd | i32 ballot, i32 val, Command ret);
-  defer BulkDecide(Command cmd | i32 ballot, i32 val);
-}
-
 
 abstract service Raft {
 

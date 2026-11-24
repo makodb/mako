@@ -90,7 +90,7 @@ namespace janus {
 // selector; do not reuse it.
 // 0x18 is reserved for compatibility with the retired None-Copilot adapter.
 
-#define MODE_MULTI_PAXOS   (0x40)
+// 0x40 is reserved for the removed Multi-Paxos protocol.
 // 0x41 is reserved for the former Multi-Paxos-Plus placeholder.
 // 0x80 is reserved for the former EPaxos placeholder.
 // 0x100 is reserved for compatibility with the retired TAPIR protocol.

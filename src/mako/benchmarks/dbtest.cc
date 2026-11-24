@@ -227,7 +227,7 @@ static void warn_if_replicated_role_may_block() {
   }
 
   Warning("Replicated dbtest started with --paxos-proc-name=%s. "
-          "If peer role groups (p1, p2; also learner under the deprecated Paxos) are not running, startup can wait indefinitely. "
+          "If peer role groups (p1, p2) are not running, startup can wait indefinitely. "
           "Use --startup-timeout-sec=<seconds> or MAKO_STARTUP_TIMEOUT_SEC to fail fast in non-interactive runs. "
           "For local end-to-end runs use examples/test_1shard_replication_raft.sh or "
           "examples/test_2shard_replication_raft.sh.",
@@ -293,7 +293,7 @@ public:
       }
       fprintf(stderr,
               "[ERROR] dbtest startup timed out after %d seconds in replicated localhost mode.\n"
-              "        Start peer roles (p1, p2; also learner under the deprecated Paxos) or use examples/test_1shard_replication_raft.sh / examples/test_2shard_replication_raft.sh.\n",
+              "        Start peer roles (p1, p2) or use examples/test_1shard_replication_raft.sh / examples/test_2shard_replication_raft.sh.\n",
               startup_timeout_sec);
       std::fflush(stderr);
       std::_Exit(2);
@@ -543,7 +543,7 @@ main(int argc, char **argv)
   vector<string> paxos_config_file{};
   string site_name = "";  // For new config format
   string local_shards_str = "";  // For multi-shard mode: comma-separated list
-  string replication_type = "";  // raft or paxos (empty: mode.ab of the -F files, else raft)
+  string replication_type = "";  // raft only (empty: mode.ab of the -F files, else raft)
 
   auto& benchConfig = BenchmarkConfig::getInstance();
   // Parse command line arguments

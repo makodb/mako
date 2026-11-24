@@ -1,20 +1,7 @@
 #pragma once
 
-// replication_helper.h - Runtime switching between Raft and Paxos replication
-//
-// This header provides a unified interface for replication. The engine is
-// selected at run time, in this order of precedence:
-//   1. an explicit choice: set_replication_type*() (dbtest's
-//      --replication=raft|paxos flag calls it) or a --replication argument in
-//      the argv handed to setup();
-//   2. the mode.ab key of the replication config files: "raft" selects Raft,
-//      "paxos" or "multi_paxos" selects Paxos;
-//   3. the default, Raft.
-// Paxos is deprecated and runs only when 1 or 2 names it
-// (src/deptran/paxos/DEPRECATED.md).
-//
-// @safe - This module uses rusty::Cell for interior mutability of the global
-// replication type, ensuring safe mutation through a const-correct API.
+// Raft-only application replication interface.
+// Explicit protocol selections and mode.ab values must name Raft.
 
 #include <functional>
 #include <map>
@@ -32,7 +19,6 @@ namespace janus {
 // Replication type enum - Copy type suitable for rusty::Cell
 // @safe - trivially copyable enum
 enum class ReplicationType : int {
-    PAXOS = 0,
     RAFT = 1
 };
 
@@ -58,51 +44,8 @@ bool apply_config_replication_type(ReplicationType type);
 // Check if using specific replication type
 // @safe - read-only accessors
 inline bool is_using_raft() { return get_replication_type() == ReplicationType::RAFT; }
-inline bool is_using_paxos() { return get_replication_type() == ReplicationType::PAXOS; }
 
 }  // namespace janus
-
-// ============================================================================
-// Paxos Implementation Namespace Forward Declarations
-// ============================================================================
-namespace paxos_impl {
-std::vector<std::string> setup(int argc, char* argv[]);
-int setup2(int action, int shardIndex);
-std::map<std::string, std::string> getHosts(std::string);
-int get_outstanding_logs(uint32_t);
-int shutdown_paxos();
-void register_for_follower(std::function<void(const char*, int)>, uint32_t);
-void register_for_follower_par_id(std::function<void(const char*&, int, int)>, uint32_t);
-void register_for_follower_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)>,
-    uint32_t);
-void register_for_leader(std::function<void(const char*, int)>, uint32_t);
-void register_leader_election_callback(std::function<void(int)>);
-void register_for_leader_par_id(std::function<void(const char*&, int, int)>, uint32_t);
-void register_for_leader_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)>,
-    uint32_t);
-// The embedder's state-machine snapshot callbacks for one partition's Raft
-// server (Raft only; the Paxos helper ignores them).
-void register_snapshot_callbacks_for_partition(uint32_t par_id,
-                                               janus::RaftCreateSnapshotFn create,
-                                               janus::RaftPrepareSnapshotFn prepare);
-void submit(const char*, int, uint32_t);
-void add_log(const char*, int, uint32_t);
-void add_log_without_queue(const char*, int, uint32_t);
-bool add_log_to_nc(const char*, int, uint32_t, int);
-void wait_for_submit(uint32_t);
-void pre_shutdown_step();
-int get_epoch();
-void set_epoch(int epoch);
-void upgrade_p1_to_leader();
-void worker_info_stats(size_t);
-// removed `microbench_paxos()` and
-// `microbench_paxos_queue()` declarations (paxos_impl side) — see
-// paxos_main_helper.cc retirement comments.
-}  // namespace paxos_impl
 
 // ============================================================================
 // Raft Implementation Namespace Forward Declarations
@@ -127,7 +70,7 @@ void register_for_leader_par_id_return(
                       std::queue<std::tuple<int, int, int, int, const char*>>&)>,
     uint32_t);
 // The embedder's state-machine snapshot callbacks for one partition's Raft
-// server (Raft only; the Paxos helper ignores them).
+// server.
 void register_snapshot_callbacks_for_partition(uint32_t par_id,
                                                janus::RaftCreateSnapshotFn create,
                                                janus::RaftPrepareSnapshotFn prepare);
@@ -169,7 +112,7 @@ void register_for_leader_par_id_return(
                       std::queue<std::tuple<int, int, int, int, const char*>>&)>,
     uint32_t);
 // The embedder's state-machine snapshot callbacks for one partition's Raft
-// server (Raft only; the Paxos helper ignores them).
+// server.
 void register_snapshot_callbacks_for_partition(uint32_t par_id,
                                                janus::RaftCreateSnapshotFn create,
                                                janus::RaftPrepareSnapshotFn prepare);
@@ -187,5 +130,5 @@ void worker_info_stats(size_t);
 // `microbench_paxos_queue()` declarations (unified API side) — both
 // dispatcher impls deleted.
 
-// Raft-specific function (no-op for Paxos)
+// Preferred initial leader for Raft.
 void set_preferred_leader(int site_id);

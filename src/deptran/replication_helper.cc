@@ -13,8 +13,7 @@ namespace janus {
 // @safe - Using rusty::Cell for thread-safe interior mutability of Copy type.
 // The replication type is set once during initialization and read many times,
 // making Cell an appropriate choice (no runtime borrow checking overhead).
-// Raft is the default. The deprecated Paxos engine runs only when a caller or
-// a config file names it (src/deptran/paxos/DEPRECATED.md).
+// Raft is the only supported replication protocol.
 static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::RAFT};
 
 // Whether a caller named the protocol through set_replication_type*().
@@ -60,20 +59,17 @@ bool apply_config_replication_type(ReplicationType type) {
 // @safe - String parsing with validation, delegates to set_replication_type
 // @unsafe { std::string comparison operators are not borrow-checked }
 void set_replication_type_from_string(const std::string& type_str) {
-    if (type_str == "paxos" || type_str == "PAXOS") {
-        set_replication_type(ReplicationType::PAXOS);
-    } else if (type_str == "raft" || type_str == "RAFT") {
+    if (type_str == "raft" || type_str == "RAFT") {
         set_replication_type(ReplicationType::RAFT);
     } else {
         throw std::runtime_error("Invalid replication type: " + type_str +
-                                 ". Must be 'paxos' or 'raft'");
+                                 ". Only 'raft' is supported");
     }
 }
 
 // @safe - Pure function, no side effects
 const char* replication_type_to_string(ReplicationType type) {
     switch (type) {
-        case ReplicationType::PAXOS: return "paxos";
         case ReplicationType::RAFT: return "raft";
         default: return "unknown";
     }
@@ -107,18 +103,15 @@ std::optional<ReplicationType> parse_replication_flag(int argc, char* argv[]) {
       if (equals_ignore_case(value, "raft")) {
         return ReplicationType::RAFT;
       }
-      if (equals_ignore_case(value, "paxos")) {
-        return ReplicationType::PAXOS;
-      }
+      throw std::invalid_argument("Unsupported replication protocol: " + std::string(value));
     }
-    if (arg == "--replication" && i + 1 < argc) {
+    if (arg == "--replication") {
+      if (i + 1 == argc) throw std::invalid_argument("--replication requires raft");
       std::string_view value(argv[++i] ? argv[i] : "");
       if (equals_ignore_case(value, "raft")) {
         return ReplicationType::RAFT;
       }
-      if (equals_ignore_case(value, "paxos")) {
-        return ReplicationType::PAXOS;
-      }
+      throw std::invalid_argument("Unsupported replication protocol: " + std::string(value));
     }
   }
   return std::nullopt;
@@ -150,15 +143,13 @@ std::optional<ReplicationType> infer_replication_type_from_configs(
         continue;
       }
       const std::string ab = config["mode"]["ab"].as<std::string>();
-      // The spellings src/deptran/config.cc accepts for mode.ab
-      // (Config::LoadModeYML); config/paxos.yml says multi_paxos.
+      // Config::LoadModeYML validates the same protocol selection.
       if (equals_ignore_case(ab, "raft")) {
         inferred = ReplicationType::RAFT;
-      } else if (equals_ignore_case(ab, "paxos") ||
-                 equals_ignore_case(ab, "multi_paxos")) {
-        inferred = ReplicationType::PAXOS;
+      } else if (!equals_ignore_case(ab, "none")) {
+        throw std::invalid_argument("Unsupported replication mode.ab: " + ab);
       }
-    } catch (const std::exception&) {
+    } catch (const YAML::Exception&) {
       // Ignore unreadable/non-YAML files and keep scanning remaining configs.
     }
   }
@@ -197,163 +188,127 @@ void resolve_replication_type_from_args(int argc, char* argv[]) {
               << " was chosen explicitly but the config files say mode.ab is "
               << janus::replication_type_to_string(*config_type)
               << "; keeping the explicit choice. Pass the mode file of the"
-                 " chosen protocol (config/raft.yml or config/paxos.yml)."
+                 " chosen protocol (config/raft.yml)."
               << std::endl;
   }
 }
 
 }  // namespace
 
-// ============================================================================
-// Dispatch Macros
-// @safe - These macros dispatch to the appropriate implementation based on
-// the runtime replication type. No ownership transfer occurs; arguments are
-// forwarded by value or reference as declared in the function signatures.
-// ============================================================================
-
-#define DISPATCH_RAFT_OR_PAXOS(func, ...) \
-    do { \
-        if (janus::is_using_raft()) { \
-            return raft_impl::func(__VA_ARGS__); \
-        } else { \
-            return paxos_impl::func(__VA_ARGS__); \
-        } \
-    } while(0)
-
-#define DISPATCH_VOID_RAFT_OR_PAXOS(func, ...) \
-    do { \
-        if (janus::is_using_raft()) { \
-            raft_impl::func(__VA_ARGS__); \
-        } else { \
-            paxos_impl::func(__VA_ARGS__); \
-        } \
-    } while(0)
-
-// ============================================================================
-// Dispatch Functions
-// @unsafe - The implementation functions (paxos_impl/raft_impl) are not
-// borrow-checked since they interface with legacy C++ code and third-party
-// libraries. The dispatch layer itself is safe but delegates to unsafe code.
-// ============================================================================
+// Forward the application API to its sole Raft implementation.
 
 std::vector<std::string> setup(int argc, char* argv[]) {
     resolve_replication_type_from_args(argc, argv);  // @unsafe
-    DISPATCH_RAFT_OR_PAXOS(setup, argc, argv);  // @unsafe
+    return raft_impl::setup(argc, argv);  // @unsafe
 }
 
 int setup2(int action, int shardIndex) {
-    DISPATCH_RAFT_OR_PAXOS(setup2, action, shardIndex);  // @unsafe
+    return raft_impl::setup2(action, shardIndex);  // @unsafe
 }
 
 std::map<std::string, std::string> getHosts(std::string s) {
-    DISPATCH_RAFT_OR_PAXOS(getHosts, s);  // @unsafe
+    return raft_impl::getHosts(s);  // @unsafe
 }
 
 int get_outstanding_logs(uint32_t par_id) {
-    DISPATCH_RAFT_OR_PAXOS(get_outstanding_logs, par_id);  // @unsafe
+    return raft_impl::get_outstanding_logs(par_id);  // @unsafe
 }
 
 int shutdown_paxos() {
-    DISPATCH_RAFT_OR_PAXOS(shutdown_paxos);  // @unsafe
+    return raft_impl::shutdown_paxos();  // @unsafe
 }
 
 // removed `microbench_paxos()` dispatcher
 // — no callers anywhere; both impls (paxos + raft) deleted.
 
 void register_for_follower(std::function<void(const char*, int)> cb, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_follower, cb, par_id);  // @unsafe
+    raft_impl::register_for_follower(cb, par_id);  // @unsafe
 }
 
 void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_follower_par_id, cb, par_id);  // @unsafe
+    raft_impl::register_for_follower_par_id(cb, par_id);  // @unsafe
 }
 
 void register_for_follower_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb,
     uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_follower_par_id_return, cb, par_id);  // @unsafe
+    raft_impl::register_for_follower_par_id_return(cb, par_id);  // @unsafe
 }
 
 void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_leader, cb, par_id);  // @unsafe
+    raft_impl::register_for_leader(cb, par_id);  // @unsafe
 }
 
 void register_leader_election_callback(std::function<void(int)> cb) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_leader_election_callback, cb);  // @unsafe
+    raft_impl::register_leader_election_callback(cb);  // @unsafe
 }
 
 void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_leader_par_id, cb, par_id);  // @unsafe
+    raft_impl::register_for_leader_par_id(cb, par_id);  // @unsafe
 }
 
 void register_for_leader_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb,
     uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_for_leader_par_id_return, cb, par_id);  // @unsafe
+    raft_impl::register_for_leader_par_id_return(cb, par_id);  // @unsafe
 }
 
 void register_snapshot_callbacks_for_partition(uint32_t par_id,
                                                janus::RaftCreateSnapshotFn create,
                                                janus::RaftPrepareSnapshotFn prepare) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(register_snapshot_callbacks_for_partition, par_id, create, prepare);  // @unsafe
+    raft_impl::register_snapshot_callbacks_for_partition(par_id, create, prepare);  // @unsafe
 }
 
 void submit(const char* data, int len, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(submit, data, len, par_id);  // @unsafe
+    raft_impl::submit(data, len, par_id);  // @unsafe
 }
 
 void add_log(const char* data, int len, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(add_log, data, len, par_id);  // @unsafe
+    raft_impl::add_log(data, len, par_id);  // @unsafe
 }
 
 void add_log_without_queue(const char* data, int len, uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(add_log_without_queue, data, len, par_id);  // @unsafe
+    raft_impl::add_log_without_queue(data, len, par_id);  // @unsafe
 }
 
-// @unsafe - dispatches to Raft or Paxos implementation
+// @unsafe - forwards borrowed log bytes to Raft admission.
 bool add_log_to_nc(const char* data, int len, uint32_t par_id, int flag,
                    uint16_t* leader_hint_out) {
-    auto type = janus::get_replication_type();
-    if (type == janus::ReplicationType::RAFT) {
-        return raft_impl::add_log_to_nc(data, len, par_id, flag, leader_hint_out);  // @unsafe
-    } else {
-        return paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
-    }
+    return raft_impl::add_log_to_nc(data, len, par_id, flag, leader_hint_out);
 }
 
 void wait_for_submit(uint32_t par_id) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(wait_for_submit, par_id);  // @unsafe
+    raft_impl::wait_for_submit(par_id);  // @unsafe
 }
 
 // removed `microbench_paxos_queue()`
 // dispatcher — no callers anywhere; both impls deleted.
 
 void pre_shutdown_step() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(pre_shutdown_step);  // @unsafe
+    raft_impl::pre_shutdown_step();  // @unsafe
 }
 
 int get_epoch() {
-    DISPATCH_RAFT_OR_PAXOS(get_epoch);  // @unsafe
+    return raft_impl::get_epoch();  // @unsafe
 }
 
 void set_epoch(int epoch) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(set_epoch, epoch);  // @unsafe
+    raft_impl::set_epoch(epoch);  // @unsafe
 }
 
 void upgrade_p1_to_leader() {
-    DISPATCH_VOID_RAFT_OR_PAXOS(upgrade_p1_to_leader);  // @unsafe
+    raft_impl::upgrade_p1_to_leader();  // @unsafe
 }
 
 void worker_info_stats(size_t s) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(worker_info_stats, s);  // @unsafe
+    raft_impl::worker_info_stats(s);  // @unsafe
 }
 
-// Raft-specific function - no-op for Paxos
+// Preferred initial leader for Raft.
 void set_preferred_leader(int site_id) {
     if (janus::is_using_raft()) {
         raft_impl::set_preferred_leader(site_id);  // @unsafe
     }
-    // No-op for Paxos
 }

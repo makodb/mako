@@ -38,13 +38,6 @@ class LogEntry;
 class TpcPrepareCommand;
 class TpcCommitCommand;
 class VecPieceData;
-class BulkPaxosCmd;
-class BulkPrepareLog;
-class HeartBeatLog;
-class SyncLogRequest;
-class SyncLogResponse;
-class SyncNoOpRequest;
-class PaxosPrepCmd;
 class TpcEmptyCommand;
 class TpcNoopCommand;
 class TpcBatchCommand;
@@ -69,13 +62,7 @@ mod janus {
         TpcPrepareCommand = 2,
         TpcCommitCommand = 3,
         VecPieceData = 4,
-        BulkPaxosCmd = 5,
-        BulkPrepareLog = 6,
-        HeartBeatLog = 7,
-        SyncLogRequest = 8,
-        SyncLogResponse = 9,
-        SyncNoOpRequest = 10,
-        PaxosPrepCmd = 11,
+        // Wire tags 5..11 belonged to Paxos; never reuse them.
         TpcEmptyCommand = 12,
         TpcNoopCommand = 13,
         TpcBatchCommand = 14,
@@ -107,41 +94,6 @@ impl srpc::PayloadMember<janus::MakoCommands> for janus::TpcCommitCommand {
 #[cfg_attr(any(), cpp_marker_impl)]
 impl srpc::PayloadMember<janus::MakoCommands> for janus::VecPieceData {
     const KIND: i32 = janus::MakoCommandKind::VecPieceData as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::BulkPaxosCmd {
-    const KIND: i32 = janus::MakoCommandKind::BulkPaxosCmd as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::BulkPrepareLog {
-    const KIND: i32 = janus::MakoCommandKind::BulkPrepareLog as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::HeartBeatLog {
-    const KIND: i32 = janus::MakoCommandKind::HeartBeatLog as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncLogRequest {
-    const KIND: i32 = janus::MakoCommandKind::SyncLogRequest as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncLogResponse {
-    const KIND: i32 = janus::MakoCommandKind::SyncLogResponse as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::SyncNoOpRequest {
-    const KIND: i32 = janus::MakoCommandKind::SyncNoOpRequest as i32;
-}
-
-#[cfg_attr(any(), cpp_marker_impl)]
-impl srpc::PayloadMember<janus::MakoCommands> for janus::PaxosPrepCmd {
-    const KIND: i32 = janus::MakoCommandKind::PaxosPrepCmd as i32;
 }
 
 #[cfg_attr(any(), cpp_marker_impl)]
@@ -184,21 +136,14 @@ impl srpc::PayloadMember<janus::MakoCommands> for janus::ReplicatedDBCommand {
     const KIND: i32 = janus::MakoCommandKind::ReplicatedDBCommand as i32;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=mako_commands.1 version=1 rust_sha256=497d42d963fff7776bc6afb6456dba45e8a2e2420c3ff55633f9104463dce149*/
+/*RUSTYCPP:GEN-BEGIN id=mako_commands.1 version=1 rust_sha256=b1dd4575eddc47d979b6e6232b9ca941f5022e9568b6a1281be5fd05e07f9245*/
 namespace janus {
-    enum class MakoCommandKind;
+    enum class MakoCommandKind : int32_t;
     constexpr MakoCommandKind MakoCommandKind_Unknown();
     constexpr MakoCommandKind MakoCommandKind_LogEntry();
     constexpr MakoCommandKind MakoCommandKind_TpcPrepareCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcCommitCommand();
     constexpr MakoCommandKind MakoCommandKind_VecPieceData();
-    constexpr MakoCommandKind MakoCommandKind_BulkPaxosCmd();
-    constexpr MakoCommandKind MakoCommandKind_BulkPrepareLog();
-    constexpr MakoCommandKind MakoCommandKind_HeartBeatLog();
-    constexpr MakoCommandKind MakoCommandKind_SyncLogRequest();
-    constexpr MakoCommandKind MakoCommandKind_SyncLogResponse();
-    constexpr MakoCommandKind MakoCommandKind_SyncNoOpRequest();
-    constexpr MakoCommandKind MakoCommandKind_PaxosPrepCmd();
     constexpr MakoCommandKind MakoCommandKind_TpcEmptyCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcNoopCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcBatchCommand();
@@ -208,27 +153,17 @@ namespace janus {
     constexpr MakoCommandKind MakoCommandKind_KeyCmdBatchData();
     constexpr MakoCommandKind MakoCommandKind_ReplicatedDBCommand();
     struct MakoCommands;
-}
-
-namespace srpc {
 }
 
 // mod janus
 namespace janus {
 
-    enum class MakoCommandKind;
+    enum class MakoCommandKind : int32_t;
     constexpr MakoCommandKind MakoCommandKind_Unknown();
     constexpr MakoCommandKind MakoCommandKind_LogEntry();
     constexpr MakoCommandKind MakoCommandKind_TpcPrepareCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcCommitCommand();
     constexpr MakoCommandKind MakoCommandKind_VecPieceData();
-    constexpr MakoCommandKind MakoCommandKind_BulkPaxosCmd();
-    constexpr MakoCommandKind MakoCommandKind_BulkPrepareLog();
-    constexpr MakoCommandKind MakoCommandKind_HeartBeatLog();
-    constexpr MakoCommandKind MakoCommandKind_SyncLogRequest();
-    constexpr MakoCommandKind MakoCommandKind_SyncLogResponse();
-    constexpr MakoCommandKind MakoCommandKind_SyncNoOpRequest();
-    constexpr MakoCommandKind MakoCommandKind_PaxosPrepCmd();
     constexpr MakoCommandKind MakoCommandKind_TpcEmptyCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcNoopCommand();
     constexpr MakoCommandKind MakoCommandKind_TpcBatchCommand();
@@ -239,19 +174,12 @@ namespace janus {
     constexpr MakoCommandKind MakoCommandKind_ReplicatedDBCommand();
     struct MakoCommands;
 
-    enum class MakoCommandKind {
+    enum class MakoCommandKind : int32_t {
         Unknown = 0,
     LogEntry = 1,
     TpcPrepareCommand = 2,
     TpcCommitCommand = 3,
     VecPieceData = 4,
-    BulkPaxosCmd = 5,
-    BulkPrepareLog = 6,
-    HeartBeatLog = 7,
-    SyncLogRequest = 8,
-    SyncLogResponse = 9,
-    SyncNoOpRequest = 10,
-    PaxosPrepCmd = 11,
     TpcEmptyCommand = 12,
     TpcNoopCommand = 13,
     TpcBatchCommand = 14,
@@ -266,13 +194,6 @@ namespace janus {
     inline constexpr MakoCommandKind MakoCommandKind_TpcPrepareCommand() { return MakoCommandKind::TpcPrepareCommand; }
     inline constexpr MakoCommandKind MakoCommandKind_TpcCommitCommand() { return MakoCommandKind::TpcCommitCommand; }
     inline constexpr MakoCommandKind MakoCommandKind_VecPieceData() { return MakoCommandKind::VecPieceData; }
-    inline constexpr MakoCommandKind MakoCommandKind_BulkPaxosCmd() { return MakoCommandKind::BulkPaxosCmd; }
-    inline constexpr MakoCommandKind MakoCommandKind_BulkPrepareLog() { return MakoCommandKind::BulkPrepareLog; }
-    inline constexpr MakoCommandKind MakoCommandKind_HeartBeatLog() { return MakoCommandKind::HeartBeatLog; }
-    inline constexpr MakoCommandKind MakoCommandKind_SyncLogRequest() { return MakoCommandKind::SyncLogRequest; }
-    inline constexpr MakoCommandKind MakoCommandKind_SyncLogResponse() { return MakoCommandKind::SyncLogResponse; }
-    inline constexpr MakoCommandKind MakoCommandKind_SyncNoOpRequest() { return MakoCommandKind::SyncNoOpRequest; }
-    inline constexpr MakoCommandKind MakoCommandKind_PaxosPrepCmd() { return MakoCommandKind::PaxosPrepCmd; }
     inline constexpr MakoCommandKind MakoCommandKind_TpcEmptyCommand() { return MakoCommandKind::TpcEmptyCommand; }
     inline constexpr MakoCommandKind MakoCommandKind_TpcNoopCommand() { return MakoCommandKind::TpcNoopCommand; }
     inline constexpr MakoCommandKind MakoCommandKind_TpcBatchCommand() { return MakoCommandKind::TpcBatchCommand; }
@@ -312,48 +233,6 @@ template<>
 struct srpc::PayloadMember<::janus::MakoCommands, janus::VecPieceData> {
     static constexpr bool value = true;
     static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_VecPieceData());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::BulkPaxosCmd> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_BulkPaxosCmd());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::BulkPrepareLog> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_BulkPrepareLog());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::HeartBeatLog> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_HeartBeatLog());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncLogRequest> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncLogRequest());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncLogResponse> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncLogResponse());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::SyncNoOpRequest> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_SyncNoOpRequest());
-};
-
-template<>
-struct srpc::PayloadMember<::janus::MakoCommands, janus::PaxosPrepCmd> {
-    static constexpr bool value = true;
-    static constexpr int32_t KIND = static_cast<int32_t>(janus::MakoCommandKind_PaxosPrepCmd());
 };
 
 template<>

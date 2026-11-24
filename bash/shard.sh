@@ -15,9 +15,7 @@ trd=$3
 cluster=$4
 is_micro=$5
 is_replicated=$6
-# Defaults to raft if not specified. Pass paxos to select the DEPRECATED
-# Paxos engine explicitly; it is no longer tested and logs a deprecation
-# warning at start-up (src/deptran/paxos/DEPRECATED.md).
+# Raft is the only supported replication protocol.
 replication_type=${7:-raft}
 let up=trd+3
 #sudo cgset -r cpuset.mems=0 cpulimit
@@ -42,22 +40,21 @@ if [ "$is_micro" == "1" ]; then
     CMD="$CMD --is-micro"
 fi
 
-# Add paxos config and --is-replicated flag only if replication is enabled
+# Add Raft config and --is-replicated only when replication is enabled
 if [ "$is_replicated" == "1" ]; then
     replication_type_normalized="$(echo "$replication_type" | tr '[:upper:]' '[:lower:]')"
 
-    # Pick replication-specific config files.
+    # Select the Raft config files.
     # MAKO_PAXOS_CONFIG_DIR is set by the replication test wrappers when they
     # materialize a randomized-port copy of the config into a tmp dir; fall back
     # to the hardcoded path otherwise.
     REPLICATION_CONFIG_DIR="${MAKO_PAXOS_CONFIG_DIR:-config/1leader_2followers}"
-    if [ "$replication_type_normalized" == "raft" ]; then
-        MODE_CONFIG="config/raft.yml"
-        REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/raft${trd}_shardidx${shard}.yml"
-    else
-        MODE_CONFIG="config/paxos.yml"
-        REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/paxos${trd}_shardidx${shard}.yml"
+    if [ "$replication_type_normalized" != "raft" ]; then
+        echo "Error: only Raft replication is supported" >&2
+        exit 1
     fi
+    MODE_CONFIG="config/raft.yml"
+    REPLICATION_CONFIG="${REPLICATION_CONFIG_DIR}/raft${trd}_shardidx${shard}.yml"
 
     if [ ! -f "$REPLICATION_CONFIG" ]; then
         echo "Error: replication config not found: $REPLICATION_CONFIG"

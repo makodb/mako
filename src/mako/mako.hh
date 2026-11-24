@@ -930,14 +930,8 @@ static void cleanup_and_shutdown()
   //std::quick_exit( EXIT_SUCCESS ); // don't exit early
 }
 
-// @safe - Scans config files for a mode "ab:" line to auto-detect the
-// replication type: "raft" selects Raft; "paxos" or "multi_paxos"
-// (config/paxos.yml) selects the deprecated Paxos engine. With no such line
-// the type stays as it is (the default).
-// Called before the election callback is registered and before setup(), so
-// both go to the implementation that will run.
-// An explicit choice (--replication, set_replication_type*) wins over the
-// config files: the scan is skipped.
+// Validate Raft selection before registering application callbacks. The main
+// configuration parser performs complete YAML validation during setup.
 static void detect_replication_type_from_config(const vector<string>& config_files) {
   // Don't override explicit CLI setting
   if (janus::replication_type_is_explicit()) {
@@ -984,10 +978,7 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
           return;
         }
         if (value == "paxos" || value == "multi_paxos") {
-          Notice("Auto-detected replication type '%s' from config file: %s",
-                 value.c_str(), file_path.c_str());
-          janus::apply_config_replication_type(janus::ReplicationType::PAXOS);  // @unsafe
-          return;
+          throw std::invalid_argument("Paxos was removed; use mode.ab: raft");
         }
       }
     }

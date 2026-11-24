@@ -517,8 +517,6 @@ void Config::LoadModeYML(YAML::Node config) {
   to_lower_in_place(ab_str);
   if (ab_str == "none") {
     replica_proto_ = MODE_NONE;
-  } else if (ab_str == "multi_paxos" || ab_str == "paxos") {
-    replica_proto_ = MODE_MULTI_PAXOS;
   } else if (ab_str == "raft") {
     replica_proto_ = MODE_RAFT;
   } else {

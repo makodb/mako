@@ -285,13 +285,16 @@ PY
 # so we pick one global $base and pass $base + shard_idx*1000 as the target
 # for each shard's file.
 #
-# The third argument is the replication type and defaults to raft. Pass paxos
-# for the deprecated Paxos engine; its source configs are untracked, so call
-# ensure_paxos_replication_configs first.
+# The optional third argument must be raft. The historical function name is
+# retained until the Rust application CLI replaces these wrappers.
 make_paxos_replication_configs() {
     local nshards=$1
     local nthreads=$2
     local replication_type="${3:-raft}"
+    if [ "$replication_type" != "raft" ]; then
+        echo "ERROR: only Raft replication is supported" >&2
+        return 1
+    fi
     local base_port
     base_port=$(pick_paxos_replication_port_base "$nshards" "$nthreads")
     if [ -z "$base_port" ]; then

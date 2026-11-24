@@ -1,7 +1,0 @@
-# DEPRECATED: mode fragment of the Multi-Paxos engine, which is deprecated and no longer tested. Use config/raft.yml. See src/deptran/paxos/DEPRECATED.md.
-# Replication-only mode fragment for production Mako.
-# Mako executes transactions through mbta/STO; DepTran supplies replication.
-mode:
-  ab: multi_paxos
-  batch: false
-  retry: 20

@@ -13,7 +13,7 @@
 #include "application_log.h"
 #include "../config.h"
 #include "../legacy_raft_log_payload.h"
-#include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
+#include "../replay_status.h"
 #include "../replication_log_entry.h"
 #include "../tpc_command.h"  // TpcCommitCommand for batch optimization
 
@@ -1094,7 +1094,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
     timestamp = encoded_value / 10;
 
     if (raft_worker_should_buffer_unreplayed(
-            status, janus::PaxosStatus::STATUS_SAFETY_FAIL, len)) {
+            status, janus::ReplayStatus::STATUS_SAFETY_FAIL, len)) {
       char* dest = static_cast<char*>(malloc(len));
       verify(dest != nullptr);
       memcpy(dest, log, len);

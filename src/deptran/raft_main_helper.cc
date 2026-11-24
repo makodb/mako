@@ -10,7 +10,7 @@
 #include "frame.h"
 #include "raft/raft_worker.h"
 #include "raft/raft_transport.h"
-#include "paxos_worker.h"  // ElectionState definition lives here
+#include "election_state.h"
 #include <rusty/rusty.hpp>
 
 
@@ -874,15 +874,11 @@ int setup2(int action, int shardIndex) {
 
   // Update election state for Paxos compatibility
   if (es->machine_id == 0) {
-    es->set_state(0);   // Will become leader via election
     es->set_epoch(0);
-    es->set_leader(0);
     Log_info("[RAFT-SETUP] Machine {}: Preferred leader (will win elections naturally)",
              es->machine_id);
   } else {
-    es->set_state(0);
     es->set_epoch(0);
-    es->set_leader(0);
     Log_info("[RAFT-SETUP] Machine {}: Non-preferred replica (can take over if preferred fails)",
              es->machine_id);
   }
