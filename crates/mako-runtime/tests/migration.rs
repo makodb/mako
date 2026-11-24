@@ -309,3 +309,175 @@ fn failed_cold_start_leaves_only_owned_weak_callback_anchors() {
     );
     assert!(sto_tpcc_ffi::native::migration::Registry::new(store.database.clone(), 0).is_ok());
 }
+
+#[test]
+fn paged_scans_preserve_binary_cursors_order_and_limits_across_migrated_ranges() {
+    let schema = Schema::new(
+        vec![TableSpec {
+            id: 250,
+            name: "pages".into(),
+            kind: Kind::Governed,
+            warehouse: false,
+            initial_owner: 0,
+        }],
+        2,
+        0,
+    )
+    .unwrap();
+    schema.install().unwrap();
+    let source = Store::new(0, true, Arc::new(VolatileLog)).unwrap();
+    let destination = Store::new(1, true, Arc::new(VolatileLog)).unwrap();
+    let key = TableKey {
+        table: 250,
+        warehouse: 0,
+    };
+    let mut worker = source.database.worker().unwrap();
+    let table = source
+        .open(&mut worker, key, schema.log_id(key).unwrap())
+        .unwrap();
+    let mut expected: Vec<Vec<u8>> = (0..180).map(|i| format!("k{i:03}").into_bytes()).collect();
+    // At this row width k052 ends the first byte-limited page. Its binary
+    // extensions must survive an exclusive continuation from the exact key.
+    expected.extend([
+        b"k052\0".to_vec(),
+        b"k052\0\0".to_vec(),
+        b"k052\0\xff".to_vec(),
+        b"k089\0".to_vec(),
+    ]);
+    expected.sort();
+    for chunk in expected.chunks(24) {
+        let mut tx = worker.begin().unwrap();
+        for key in chunk {
+            tx.put(&table.tree, key, &[b'v'; 128]).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+    let network = Arc::new(Network::default());
+    let server0 =
+        RunningShard::start(source.clone(), network.clone(), "127.0.0.1:0", 2, 1, 16).unwrap();
+    let server1 = RunningShard::start(
+        destination.clone(),
+        network.clone(),
+        "127.0.0.1:0",
+        2,
+        1,
+        16,
+    )
+    .unwrap();
+    let endpoints = BTreeMap::from([
+        (0, server0.address().to_owned()),
+        (1, server1.address().to_owned()),
+    ]);
+    let host0 = RunningMigration::start(
+        source.clone(),
+        schema.clone(),
+        network.clone(),
+        endpoints.clone(),
+    )
+    .unwrap();
+    let host1 = RunningMigration::start(
+        destination,
+        schema.clone(),
+        network.clone(),
+        endpoints.clone(),
+    )
+    .unwrap();
+    wait(|| host0.ready() && host1.ready());
+    let nonce = TxnId {
+        client: 901,
+        sequence: 1,
+    };
+    let begin = control::Begin {
+        nonce,
+        table_name: b"pages".to_vec(),
+        lo: b"k090".to_vec(),
+        hi: None,
+        source: 0,
+        destination: 1,
+    };
+    admin(
+        &network,
+        &endpoints[&0],
+        control::ADMIN_BEGIN,
+        control::encode_begin(&begin).unwrap(),
+    );
+    wait(|| {
+        admin(
+            &network,
+            &endpoints[&0],
+            control::ADMIN_POLL,
+            control::encode_nonce(nonce).unwrap(),
+        )
+        .1 == 1
+    });
+    let mut client = Client::new(
+        network,
+        endpoints,
+        Stream { node: 0, worker: 0 },
+        0,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    client
+        .run(source.clone(), &mut worker, |tx| {
+            let rows = tx.scan_routed(
+                &schema,
+                key,
+                Bound::Unbounded,
+                Bound::Unbounded,
+                false,
+                1000,
+            )?;
+            assert_eq!(
+                rows.iter().map(|row| row.key.clone()).collect::<Vec<_>>(),
+                expected
+            );
+            assert!(rows.iter().all(|row| row.value == vec![b'v'; 128]));
+            Ok(())
+        })
+        .unwrap();
+    client
+        .run(source.clone(), &mut worker, |tx| {
+            let rows = tx.scan_routed(
+                &schema,
+                key,
+                Bound::Included(b"k010".to_vec()),
+                Bound::Included(b"k150".to_vec()),
+                true,
+                1000,
+            )?;
+            let filtered: Vec<_> = expected
+                .iter()
+                .rev()
+                .filter(|key| key.as_slice() >= b"k010" && key.as_slice() <= b"k150")
+                .cloned()
+                .collect();
+            assert_eq!(
+                rows.into_iter().map(|row| row.key).collect::<Vec<_>>(),
+                filtered
+            );
+            Ok(())
+        })
+        .unwrap();
+    client
+        .run(source, &mut worker, |tx| {
+            let rows = tx.scan_routed(
+                &schema,
+                key,
+                Bound::Excluded(b"k052".to_vec()),
+                Bound::Unbounded,
+                false,
+                2,
+            )?;
+            assert_eq!(
+                rows.into_iter().map(|row| row.key).collect::<Vec<_>>(),
+                vec![b"k052\0".to_vec(), b"k052\0\0".to_vec()]
+            );
+            Ok(())
+        })
+        .unwrap();
+    drop(server0);
+    drop(server1);
+    drop(host0);
+    drop(host1);
+}

@@ -285,6 +285,126 @@ pub struct Transaction<'client, 'worker> {
     failed: Option<Error>,
 }
 impl Transaction<'_, '_> {
+    /// Scan all captured routing segments in key order. The existing checked
+    /// cursor/page core bounds each RPC and verifies order, EOF and snapshot
+    /// provenance before rows are delivered. Limit applies across all segments.
+    pub fn scan_routed(
+        &mut self,
+        schema: &crate::migration::Schema,
+        table: TableKey,
+        lower: Bound,
+        upper: Bound,
+        reverse: bool,
+        limit: usize,
+    ) -> Result<Vec<Row>> {
+        self.attempt(|this| {
+            if limit == 0 {
+                return Ok(Vec::new());
+            }
+            let (lower, upper) = crate::scan::bounds(lower, upper);
+            if upper.as_ref().is_some_and(|upper| lower >= *upper) {
+                return Ok(Vec::new());
+            }
+            let log_id = schema.log_id(table)?;
+            let spec = schema.spec(table.table)?;
+            let governed = this.store.migration && spec.kind == crate::migration::Kind::Governed;
+            let mut rows = Vec::new();
+            if governed && !spec.warehouse {
+                let segments = this
+                    .protection
+                    .as_ref()
+                    .expect("transaction epoch")
+                    .segments(table.table, &lower, upper.as_deref(), reverse)?;
+                for segment in segments {
+                    let target = Target {
+                        owner: segment.route.owner,
+                        access: Access {
+                            table,
+                            route: Some(segment.route),
+                        },
+                        log_id,
+                    };
+                    this.scan_pages(
+                        &target,
+                        segment.lower,
+                        segment.upper,
+                        reverse,
+                        &mut rows,
+                        limit,
+                    )?;
+                    if rows.len() == limit {
+                        break;
+                    }
+                }
+            } else {
+                let mut target = schema.target(table, &lower, this.store.owner, false)?;
+                if governed {
+                    let route = this
+                        .protection
+                        .as_ref()
+                        .expect("transaction epoch")
+                        .captured_route(table.table, &table.warehouse.to_be_bytes())?;
+                    target.owner = route.owner;
+                    target.access.route = Some(route);
+                }
+                this.scan_pages(&target, lower, upper, reverse, &mut rows, limit)?;
+            }
+            Ok(rows)
+        })
+    }
+    fn scan_pages(
+        &mut self,
+        target: &Target,
+        lower: Vec<u8>,
+        upper: Option<Vec<u8>>,
+        reverse: bool,
+        rows: &mut Vec<Row>,
+        limit: usize,
+    ) -> Result<()> {
+        let identity = self.remotes.identity;
+        let mut driver = crate::scan::Driver::new(target, identity, lower, upper, reverse)?;
+        loop {
+            let request = driver.request()?;
+            let participant = self.participant.as_mut().expect("live transaction");
+            let response = if target.owner == self.store.owner {
+                crate::scan::produce(
+                    &self.store,
+                    self.protection.as_ref().expect("transaction epoch"),
+                    participant,
+                    identity,
+                    &target.access,
+                    &request,
+                )?
+            } else {
+                participant
+                    .flush_remote(&mut self.remotes)
+                    .map_err(engine)?;
+                self.remotes.call(
+                    target.owner,
+                    Action::ScanPage {
+                        access: target.access.clone(),
+                        request,
+                    },
+                )?
+            };
+            let Value::Page {
+                bytes,
+                read_dependency,
+            } = response
+            else {
+                return Err(Error::new(ErrorCode::Transport, "missing scan page"));
+            };
+            if target.owner != self.store.owner {
+                participant
+                    .observe_remote_scan(target.owner, read_dependency)
+                    .map_err(engine)?;
+            }
+            if driver.consume(&bytes, rows, limit)? {
+                return Ok(());
+            }
+        }
+    }
+
     fn attempt<T>(&mut self, operation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if let Some(error) = &self.failed {
             return Err(error.clone());

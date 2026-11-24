@@ -179,7 +179,65 @@ pub struct Protection {
     snapshot: Option<Arc<AdmissionSnapshot>>,
     owner: u32,
 }
+pub(crate) struct ScanSegment {
+    pub lower: Vec<u8>,
+    pub upper: Option<Vec<u8>>,
+    pub route: Route,
+}
 impl Protection {
+    pub(crate) fn captured_route(&self, table: u64, coordinate: &[u8]) -> Result<Route> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "no routing admission captured"))?;
+        let route = snapshot.route(table, coordinate).map_err(shard_error)?;
+        Ok(Route {
+            owner: route.grant.owner,
+            ownership_version: route.grant.ownership_version,
+            snapshot_version: route.snapshot_version,
+        })
+    }
+    pub(crate) fn segments(
+        &self,
+        table: u64,
+        lower: &[u8],
+        upper: Option<&[u8]>,
+        reverse: bool,
+    ) -> Result<Vec<ScanSegment>> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "no routing admission captured"))?
+            .routing();
+        let mut segments = Vec::new();
+        let mut push = |segment: mako_sharding::routing::ScanSegment<'_>| {
+            segments.push(ScanSegment {
+                lower: segment.lo.to_vec(),
+                upper: segment.hi.map(<[u8]>::to_vec),
+                route: Route {
+                    owner: segment.grant.owner,
+                    ownership_version: segment.grant.ownership_version,
+                    snapshot_version: snapshot.version,
+                },
+            })
+        };
+        if reverse {
+            let mut cursor = snapshot
+                .reverse_segments(table, lower, upper)
+                .map_err(shard_error)?;
+            while let Some(segment) = cursor.next() {
+                push(segment);
+            }
+        } else {
+            let mut cursor = snapshot
+                .segments(table, lower, upper)
+                .map_err(shard_error)?;
+            while let Some(segment) = cursor.next() {
+                push(segment);
+            }
+        }
+        Ok(segments)
+    }
     fn route(&self, access: &Access) -> Result<Option<RoutedGrant>> {
         let governed = if self.snapshot.is_some() {
             self.coordinates(access)?;

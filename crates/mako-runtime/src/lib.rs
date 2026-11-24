@@ -11,5 +11,7 @@ pub mod migration;
 pub mod receiver;
 pub mod rpc;
 #[cfg(feature = "native-storage")]
+mod scan;
+#[cfg(feature = "native-storage")]
 pub mod storage;
 pub mod wire;

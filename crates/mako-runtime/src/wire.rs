@@ -116,6 +116,10 @@ impl Bound {
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    ScanPage {
+        access: Access,
+        request: Vec<u8>,
+    },
     Get {
         access: Access,
         key: Vec<u8>,
@@ -140,6 +144,9 @@ pub enum Action {
 impl Action {
     pub fn valid(&self) -> bool {
         match self {
+            Self::ScanPage { request, .. } => {
+                request.len() <= mako_sharding::full_scan_core::REQUEST_CAPACITY
+            }
             Self::Get { key, .. } => key.len() <= MAX_KEY,
             Self::Scan {
                 lower,
@@ -173,6 +180,10 @@ pub struct Row {
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Value {
+    Page {
+        bytes: Vec<u8>,
+        read_dependency: u32,
+    },
     Done,
     Point {
         value: Option<Vec<u8>>,

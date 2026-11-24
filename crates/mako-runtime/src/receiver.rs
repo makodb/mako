@@ -77,7 +77,13 @@ impl Lane {
             .protection
             .as_ref()
             .expect("admitted participant has epoch");
-        let result = execute(&self.store, protection, &mut participant, &request.action);
+        let result = execute(
+            &self.store,
+            protection,
+            &mut participant,
+            request.identity,
+            &request.action,
+        );
         match (&request.action, result) {
             (Action::Install { .. }, Ok(value)) => {
                 let log = participant.submit_log(0, &mut LogCallbacks(&*self.store.log));
@@ -113,9 +119,13 @@ fn execute(
     store: &Store,
     protection: &Protection,
     participant: &mut sto::Participant<'_>,
+    identity: Identity,
     action: &Action,
 ) -> Result<Value> {
     match action {
+        Action::ScanPage { access, request } => {
+            crate::scan::produce(store, protection, participant, identity, access, request)
+        }
         Action::Get { access, key } => {
             protection.point(access, key)?;
             let table = store.table(access.table)?;

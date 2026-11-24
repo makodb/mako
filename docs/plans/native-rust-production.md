@@ -183,3 +183,16 @@ these existing components while preserving the current application contracts.
   participant/coordinator checkpoint is committed as `a392f4e68`.
 + Stage 3 remains in progress. Multi-process coverage, complete paged/routed
   scan delivery, gateway behavior and the production process entry point remain.
++ Stage 3 scan checkpoint: native requests now carry the checked FullScan
+  identity/cursor format. The receiver uses the existing Page serializer; the
+  coordinator uses FullScan admission and completion checks. Routed scans take
+  all segments from one protected snapshot, retain exact binary cursors, carry
+  scan dependencies and apply limits across segments in either direction.
++ `/tmp/mako-native-rust-scans-integration-01.log`: 16 native runtime/integration
+  cases and all-target Clippy passed. The new case migrates half a raw table,
+  scans through both owners over multiple byte-limited pages, and checks binary
+  key extensions at a page boundary, reverse inclusive bounds and global limits.
+  Migration-host integration is committed as `e1e82649c`.
++ Gateway/client-service behavior and multi-process production startup remain
+  before stage 3 can close. Replication, workloads, defaults and C++ retirement
+  in stages 4 through 6 are still outstanding.
