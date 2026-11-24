@@ -222,6 +222,7 @@ fn execute(
 
 pub struct RunningShard {
     server: Option<RpcServer>,
+    gateway: Option<crate::gateway::RunningGateway>,
     stopped: Arc<AtomicBool>,
     lanes: Vec<SyncSender<Work>>,
     threads: Vec<JoinHandle<()>>,
@@ -243,6 +244,44 @@ impl RunningShard {
         workers_per_node: u32,
         queue_capacity: usize,
     ) -> Result<Self> {
+        Self::start_inner(
+            store,
+            network,
+            address,
+            nodes,
+            workers_per_node,
+            queue_capacity,
+            None,
+        )
+    }
+    pub fn start_with_gateway(
+        store: Arc<Store>,
+        network: Arc<Network>,
+        address: &str,
+        nodes: u32,
+        workers_per_node: u32,
+        queue_capacity: usize,
+        gateway: crate::gateway::Config,
+    ) -> Result<Self> {
+        Self::start_inner(
+            store,
+            network,
+            address,
+            nodes,
+            workers_per_node,
+            queue_capacity,
+            Some(gateway),
+        )
+    }
+    fn start_inner(
+        store: Arc<Store>,
+        network: Arc<Network>,
+        address: &str,
+        nodes: u32,
+        workers_per_node: u32,
+        queue_capacity: usize,
+        gateway: Option<crate::gateway::Config>,
+    ) -> Result<Self> {
         let lane_count = nodes
             .checked_mul(workers_per_node)
             .filter(|n| *n > 0 && *n <= 256)
@@ -253,6 +292,7 @@ impl RunningShard {
         let stopped = Arc::new(AtomicBool::new(false));
         let mut running = Self {
             server: None,
+            gateway: None,
             stopped: stopped.clone(),
             lanes: Vec::new(),
             threads: Vec::new(),
@@ -275,10 +315,29 @@ impl RunningShard {
             })??;
         }
         let lanes = running.lanes.clone();
+        if let Some(config) = gateway {
+            running.gateway = Some(crate::gateway::RunningGateway::start(
+                store.clone(),
+                network.clone(),
+                config,
+                queue_capacity,
+            )?);
+        }
+        let gateway = running.gateway.as_ref().map(|gateway| gateway.sender());
         running.server = Some(RpcServer::start(
             &network,
             address,
             move |message, respond| match message {
+                message @ (Message::Gateway(_) | Message::Route(_)) => {
+                    if let Some(gateway) = &gateway {
+                        gateway.dispatch(message, respond);
+                    } else {
+                        respond(Reply::Error(Error::new(
+                            ErrorCode::Invalid,
+                            "gateway is not configured",
+                        )));
+                    }
+                }
                 Message::Participant(request) => {
                     if stopped.load(Ordering::Acquire) {
                         respond(Reply::Participant(Response::error(
@@ -374,6 +433,7 @@ impl Drop for RunningShard {
             server.shutdown();
         }
         self.lanes.clear();
+        self.gateway.take();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }

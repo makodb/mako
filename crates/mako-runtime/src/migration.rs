@@ -122,6 +122,13 @@ impl Schema {
             .map(|(table, _)| table)
             .ok_or_else(|| Error::new(ErrorCode::Invalid, "table is absent from schema"))
     }
+    pub fn named(&self, name: &str) -> Result<u64> {
+        self.tables
+            .values()
+            .find(|(table, _)| table.name == name)
+            .map(|(table, _)| table.id)
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "unknown table name"))
+    }
     pub fn log_id(&self, key: TableKey) -> Result<u16> {
         let (table, base) = self
             .tables

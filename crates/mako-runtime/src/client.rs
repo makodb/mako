@@ -8,12 +8,7 @@ use crate::{
 use std::{collections::BTreeMap, io::Read, sync::Arc, time::Duration};
 use sto_tpcc_ffi::native as sto;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Target {
-    pub owner: u32,
-    pub access: Access,
-    pub log_id: u16,
-}
+pub use crate::wire::Target;
 
 pub struct Client {
     network: Arc<Network>,

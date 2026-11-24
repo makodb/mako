@@ -6,6 +6,9 @@ pub mod admission;
 pub mod client;
 pub mod epoch;
 #[cfg(feature = "native-storage")]
+pub mod gateway;
+pub mod gateway_client;
+#[cfg(feature = "native-storage")]
 pub mod migration;
 #[cfg(feature = "native-storage")]
 pub mod receiver;

@@ -80,6 +80,40 @@ pub struct Access {
     pub table: TableKey,
     pub route: Option<Route>,
 }
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Target {
+    pub owner: u32,
+    pub access: Access,
+    pub log_id: u16,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GatewayRequest {
+    pub client: u64,
+    pub sequence: u64,
+    pub session: u64,
+    pub kind: u32,
+    pub target: Option<Target>,
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub forwarded: bool,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GatewayResponse {
+    pub client: u64,
+    pub sequence: u64,
+    pub snapshot_version: u64,
+    pub status: i32,
+    pub outcome: u32,
+    pub op_result: bool,
+    pub value: Vec<u8>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RouteRequest {
+    pub table: Option<u64>,
+    pub name: Option<String>,
+    pub warehouse: u32,
+    pub key: Vec<u8>,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Mutation {
     Put,
@@ -210,6 +244,8 @@ impl Response {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
+    Gateway(GatewayRequest),
+    Route(RouteRequest),
     Participant(Request),
     Migration {
         owner: u32,
@@ -219,6 +255,8 @@ pub enum Message {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    Gateway(GatewayResponse),
+    Route(Result<Target>),
     Participant(Response),
     Migration { status: u32, payload: Vec<u8> },
     Error(Error),

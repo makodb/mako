@@ -196,3 +196,20 @@ these existing components while preserving the current application contracts.
 + Gateway/client-service behavior and multi-process production startup remain
   before stage 3 can close. Replication, workloads, defaults and C++ retirement
   in stages 4 through 6 are still outstanding.
++ Stage 3 gateway checkpoint: native workers now execute the existing verified
+  auto-commit gateway protocol, with route discovery, insert/delete result bits,
+  retained read bytes, forwarding and exact terminal deduplication. Session
+  grouping retains the existing behavior: each operation commits independently.
+  The Rust client uses the existing verified pending-request sequencer and can
+  build without the native-storage feature.
++ `/tmp/mako-native-rust-gateway-integration-03.log`: 20 runtime/integration
+  cases and all-target Clippy passed. A proxy discards a successful forwarded
+  write reply; the retry resolves through the destination receipt with one log
+  submission. Other cases cover uncertain local commits, duplicate INSERT/DELETE
+  result bits, retained GET bytes and SDK routing identity across retries.
+  `/tmp/mako-native-rust-gateway-client-only-02.log`: all nine default-feature
+  runtime/client unit cases passed without Masstree linking. The older RPC unit
+  tests now bind port zero directly to eliminate their parallel port-picking race.
++ Paged/routed scans are committed as `8a67e366a`. The next stage-3 work is the
+  native process entry point and multi-process coverage. This still does not
+  switch the production default or complete replication/workload retirement.

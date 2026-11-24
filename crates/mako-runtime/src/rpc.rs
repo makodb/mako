@@ -153,7 +153,8 @@ impl Network {
         Ok(client)
     }
     pub fn call(&self, endpoint: &str, message: Message, timeout: Duration) -> Result<Reply> {
-        let may_commit = matches!(&message, Message::Participant(r) if matches!(r.action, Action::Install { .. }));
+        let may_commit = matches!(&message, Message::Participant(r) if matches!(r.action, Action::Install { .. }))
+            || matches!(&message, Message::Gateway(r) if matches!(r.kind, 23 | 25 | 28));
         // Oversized local encoding cannot have sent an effect.
         let bytes = wire::encode(&message)?;
         let client = self.client(endpoint)?;
@@ -226,16 +227,11 @@ impl Drop for Network {
 mod tests {
     use super::*;
     use crate::wire::{Identity, Request, Response, Stream, Value};
-    fn address() -> String {
-        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        socket.local_addr().unwrap().to_string()
-    }
     #[test]
     fn native_srpc_preserves_owned_request_and_reply_across_worker_threads() {
         let network = Network::default();
-        let endpoint = address();
         let (send, receive) = mpsc::sync_channel::<(Message, Respond)>(4);
-        let mut server = RpcServer::start(&network, &endpoint, move |request, reply| {
+        let mut server = RpcServer::start(&network, "127.0.0.1:0", move |request, reply| {
             send.send((request, reply)).unwrap()
         })
         .unwrap();
@@ -261,7 +257,7 @@ mod tests {
         };
         let reply = network
             .call(
-                &endpoint,
+                server.address(),
                 Message::Participant(request),
                 Duration::from_secs(3),
             )
@@ -275,11 +271,12 @@ mod tests {
     #[test]
     fn timed_out_install_is_unknown_and_pending_call_is_cancelled() {
         let network = Network::default();
-        let endpoint = address();
         let pending = Arc::new(Mutex::new(Vec::new()));
         let hold = pending.clone();
-        let mut server =
-            RpcServer::start(&network, &endpoint, move |_, reply| hold.lock().push(reply)).unwrap();
+        let mut server = RpcServer::start(&network, "127.0.0.1:0", move |_, reply| {
+            hold.lock().push(reply)
+        })
+        .unwrap();
         let request = Request {
             stream: Stream { node: 0, worker: 0 },
             identity: Identity {
@@ -293,7 +290,7 @@ mod tests {
         assert_eq!(
             network
                 .call(
-                    &endpoint,
+                    server.address(),
                     Message::Participant(request),
                     Duration::from_millis(100)
                 )
