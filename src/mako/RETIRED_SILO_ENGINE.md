@@ -6,13 +6,15 @@ It is not a supported Mako backend.
 Production Mako uses Rust as its sole transaction engine:
 
 ```
-dbtest / applications / RPC -> rust_sto_tpcc_wrapper -> sto-tpcc-ffi
-                            -> sto-core + sto-masstree
+mako-runtime / native SRPC -> sto-tpcc-ffi -> sto-core + sto-masstree
 mako-cache -> mako-engine -> mako-engine-sto -> sto-core + sto-masstree
 ```
 
 `--storage-engine=rust` remains accepted; omitting it selects Rust. Requests
-for `cpp` fail. The C++ `Transaction`, `MassTrans`, `mbta_wrapper`, native
+for `cpp` fail. The C++ application and `rust_sto_tpcc_wrapper` were removed
+during the native Rust migration on 2026-11-24. See the
+[retirement map](../../docs/developer/native-rust-retirement.md).
+The C++ `Transaction`, `MassTrans`, `mbta_wrapper`, native
 sharding storage backend, and `mako-local` / `mako-local-sys` crates were
 removed during retirement on 2026-11-23. Their last pre-retirement revision is
 `0d26e2e0b`. Runtime interfaces formerly colocated with that engine now live
@@ -47,20 +49,20 @@ support remains live and is used by Rust applications and Masstree:
 - `SiloRuntime`
 - allocator, core, RCU, thread, and ticker support
 - `masstree_btree.h` and the current Masstree library
-- `src/mako/runtime` epoch, worker, replay and RPC support
-- `src/mako/storage/rust_sto_tpcc_wrapper.hh`
+- `src/mako/runtime/thread_registration.{cc,hh}` for storage threads
+- `src/mako/storage/mtree_abi` and `mtx_abi` storage bindings
 
-Paxos and Raft select replication protocols only; neither selects the old
-transaction engine.
+Application workers, replay and RPC policy now live in Rust. Raft is the
+supported replication protocol; it uses the same Rust transaction engine.
 
 Run checks inside the build container:
 
 ```sh
 cmake --build build --target rust_sto_transaction_tests  # in-memory datatypes
 cmake --build build --target rust_masstree_tests         # native tree boundary
-cmake --build build --target rust_sto_cache_integration  # adapter + cache + model
-cmake --build build --target rust_cache_reopen           # fresh-process recovery
-ctest --test-dir build --output-on-failure --no-tests=error -L rust
+cmake --build build --target rust_application_adapter_tests
+cmake --build build --target rust_cache_tests           # cache, models and recovery
+bash ci/native_rust.sh runtime                          # debug/release application cases
 ```
 
 Native application tests, sharding fixtures, and protocol tests use the Rust

@@ -211,8 +211,8 @@ fn run_loop_does_not_retest_a_self_notifying_event() {
 
 #[test]
 fn quorum_counter_write_then_test_wakes_the_waiter() {
-    // Mako's paxos FeedResponse increments n_voted_yes_ itself and then calls
-    // test() (paxos/commo.h). That test() must reach the ready queue.
+    // A caller that updates the quorum counter directly must be able to
+    // publish readiness with test(), without resuming the waiter inline.
     let reactor = Reactor::get_reactor();
     let baseline = queue_lens(&reactor);
     let resumed = counter();

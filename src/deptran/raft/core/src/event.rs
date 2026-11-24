@@ -23,7 +23,7 @@ verus! {
 
 pub enum Event<'a, C, W> {
     // ---- Setup, in this order ----
-    // set_site_identity's core half; the worker sets it before Setup.
+    // The native host supplies identity before configuration.
     SetIdentity { loc_id: u32, site_id: u16, partition_id: u32 },
     // LoadCurrentConfig: the partition's members, sorted and duplicate-free.
     Configure { members: &'a [u16] },

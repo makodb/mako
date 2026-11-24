@@ -15,37 +15,12 @@ verus! {
 
 #[repr(C)]
 pub struct RaftCore<C> {
-    // THIS SERVER'S IDENTITY, MIRRORED.
-    //
-    // site_id_, partition_id_ and loc_id_ also exist on RaftServer, where
-    // TXLOG_SERVER_SITE_FIELDS() puts them (src/deptran/scheduler.h:136).
-    // That macro is SHARED WITH PAXOS, so the fields cannot simply move; a
-    // converted Rust body needs them and reaching back out to the C++ object
-    // for a scalar would defeat the point.
-    //
-    // They are written exactly once, by RaftServer::set_site_identity, which
-    // sets both copies together and then verifies they agree. All three are
-    // immutable afterwards, so the two copies cannot drift -- but the
-    // assertion is there because "cannot drift" is an argument, and this is
-    // the kind of argument that stops being true when someone adds a setter.
-    //
-    // TODO(txlog-site-fields): remove the mirror by unpacking
-    // TXLOG_SERVER_SITE_FIELDS() for both engines, so Raft and Paxos each own
-    // their identity fields outright and Raft's can live only here. That is a
-    // change to Paxos's contract, which is why it is not done in passing.
-    // Before removing, check that PaxosServer still compiles against whatever
-    // replaces the macro.
+    // The native Rust host initializes this identity before configuration.
+    // There is no C++ server object or mirrored identity.
     pub site_id_: u16,
     pub partition_id_: u32,
     pub loc_id_: u32,
-    // THE LOG AND THE PEERS LIVE HERE NOW, not beside the mutex.
-    //
-    // This is what makes a converted method body a one-line delegate instead
-    // of a marshalling shim. PHASE 0, 2 and 3 each needed an outcome struct
-    // and a switch on the C++ side purely because the state they decide over
-    // was split across three members, so a Rust function could compute an
-    // answer but not finish the job. With the state in one place a body can
-    // be moved wholesale and the C++ that remains is `raft_foo(core);`.
+    // The core owns the log and peers used by protocol transitions.
     pub raft_log_: RaftLog<C>,
     pub peers_: PeerTable,
     // Election cluster.
@@ -191,7 +166,7 @@ impl<C: Clone> RaftCore<C> {
             r.fresh(),  // [M12] (coupling::lemma_new_ginv: ginv)
     {
         RaftCore {
-            // Overwritten by set_site_identity before anything reads them.
+            // Overwritten by set_identity before configuration.
             site_id_: u16::MAX,
             partition_id_: 0,
             loc_id_: u32::MAX,
@@ -238,8 +213,7 @@ impl<C: Clone> RaftCore<C> {
         }
     }
 
-    // [move, M1] set_site_identity's core half: the three ids, written once
-    // by the worker before Setup, while the configuration is still empty.
+    // The host sets the three IDs before adding configuration members.
     pub fn set_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32)
         requires
             old(self).inv(),

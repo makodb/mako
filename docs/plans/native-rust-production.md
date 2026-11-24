@@ -39,7 +39,7 @@ Completion requires:
 | 2 | Establish a storage-only native build and an idiomatic Rust application API over STO/Masstree. Separate storage runtime from worker/replay policy. | Cargo links against only the explicit Masstree native dependency set; local transaction/application tests pass. | Complete |
 | 3 | Port shard clients/receivers, remote participants, admission, scan delivery, migration host, gateway and process lifecycle. Use native SRPC. | Real local and multi-process transactions, abort/cleanup, scans, warehouse relocation and shutdown tests. | Complete |
 | 4 | Move replication application integration, callbacks, replay, snapshots and recovery into Rust using the existing verified Raft core and native SRPC. | Replicated transactions, failover, replay, snapshot and restart tests; no C++ Raft host dependency. | Complete |
-| 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | In progress |
+| 5 | Port supported workloads, loaders, CLI/examples and integration tests. Switch default build and scripts to Rust. | TPC-C and simple-transaction cases for local, sharded and replicated modes; supported configuration compatibility. | Complete |
 | 6 | Delete replaced C++ and obsolete transpiler/build paths. Update documentation and audit the complete dependency graph. | Clean default build, targeted/full relevant tests, proof gates, storage-boundary sanitizer checks and native object audit. | In progress |
 
 Stages may overlap where a dependency requires it. A stage is complete only
@@ -570,3 +570,19 @@ these existing components while preserving the current application contracts.
   The changed case passed under all three sanitizers in
   `/tmp/mako-native-rust-gateway-{address,undefined,thread}-04.log`.
   Fresh full ASan and TSan qualification remains pending.
++ At `f7183cf72`, fresh runs passed all 334 transaction, 284 tree, 84 adapter
+  and 53 runtime cases in each sanitizer, plus cache qualification. Full UBSan
+  passed, including 94 executable std audits. ASan and TSan stopped at the
+  final Rust instrumentation audit because nightly Cargo stores archives in
+  `debug/build/<crate>/<hash>/out`, while the audit searched only `debug/deps`.
+  The audit now searches both layouts within the instrumented target tree.
++ `/tmp/mako-native-rust-sanitizer-{address,thread}-final-audit-04.log`:
+  the corrected search finds the required compiler hooks. Both lanes pass
+  the single-std check across 92 executables; TSan verifies all 38 RocksDB
+  consumers use its instrumented library. Fresh complete ASan and TSan runs
+  are still required to qualify the corrected driver end to end.
++ `/tmp/mako-native-rust-final-quality-03.log`: Clippy, doctests, all twelve
+  production dependency audits and sanitizer workflow parsing passed.
+  Nested storage documentation now describes the native application and
+  current test targets. Stale comments about a C++ Raft/Paxos identity mirror
+  were removed; the Raft protocol and SRPC regression logic are unchanged.

@@ -822,7 +822,9 @@ required = ['sto_core', 'sto_masstree', 'masstree', 'mako_engine_sto', 'mako_cac
 if focus != 'cache':
     required += ['sto_tpcc_ffi', 'mako_runtime']
 for crate in required:
-    archives = sorted(Path(target).glob(f'debug/deps/lib{crate}-*.rlib'))
+    # Stable Cargo uses debug/deps; the pinned nightly also uses per-crate
+    # debug/build/.../out directories. Both are under this instrumented target.
+    archives = sorted(Path(target).glob(f'debug/**/lib{crate}-*.rlib'))
     if not archives:
         raise SystemExit(f'missing instrumented crate: {crate}')
     for archive in archives:
