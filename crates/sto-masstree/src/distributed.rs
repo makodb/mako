@@ -8,7 +8,7 @@ use super::*;
 use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
 
 mod lookahead;
-pub use lookahead::VersionedLookahead;
+pub use lookahead::{PinnedLookahead, VersionedLookahead};
 
 /// Visibility supplied by the replication/failure authority, in BASE units.
 /// An absent per-term watermark means that term's watermark is not known yet

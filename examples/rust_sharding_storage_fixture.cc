@@ -40,7 +40,8 @@
 // Scenarios:
 //   migrate       ["", "n") moves from owner 0 to owner 1 on the Rust storage
 //                 callbacks: 605 rows, two capture pages, one row replaced and
-//                 one removed on the destination.
+//                 one removed on the destination. The first put takes 1.5s,
+//                 exceeding the generic RPC wait while retaining its effect.
 //   pinned        An ordinary writer commits after freeze. The final copy waits
 //                 for it, and a read at the new owner sees its committed value.
 //   deleted-keys  ["c", "n") moves; on both owners 5,000 deleted keys lie in
@@ -158,6 +159,8 @@ Pin pin;
 // The callback tables the fixture wraps; written before the nodes start.
 MakoShardHost real[kOwners]{};
 OwnerCounts counts[kOwners];
+// Written before the storage threads start; immutable until they join.
+bool delay_first_put = false;
 
 // Checks that follow a committed migration, in reporting order.
 const char* const kAfterCommitChecks[] = {
@@ -518,6 +521,8 @@ uint32_t fx_scan_next(void* context, uint64_t table, MakoShardBytes lo, uint32_t
 uint32_t fx_put(void* context, uint64_t table, MakoShardBytes coordinate, MakoShardBytes key,
                 MakoShardBytes value) {
     const uint32_t owner = owner_of(context);
+    if (delay_first_put && owner == 1 && counts[owner].put.calls.load() == 0)
+        usleep(1500000);
     return counted(counts[owner].put, real[owner].put(context, table, coordinate, key, value));
 }
 
@@ -776,6 +781,66 @@ void release_pin() {
     require(pin.state.load() == kPinReleased, "the pin thread did not leave its epoch");
     stage("pin-released");
 }
+
+// @unsafe - Ordinary transactions intern keys outside the migrating range.
+// Every transaction removes its own inserted value before commit, leaving
+// directory tombstones without changing the fixture's expected live image.
+class DirectoryChurn {
+    rusty::sync::atomic::AtomicU32 stop_{0};
+    rusty::sync::atomic::AtomicU64 committed_{0};
+    rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> thread_;
+    std::exception_ptr failure_;
+    uint64_t before_ = 0;
+public:
+    DirectoryChurn(rust_sto_tpcc_wrapper& db, bool enabled) {
+        if (!enabled) return;
+        auto* runtime = SiloRuntime::Current();
+        thread_ = rusty::Some(rusty::thread::spawn([this, &db, runtime] {
+            try {
+                BenchmarkConfig::setThreadLocalShardIndex(0);
+                runtime->BindToCurrentThread();
+                db.thread_init(true, 0);
+                TThread::in_loading_phase = false;
+                uint64_t sequence = 0;
+                while (!stop_.load()) {
+                    const std::string key = "z-churn-" + std::to_string(sequence++);
+                    str_arena arena;
+                    auto* txn = db.new_txn(0, arena, nullptr);
+                    try {
+                        tx_put(raw[0], txn, lcdf::Str(key), mako::Encode("temporary"));
+                        raw[0]->tx_remove(txn, lcdf::Str(key));
+                        if (db.commit_txn(txn)) committed_.fetch_add(1);
+                    } catch (const abstract_db::abstract_abort_exception&) {
+                        db.abort_txn(txn);
+                    }
+                }
+                db.thread_end();
+            } catch (...) {
+                failure_ = std::current_exception();
+                stop_.store(1);
+            }
+        }));
+        for (unsigned attempt = 0; attempt < 10000 && committed_.load() < 100 && !stop_.load(); ++attempt)
+            usleep(1000);
+        before_ = committed_.load();
+    }
+    void finish(bool report) {
+        if (thread_.is_none()) return;
+        stop_.store(1);
+        thread_.as_mut().unwrap().join().unwrap();
+        thread_ = rusty::None;
+        if (report) {
+            if (failure_) std::rethrow_exception(failure_);
+            require(before_ >= 100 && committed_.load() > before_,
+                    "ordinary directory churn did not overlap migration");
+            fprintf(stderr, "rust_sharding_fixture: concurrent directory commits=%llu before=%llu\n",
+                static_cast<unsigned long long>(committed_.load()),
+                static_cast<unsigned long long>(before_));
+            check_ok("concurrent-directory-migration");
+        }
+    }
+    ~DirectoryChurn() { finish(false); }
+};
 
 // Diagnostic reads inspect the physical owner, including rows an ordinary
 // transaction can no longer address there after migration.
@@ -1193,14 +1258,15 @@ void callbacks_guarded(Problems& guarded, rust_sto_tpcc_wrapper& db) {
 }
 
 // Move warehouses one and two together. Both contain the same physical key.
-// Warehouse three stays outside the range, and warehouse four is absent.
+// Warehouse three stays outside the range. Other warehouses start absent and
+// are materialized with workers attached, beyond the legacy 200-selector window.
 void migrate_warehouses(rust_sto_tpcc_wrapper& db,
                         rusty::Option<rusty::Box<mako::NativeShardingHost>>* hosts) {
     constexpr unsigned count = 3;
     const std::string name("history");
     uint64_t table = 0;
     require_status(mako_sharding_catalog_tpcc(1), MAKO_SHARD_OK, "warehouse catalog");
-    require_status(mako_sharding_warehouse_init(count, kOwners * count), MAKO_SHARD_OK, "dimensions");
+    require_status(mako_sharding_warehouse_init(20, 40), MAKO_SHARD_OK, "dimensions");
     require_status(mako_sharding_table_id(bytes(name), &table), MAKO_SHARD_OK, "catalog ID");
     abstract_ordered_index* physical[kOwners][count]{};
     for (unsigned owner = 0; owner < kOwners; ++owner) {
@@ -1240,13 +1306,33 @@ void migrate_warehouses(rust_sto_tpcc_wrapper& db,
     for (unsigned owner = 0; owner < kOwners; ++owner) {
         require_status(mako_sharding_wait_ready(owner), MAKO_SHARD_OK, "warehouse data ready");
         uintptr_t handle = 0;
-        require_status(mako_sharding_warehouse_local(table, 4, owner, &handle), MAKO_SHARD_INVALID,
-                       "missing warehouse open");
+        require_status(mako_sharding_warehouse_local(table, 41, owner, &handle), MAKO_SHARD_INVALID,
+                       "out-of-range warehouse open");
         require_status(mako_sharding_warehouse_local(table, 1, owner, &handle), MAKO_SHARD_OK,
                        "registered warehouse open");
         require(handle == reinterpret_cast<uintptr_t>(physical[owner][0]), "wrong warehouse handle");
     }
     check_ok("warehouse-open");
+    const char* governed[] = {"warehouse", "district", "customer", "customer_name_idx",
+        "history", "new_order", "oorder", "oorder_c_id_idx", "order_line", "stock", "stock_data"};
+    for (unsigned owner = 0; owner < kOwners; ++owner) {
+        for (const char* logical : governed) {
+            uint64_t identity = 0;
+            require_status(mako_sharding_table_id(bytes(std::string(logical)), &identity),
+                           MAKO_SHARD_OK, "lazy catalog identity");
+            for (unsigned warehouse = 4; warehouse <= 24; ++warehouse) {
+                uintptr_t first = 0, repeated = 0;
+                require_status(mako_sharding_warehouse_local(identity, warehouse, owner, &first),
+                               MAKO_SHARD_OK, "lazy warehouse open");
+                require_status(mako_sharding_warehouse_local(identity, warehouse, owner, &repeated),
+                               MAKO_SHARD_OK, "repeat lazy warehouse open");
+                require(first && first == repeated, "lazy handle was not stable");
+                auto* index = reinterpret_cast<abstract_ordered_index*>(first);
+                require(!index->get_is_remote() && index->size() == 0, "new warehouse not empty");
+            }
+        }
+    }
+    check_ok("warehouse-lazy-catalog");
     TThread::in_loading_phase = false;
     const std::string lo("\0\0\0\1", 4), hi("\0\0\0\3", 4);
     MakoShardAdminResult result{};
@@ -1301,6 +1387,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
          rusty::Option<rusty::Box<transport::Configuration>>& config,
          rusty::Option<rusty::Box<mako::NativeShardingHost>>* hosts) {
     const Shape shape = shape_of(scenario);
+    delay_first_put = scenario == Scenario::migrate;
     config = rusty::Some(rusty::make_box<transport::Configuration>(config_path));
     auto& topology = *config.as_mut().unwrap();
     topology.multi_shard_mode = true;
@@ -1444,6 +1531,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
         check_ok("mixed-peer-refused");
     }
     if (shape.pin) start_pin(db, !shape.abort);
+    DirectoryChurn churn(db, scenario == Scenario::deleted_keys);
     MakoShardAdminResult result{};
     require_status(mako_sharding_admin_begin(kNonce, bytes(kRawName), bytes(shape.lo), 1,
                                              bytes(shape.hi), 0, 1, host_of[0], admin_call,
@@ -1523,6 +1611,7 @@ void run(Scenario scenario, const char* config_path, rust_sto_tpcc_wrapper& db,
     fprintf(stderr, "rust_sharding_fixture: outcome=%s generation=%llu polls=%u\n",
             outcome_text(result.outcome), static_cast<unsigned long long>(result.generation),
             polls);
+    churn.finish(true);
     report_calls();
 
     if (scenario == Scenario::pinned && result.outcome == 1) {

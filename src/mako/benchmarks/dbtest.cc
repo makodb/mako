@@ -627,12 +627,8 @@ main(int argc, char **argv)
       if (mako_sharding_enabled()) {
         if (benchConfig.getIsReplicated())
           throw std::invalid_argument("Rust native migration requires non-replicated owners");
-        // Each participating owner preopens eleven governed indexes per global
-        // warehouse. Item uses one more selector. The window is shared by RPC.
-        const size_t max_warehouses = (mako::NUM_TABLES_PER_SHARD - 1) / 11;
-        if (benchConfig.getNshards() == 0 ||
-            benchConfig.getScaleFactor() > max_warehouses / benchConfig.getNshards())
-          throw std::invalid_argument("Rust native warehouse catalog exceeds the per-owner table ID limit");
+        if (benchConfig.getNshards() == 0 || benchConfig.getNshards() >= 0x8000 / mako::NUM_TABLES_PER_SHARD)
+          throw std::invalid_argument("Rust native owner catalog exhausts protocol selectors");
       }
       (void)rust_sto_tpcc_detail::db_config_for_worker_count(
           benchConfig.getNthreads());

@@ -1716,22 +1716,33 @@ unsafe fn create_table(
     config: *const StoTpccTableConfig,
     cache_policy: StoTpccResolvedCachePolicy,
     out_table: *mut *mut StoTpccTable,
+    attached: Option<&StoTpccThread>,
 ) -> FfiResult<Status> {
     let db = unsafe { required_ref(db, "db")? };
     let output = unsafe { required_mut(out_table, "out_table")? };
     *output = ptr::null_mut();
     let (cache_policy, dense_policy) = ResolvedCachePolicy::from_raw(cache_policy)?;
     let raw = unsafe { optional_copy(config, "config")? };
-    let worker = db.masstree.attach().map_err(|error| {
+    let creator = if attached.is_none() { Some(db.masstree.attach().map_err(|error| {
         fatal(format_args!(
             "unable to attach Masstree table creator: {error}"
         ))
-    })?;
+    })?) } else { None };
+    let worker = match attached {
+        Some(handle) => {
+            handle.ensure_owner()?;
+            if handle.sto_worker.runtime_id() != db.sto.id() {
+                return Err(fatal(format_args!("table creator belongs to a different database")));
+            }
+            handle.native_worker.as_ref()
+        }
+        None => creator.as_ref().unwrap(),
+    };
     let config = table_config(raw);
     let table = Table::new_direct_with_budget(
         &db.sto,
         &db.masstree,
-        &worker,
+        worker,
         config,
         db.registry_budget.clone(),
     )
@@ -1744,7 +1755,7 @@ unsafe fn create_table(
             _ => Status::Fatal,
         }
     })?;
-    drop(worker);
+    drop(creator);
     let dense_cache = match dense_policy {
         DenseCachePolicy::Item | DenseCachePolicy::Stock => Some(
             table
@@ -1781,7 +1792,7 @@ pub unsafe extern "C" fn sto_tpcc_table_create(
     out_table: *mut *mut StoTpccTable,
 ) -> i32 {
     boundary("sto_tpcc_table_create", || unsafe {
-        create_table(db, config, STO_TPCC_RESOLVED_CACHE_FULL, out_table)
+        create_table(db, config, STO_TPCC_RESOLVED_CACHE_FULL, out_table, None)
     })
 }
 
@@ -1797,7 +1808,28 @@ pub unsafe extern "C" fn sto_tpcc_table_create_with_cache_policy(
     out_table: *mut *mut StoTpccTable,
 ) -> i32 {
     boundary("sto_tpcc_table_create_with_cache_policy", || unsafe {
-        create_table(db, config, cache_policy, out_table)
+        create_table(db, config, cache_policy, out_table, None)
+    })
+}
+
+/// Create a new table using this OS thread's existing native worker. Other
+/// workers may already be attached. The caller publishes the returned handle
+/// only after creation succeeds, and retains it until all users have stopped.
+///
+/// # Safety
+/// Handles are live, `thread` belongs to this OS thread and `db`, and out_table
+/// is uniquely writable. No other operation may borrow `thread` during this call.
+#[no_mangle]
+pub unsafe extern "C" fn sto_tpcc_table_create_on_thread(
+    db: *mut StoTpccDb,
+    thread: *const StoTpccThread,
+    config: *const StoTpccTableConfig,
+    cache_policy: StoTpccResolvedCachePolicy,
+    out_table: *mut *mut StoTpccTable,
+) -> i32 {
+    boundary("sto_tpcc_table_create_on_thread", || unsafe {
+        let handle = required_ref(thread, "thread")?;
+        create_table(db, config, cache_policy, out_table, Some(handle))
     })
 }
 
@@ -9332,6 +9364,54 @@ mod tests {
             aliased_customer_data < 100,
             "{aliased_customer_data} customer and customer-data keys alias"
         );
+    }
+
+    #[cfg(mtree_native_integration)]
+    #[test]
+    fn attached_worker_creates_tables_without_disturbing_its_transaction() {
+        unsafe {
+            let config = StoTpccDbConfig {
+                max_threads: NATIVE_TEST_MAX_THREADS,
+                max_key_length: NATIVE_TEST_MAX_KEY_LENGTH,
+                max_items_per_txn: 1_024,
+                max_locks_per_txn: 2_048,
+                max_registry_bytes: 0,
+            };
+            let mut db = ptr::null_mut();
+            assert_eq!(sto_tpcc_db_create(&config, &mut db), Status::Ok.code());
+            let mut worker = ptr::null_mut();
+            assert_eq!(sto_tpcc_thread_create(db, &mut worker), Status::Ok.code());
+            let mut first = ptr::null_mut();
+            assert_eq!(sto_tpcc_table_create_on_thread(db, worker, ptr::null(),
+                STO_TPCC_RESOLVED_CACHE_FULL, &mut first), Status::Ok.code());
+            assert_eq!(sto_tpcc_txn_begin(worker), Status::Ok.code());
+            assert_eq!(sto_tpcc_put(worker, first, b"a".as_ptr(), 1, b"v".as_ptr(), 1), Status::Ok.code());
+            let mut second = ptr::null_mut();
+            assert_eq!(sto_tpcc_table_create_on_thread(db, worker, ptr::null(),
+                STO_TPCC_RESOLVED_CACHE_FULL, &mut second), Status::Ok.code());
+            assert_eq!(sto_tpcc_put(worker, second, b"b".as_ptr(), 1, b"w".as_ptr(), 1), Status::Ok.code());
+            assert_eq!(sto_tpcc_txn_commit(worker), Status::Ok.code());
+            for table in [first, second] {
+                let mut rows = 0;
+                assert_eq!(sto_tpcc_table_size(table, &mut rows), Status::Ok.code());
+                assert_eq!(rows, 1);
+            }
+            let db_address = db.expose_provenance();
+            let worker_address = worker.expose_provenance();
+            std::thread::spawn(move || {
+                let mut refused = ptr::null_mut();
+                let status = sto_tpcc_table_create_on_thread(
+                    ptr::with_exposed_provenance_mut(db_address),
+                    ptr::with_exposed_provenance(worker_address), ptr::null(),
+                    STO_TPCC_RESOLVED_CACHE_FULL, &mut refused);
+                assert_ne!(status, Status::Ok.code());
+                assert!(refused.is_null());
+            }).join().unwrap();
+            assert_eq!(sto_tpcc_thread_destroy(worker), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(first), Status::Ok.code());
+            assert_eq!(sto_tpcc_table_destroy(second), Status::Ok.code());
+            assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
+        }
     }
 
     #[cfg(mtree_native_integration)]

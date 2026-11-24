@@ -29,7 +29,7 @@ mod local_version_tests;
 mod distributed;
 use distributed::{publish_distributed_if_needed, DistributedVersion};
 pub use distributed::{
-    ReadVisibility, VersionedLookahead, VersionedRead, VersionedScan, VersionedScanRecord,
+    PinnedLookahead, ReadVisibility, VersionedLookahead, VersionedRead, VersionedScan, VersionedScanRecord,
 };
 use mako_clock::distributed::DistributedTimeTerm;
 
@@ -4213,11 +4213,33 @@ impl Table {
             RecordAccess<'record>,
         ) -> Result<Option<ScanControl>, AccessError>,
     {
+        self.visit_scan_records_pinned(txn, worker, request, scratch, visit_record, false)
+            .map(|(outcome, _pin)| outcome)
+    }
+
+    /// Migration retains the structural read guard through read certification.
+    /// Ordinary scans release it here and keep their directory-version item.
+    fn visit_scan_records_pinned<F>(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: Option<&Worker>,
+        request: ScanRequest<'_>,
+        scratch: &mut ScanScratch,
+        visit_record: &mut F,
+        wait_for_structure: bool,
+    ) -> Result<(ScanVisitOutcome, Option<RwLockReadGuard<'_, ()>>), AccessError>
+    where
+        F: for<'entry, 'record> FnMut(
+            &[u8],
+            &mut TransProxy<'entry, TableAdapter>,
+            RecordAccess<'record>,
+        ) -> Result<Option<ScanControl>, AccessError>,
+    {
         if request.limit == 0 || range_is_empty(request.lower, request.upper) {
-            return Ok(ScanVisitOutcome {
+            return Ok((ScanVisitOutcome {
                 visited: 0,
                 stopped: false,
-            });
+            }, None));
         }
 
         let config = self.shared().registry.config;
@@ -4234,7 +4256,11 @@ impl Table {
             TableKey::DirectoryGeneration,
             |entry| {
                 self.shared().ensure_healthy()?;
-                let structural = self.shared().try_scan_structure()?;
+                let structural = if wait_for_structure {
+                    self.shared().structural.read()?
+                } else {
+                    self.shared().try_scan_structure()?
+                };
                 directory.observe_directory_generation(entry)?;
                 Ok(structural)
             },
@@ -4247,8 +4273,7 @@ impl Table {
             scratch,
             visit_record,
         );
-        drop(structural);
-        result
+        result.map(|outcome| (outcome, structural))
     }
 
     fn visit_scan_records_while_structurally_stable<F>(
@@ -6713,6 +6738,21 @@ impl StructuralGate {
             Err(TryLockError::Poisoned(_)) => {
                 Err(table_fault("Masstree structural gate is poisoned"))
             }
+        }
+    }
+
+    /// Used only by bounded read-only migration hops. Publishers do not wait
+    /// for transaction locks while holding the write side of this gate.
+    fn read(&self) -> Result<Option<RwLockReadGuard<'_, ()>>, AccessError> {
+        if self.is_sealed() {
+            return Ok(None);
+        }
+        let guard = self.lock.read()
+            .map_err(|_| table_fault("Masstree structural gate is poisoned"))?;
+        if self.is_sealed() {
+            Ok(None)
+        } else {
+            Ok(Some(guard))
         }
     }
 }

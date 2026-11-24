@@ -127,7 +127,7 @@ SCENARIOS = {
     "warehouses": {
         "exit": 0,
         "summary": "PASS",
-        "ok": ["warehouse-open", "warehouse-committed", "warehouse-bytes"],
+        "ok": ["warehouse-open", "warehouse-lazy-catalog", "warehouse-committed", "warehouse-bytes"],
         "failed": {},
         "skipped": [],
         "stderr": [
@@ -181,7 +181,7 @@ SCENARIOS = {
     "deleted-keys": {
         "exit": 0,
         "summary": "PASS",
-        "ok": ["tombstones-block-one-scan"] + BEFORE_MIGRATION + ["outcome-committed"]
+        "ok": ["tombstones-block-one-scan", "concurrent-directory-migration"] + BEFORE_MIGRATION + ["outcome-committed"]
               + AFTER_COMMIT + ["threads-left"],
         "failed": {},
         "skipped": [],
@@ -278,7 +278,10 @@ def run_fixture(scenario):
     LOGS.mkdir(parents=True, exist_ok=True)
     out_path = LOGS / f"{scenario}.out"
     err_path = LOGS / f"{scenario}.err"
-    environment = {**os.environ, "MAKO_CLUSTER_CONFIG": "1"}
+    # Keep an ordinary scan's read-set budget below the adversarial tombstone
+    # run, independently of the benchmark's production default.
+    environment = {**os.environ, "MAKO_CLUSTER_CONFIG": "1",
+                   "MAKO_STO_TPCC_MAX_TRANSACTION_ITEMS": "1024"}
     # Live-only: retained sharding metadata is not part of this fixture.
     environment.pop("MAKO_SHARD_METADATA_DIR", None)
     environment.pop("MAKO_SHARD_METADATA_INIT", None)

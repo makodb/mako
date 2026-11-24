@@ -3,6 +3,7 @@
 //! The sharding storage host's use of the engine, on a real native table.
 
 use std::{ffi::c_void, ptr, slice};
+use std::sync::atomic::{AtomicU16, Ordering};
 use sto_tpcc_ffi::*;
 
 const OK: i32 = 0;
@@ -19,8 +20,8 @@ const SHARD_IO: u32 = 6;
 /// The owner every test registers as.
 const OWNER: u32 = 0;
 
-/// The adapter's physical id for the table. Any id the protocol ledger accepts.
-const TABLE_ID: u16 = 201;
+/// Concurrent tests share the host's owner/selector namespace.
+static NEXT_TABLE_ID: AtomicU16 = AtomicU16::new(201);
 const PUT: u8 = 0;
 const DELETE: u8 = 2;
 const UNBOUNDED: i32 = 0;
@@ -36,14 +37,14 @@ fn native_error() -> String {
     String::from_utf8_lossy(&bytes[..actual]).into_owned()
 }
 
-/// One database, table and thread handle with the limits the C++ adapter
-/// gives a Rust-engine database (`db_config_for_worker_count` and
-/// `tpcc_table_config_for` in `src/mako/storage/rust_sto_tpcc_wrapper.cc`),
-/// so that a limit met here is one the sharding host meets.
+/// One database, table and thread handle with a deliberately small 1,024-item
+/// transaction budget. Migration must cross long tombstone runs without
+/// depending on the benchmark's larger ordinary-transaction budget.
 struct Native {
     db: *mut StoTpccDb,
     table: *mut StoTpccTable,
     thread: *mut StoTpccThread,
+    table_id: u16,
 }
 
 impl Native {
@@ -69,6 +70,7 @@ impl Native {
             db: ptr::null_mut(),
             table: ptr::null_mut(),
             thread: ptr::null_mut(),
+            table_id: NEXT_TABLE_ID.fetch_add(1, Ordering::Relaxed),
         };
         unsafe {
             assert_eq!(sto_tpcc_db_create(&db_config, &mut native.db), OK);
@@ -105,7 +107,7 @@ impl Native {
                 sto_tpcc_protocol_mutate(
                     self.thread,
                     self.table,
-                    TABLE_ID,
+                    self.table_id,
                     operation,
                     key.as_ptr(),
                     key.len(),
@@ -404,7 +406,7 @@ impl Host {
                     catalog,
                     OWNER,
                     host.native.table,
-                    u32::from(TABLE_ID)
+                    u32::from(host.native.table_id)
                 ),
                 SHARD_OK,
                 "{}",

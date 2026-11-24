@@ -1,7 +1,9 @@
 #include "native_sharding_host.h"
 
 #include <cerrno>
+#include <chrono>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include "benchmarks/benchmark_config.h"
 #include "deptran/rcc_rpc.h"
@@ -164,7 +166,20 @@ uint32_t native_sharding_peer_call(void* context, uint32_t owner, uint32_t opera
         request.operation = host.rust_storage && !admin_operation(operation)
             ? operation | kRustPeerOperation : operation;
         if (payload.len) request.payload.assign(reinterpret_cast<const char*>(payload.data), payload.len);
-        auto result = proxy.Invoke(request);
+        auto result = [&]() {
+            if (!host.rust_storage || admin_operation(operation)) return proxy.Invoke(request);
+            auto pending = proxy.async_Invoke(request);
+            if (pending.is_err())
+                return rusty::Result<janus::NativeShardingProxy::RpcInvokeResponse, srpc::i32>::Err(
+                    pending.unwrap_err());
+            auto future = pending.unwrap();
+            // A transfer may contain an entire warehouse. The generic Future
+            // wait expires after one second, even while that accepted job is
+            // making progress. Join its reply (or connection failure) before
+            // releasing this call's effect ownership to the migration actor.
+            while (!future.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return future.resolve();
+        }();
         if (result.is_err()) {
             auto connections = host.peers.lock().unwrap();
             auto& cached = (*connections)[owner];

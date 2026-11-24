@@ -14,6 +14,21 @@ pub enum VersionedLookahead {
     Resume(Box<[u8]>),
 }
 
+/// A bounded observation that excludes directory publication until dropped.
+/// Keep this value alive through read-only certification, then consume it.
+/// The guard does not exclude updates of existing records; their transaction
+/// items must still validate. Never stage writes while holding this guard.
+pub struct PinnedLookahead<'a> {
+    observation: VersionedLookahead,
+    _structure: Option<RwLockReadGuard<'a, ()>>,
+}
+
+impl PinnedLookahead<'_> {
+    pub fn into_observation(self) -> VersionedLookahead {
+        self.observation
+    }
+}
+
 impl Table {
     /// Walks at most `max_physical` directory entries forward from `lower`
     /// and stops at the first live selected row.
@@ -23,11 +38,10 @@ impl Table {
     /// dependency of the walked entries is not reported: use this only in a
     /// transaction that stages no write.
     ///
-    /// The walk also reads the table's directory generation, which advances
-    /// whenever any thread first touches a key the table has never held. A
-    /// caller that resumes over a long tombstone run next to ordinary workers
-    /// may therefore fail certification often; a lookahead that does not
-    /// depend on the generation may be needed then. None is built here.
+    /// The walk reads the table's directory generation. Ordinary callers
+    /// therefore fail certification after any new directory publication.
+    /// Migration uses `lookahead_versioned_pinned` to exclude publication
+    /// through certification of each bounded read-only hop.
     pub fn lookahead_versioned(
         &self,
         txn: &mut Transaction<'_, Active>,
@@ -49,6 +63,36 @@ impl Table {
         visibility: ReadVisibility,
         max_physical: usize,
     ) -> Result<VersionedLookahead, AccessError> {
+        self.lookahead_pinned_inner(txn, worker, lower, upper, visibility, max_physical, false)
+            .map(PinnedLookahead::into_observation)
+    }
+
+    /// Migration-only read-only lookahead. Waits for structural admission and
+    /// retains it through the caller's certification. This closes the window
+    /// in which unrelated key publication could invalidate a completed walk.
+    pub fn lookahead_versioned_pinned(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: &Worker,
+        lower: ScanBound<'_>,
+        upper: ScanBound<'_>,
+        visibility: ReadVisibility,
+        max_physical: usize,
+    ) -> Result<PinnedLookahead<'_>, AccessError> {
+        self.lookahead_pinned_inner(txn, Some(worker), lower, upper, visibility, max_physical, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lookahead_pinned_inner(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: Option<&Worker>,
+        lower: ScanBound<'_>,
+        upper: ScanBound<'_>,
+        visibility: ReadVisibility,
+        max_physical: usize,
+        wait_for_structure: bool,
+    ) -> Result<PinnedLookahead<'_>, AccessError> {
         if max_physical == 0 {
             return self.fail_scan(txn, CapacityError::BufferLimit.into());
         }
@@ -61,7 +105,7 @@ impl Table {
         let mut walked = 0_usize;
         let mut outcome = VersionedLookahead::End;
         let mut scratch = ScanScratch::default();
-        self.visit_scan_records(
+        let (_, structure) = self.visit_scan_records_pinned(
             txn,
             worker,
             request,
@@ -84,8 +128,9 @@ impl Table {
                 }
                 Ok(None)
             },
+            wait_for_structure,
         )?;
-        Ok(outcome)
+        Ok(PinnedLookahead { observation: outcome, _structure: structure })
     }
 }
 
@@ -236,6 +281,31 @@ mod tests {
         base: Option<u32>,
     ) -> (Vec<u8>, Vec<u8>, Option<DistributedTimeTerm>) {
         (key.to_vec(), value.to_vec(), base.map(decision))
+    }
+
+    #[test]
+    fn pinned_hop_certifies_before_allowing_new_directory_publication() {
+        for (runtime, table) in tables() {
+            let mut worker = runtime.attach().unwrap();
+            six_tombstones_then_a_row(&table, &mut worker);
+            let mut txn = worker.begin().unwrap();
+            let pinned = table.lookahead_pinned_inner(
+                &mut txn, None, UNBOUNDED, UNBOUNDED, latest(), 3, true,
+            ).unwrap();
+            on_second_worker(&runtime, |other| {
+                let mut competing = other.begin().unwrap();
+                assert!(matches!(table.get_inner(&mut competing, None, b"z"),
+                    Err(AccessError::Conflict(_))));
+            });
+            commit(txn);
+            assert_eq!(pinned.into_observation(), resume(b"t3"));
+            // The guard has gone and the refused publication can retry.
+            on_second_worker(&runtime, |other| miss(&table, other, b"z"));
+            assert_eq!(step(&table, &mut worker, ScanBound::Excluded(b"t3"), UNBOUNDED, 3),
+                resume(b"t6"));
+            assert_eq!(row(step(&table, &mut worker, ScanBound::Excluded(b"t6"), UNBOUNDED, 3)).0,
+                b"u");
+        }
     }
 
     #[test]

@@ -257,6 +257,8 @@ mt_status mt_thread_quiesce(mt_thread *thread) MT_NOEXCEPT;
 /*
  * Tree storage lives for the process. release only closes the facade handle;
  * it never performs thread-affine native destruction.
+ * Creation may use the worker's controlled mt_rcu_scope without ending it.
+ * An active mt_read_scope or an unmanaged legacy RCU region is still refused.
  */
 mt_status mt_tree_create(mt_runtime *runtime, mt_thread *thread,
                          mt_tree **out) MT_NOEXCEPT;

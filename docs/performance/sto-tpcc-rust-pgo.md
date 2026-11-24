@@ -234,6 +234,13 @@ remain part of the charged record stride. The native
 `MAKO_TPCC_ALLOCATOR_MEMORY` limit is independent and excludes Rust heap memory.
 Increasing either budget leaves the other unchanged.
 
+`MAKO_STO_TPCC_MAX_TRANSACTION_ITEMS` bounds one transaction's observations and
+defaults to `65536`. It accepts a positive decimal integer up to `u32::MAX`.
+Scans retain observations for traversed tombstones as well as live rows;
+repeated warehouse moves and Delivery can exceed the previous 1,024-item
+default. Items allocate on demand. This limit is independent of registry
+memory, and reaching it still returns resource exhaustion.
+
 The comparison runner accepts `--rust-registry-memory` and records the selected
 value as `rust_registry_memory`. PGO training accepts
 `STO_TPCC_PGO_TRAIN_REGISTRY_MEMORY`, also defaulting to `8G`. Both tools reject

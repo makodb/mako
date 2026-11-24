@@ -620,6 +620,8 @@ for name, filename, before, after, (module, function) in (NATIVE_CONTROLS if NAT
         dest = Path(directory)
         if NATIVE:
             shutil.copytree(REPOSITORY / "src" / "cluster", dest / "src" / "cluster")
+            shutil.copytree(REPOSITORY / "crates" / "shard-host-core" / "src",
+                            dest / "crates" / "shard-host-core" / "src")
             shutil.copytree(ROOT / "src", dest / "tla" / "mako" / "src")
             path = dest / filename
         else:

@@ -66,14 +66,12 @@ const _: [(); 8] = [(); mem::offset_of!(MakoStoShardBytes, len)];
 const _: () = {
     assert!(shard_host_core::ENGINE_OK == Status::Ok.code());
     assert!(shard_host_core::ENGINE_RETRY == Status::Retry.code());
+    assert!(shard_host_core::engine::ENGINE_MISS == Status::Miss.code());
     assert!(shard_host_core::ENGINE_FATAL == Status::Fatal.code());
     assert!(shard_host_core::ENGINE_EXHAUSTED == Status::ResourceExhausted.code());
     assert!(shard_host_core::ENGINE_UNKNOWN == Status::Unknown.code());
     assert!(shard_host_core::ENGINE_COMMITTED_ERROR == Status::CommittedError.code());
 };
-
-/// The one engine status the verbs read that the mapping does not tell apart.
-const ENGINE_MISS: i32 = Status::Miss.code();
 
 /// The term of a non-replicated node. Migration is refused on a replicated
 /// one, and the C++ glue refuses to hand these verbs to it.
@@ -82,18 +80,16 @@ const TERM: u32 = 0;
 /// Directory entries one lookahead transaction walks at most.
 ///
 /// A deleted key stays in the table's directory, and every entry a scan walks
-/// is an item of its transaction, which may hold 1,024 of them under the C++
-/// adapter. `scan_next` therefore crosses a run of deleted keys in read-only
+/// is an item of its transaction. Native boundary tests allow only 1,024
+/// items. `scan_next` therefore crosses a run of deleted keys in read-only
 /// transactions of this many entries, each certified and finished before the
 /// next begins.
 ///
-/// Every such transaction also reads the table's directory generation, which
-/// advances whenever any thread first touches a key the table has never held.
-/// During a migration of this slice only the calling thread uses the table.
-/// Once ordinary workers run next to a migration, a lookahead that has to
-/// cross many deleted keys will often fail certification and answer RETRY; a
-/// lookahead that does not depend on the generation may be needed then. None
-/// is built here.
+/// Every hop holds the directory's structural read guard through certification.
+/// Unrelated new-key publication waits or retries until the bounded hop ends,
+/// so it cannot invalidate a completed walk. Existing-row versions still
+/// validate normally. Ordinary transaction scans retain their optimistic
+/// directory-generation validation.
 const SCAN_HOP_ENTRIES: usize = 256;
 
 /// The longest key and the longest value `put` and `remove` accept. The
@@ -311,8 +307,9 @@ pub unsafe extern "C" fn mako_sto_shard_table_register(
     )
 }
 
-/// Registers one preopened physical warehouse. Missing warehouses in an intersecting scan
-/// range are errors, including when their registered neighbours have no live rows.
+/// Registers one physical warehouse before its first write or routing use.
+/// An unmaterialized warehouse has no rows; its later creation is fenced by
+/// the same migration admission as every write.
 ///
 /// # Safety
 /// As for `mako_sto_shard_table_register`. The caller verifies the catalog coordinate
@@ -615,7 +612,7 @@ unsafe fn lookahead(
         let worker = &handle.native_worker;
         handle.sto_worker.with_participant(|participant| {
             participant.with_transaction(|transaction| {
-                table.lookahead_versioned(
+                table.lookahead_versioned_pinned(
                     transaction,
                     worker,
                     lower,
@@ -642,7 +639,7 @@ unsafe fn lookahead(
         after_walk();
     }
     match certify_read_only(attempt) {
-        SHARD_OK => Ok(found),
+        SHARD_OK => Ok(found.into_observation()),
         status => Err(status),
     }
 }
@@ -724,7 +721,10 @@ unsafe fn scan_next(
                 FixedScan::AfterKey => ScanLower::Excluded(after_key),
             };
             let Some(physical) = warehouse_for(catalog_table, entered.owner, number) else {
-                return SHARD_IO;
+                // Warehouse indexes are published on first use. An absent
+                // physical index has no rows. A migration's retained metadata
+                // excludes an ordinary writer from the selected destination.
+                continue;
             };
             // SAFETY: The registered physical table and the borrowed sink outlive this call.
             let status = unsafe {
@@ -768,6 +768,36 @@ unsafe fn scan_next(
     unsafe { scan_physical(entered, entry, None, first, upper, sink, sink_context) }
 }
 
+struct ScanHost<'a> {
+    entered: Entered,
+    entry: TableEntry,
+    first: ScanLower<'a>,
+    upper: ScanBound<'a>,
+    visibility: ReadVisibility,
+}
+
+impl shard_host_core::walk::Walker for ScanHost<'_> {
+    type Row = sto_masstree::VersionedScanRecord;
+
+    fn next(&mut self, after: Option<&[u8]>) -> Result<shard_host_core::walk::Hop<Self::Row>, u32> {
+        let lower = match (after, self.first) {
+            (Some(walked), _) => ScanBound::Excluded(walked),
+            (None, ScanLower::Excluded(cursor)) => ScanBound::Excluded(cursor),
+            (None, ScanLower::Included(lo)) => ScanBound::Included(lo),
+        };
+        // SAFETY: Registration retains these handles through the whole verb.
+        // Frozen exactness additionally requires the caller's completed drain.
+        let observed = unsafe { lookahead(
+            self.entered.thread, self.entry.table, lower, self.upper, self.visibility,
+        ) }?;
+        Ok(match observed {
+            VersionedLookahead::Row(row) => shard_host_core::walk::Hop::Row(row),
+            VersionedLookahead::End => shard_host_core::walk::Hop::End,
+            VersionedLookahead::Resume(key) => shard_host_core::walk::Hop::Resume(key.into_vec()),
+        })
+    }
+}
+
 unsafe fn scan_physical(
     entered: Entered,
     entry: TableEntry,
@@ -783,17 +813,9 @@ unsafe fn scan_physical(
     // The newest committed version of every record.
     let visibility = ReadVisibility::latest(term);
     let upper = upper.map_or(ScanBound::Unbounded, ScanBound::Excluded);
-    // The last deleted key a lookahead walked; the next one starts after it.
-    let mut resume: Option<Box<[u8]>> = None;
-    loop {
-        let lower = match (resume.as_deref(), first) {
-            (Some(walked), _) => ScanBound::Excluded(walked),
-            (None, ScanLower::Excluded(cursor)) => ScanBound::Excluded(cursor),
-            (None, ScanLower::Included(lo)) => ScanBound::Included(lo),
-        };
-        // SAFETY: The handle is registered and idle; the table is registered.
-        match unsafe { lookahead(entered.thread, entry.table, lower, upper, visibility) } {
-            Ok(VersionedLookahead::Row(row)) => {
+    let mut host = ScanHost { entered, entry, first, upper, visibility };
+    match shard_host_core::walk::scan_first(&mut host) {
+            Ok(Some(row)) => {
                 // The row owns its bytes, and its transaction has finished.
                 // SAFETY: The sink is the caller's and takes borrowed spans.
                 unsafe {
@@ -804,12 +826,10 @@ unsafe fn scan_physical(
                         span(row.value.as_ref()),
                     );
                 }
-                return SHARD_OK;
+                SHARD_OK
             }
-            Ok(VersionedLookahead::End) => return SHARD_NOT_FOUND,
-            Ok(VersionedLookahead::Resume(walked)) => resume = Some(walked),
-            Err(status) => return status,
-        }
+            Ok(None) => SHARD_NOT_FOUND,
+            Err(status) => status,
     }
 }
 
@@ -959,23 +979,62 @@ unsafe fn write_target<'a>(
 /// distributed timestamp, validate, install, hand over the log record,
 /// finish. Anything but "committed" or a failure the engine reports with an
 /// aborted attempt stops the process.
-fn commit_staged(mut attempt: VerbAttempt) -> u32 {
-    let mut report = StoTpccProtocolReport::default();
-    // SAFETY: The guard owns the attempt. The callback only reads its request.
-    let committed = unsafe {
-        sto_tpcc_protocol_commit(
-            attempt.thread,
-            0,
-            Some(shard_log_callback),
-            ptr::null_mut(),
-            &mut report,
-        )
-    };
-    attempt.open = false;
-    shard_status(
-        attempt.operation,
-        map_engine(Stage::Commit, committed, report.disposition),
-    )
+struct WriteHost<'a> {
+    operation: &'static str,
+    entered: Entered,
+    entry: TableEntry,
+    key: &'a [u8],
+    attempt: Option<VerbAttempt>,
+}
+
+impl shard_host_core::engine::WriteEngine for WriteHost<'_> {
+    fn idle(&self) -> bool {
+        // SAFETY: write_target checked this thread's registration and lifetime.
+        self.attempt.is_none() && unsafe { handle_is_idle(self.entered.thread) }
+    }
+
+    fn begin(&mut self) -> i32 {
+        self.attempt = Some(VerbAttempt {
+            thread: self.entered.thread, operation: self.operation, open: true,
+        });
+        // SAFETY: The verified caller checked idle before begin.
+        unsafe { sto_tpcc_protocol_begin(self.entered.thread, TERM) }
+    }
+
+    fn stage(&mut self, value: Option<&[u8]>) -> i32 {
+        let (operation, data, len) = match value {
+            Some(value) => (PROTOCOL_UPSERT, value.as_ptr(), value.len()),
+            None => (PROTOCOL_DELETE, ptr::null(), 0),
+        };
+        // SAFETY: Registered handles and borrowed spans outlive this call.
+        unsafe { sto_tpcc_protocol_mutate(
+            self.entered.thread, self.entry.table, self.entry.table_id, operation,
+            self.key.as_ptr(), self.key.len(), data, len, 0,
+        ) }
+    }
+
+    fn validate(&mut self) -> i32 {
+        // SAFETY: The verified caller owns an open read-only attempt.
+        unsafe { sto_tpcc_protocol_validate(self.entered.thread) }
+    }
+
+    fn finish(&mut self, committed: bool) -> shard_host_core::engine::Report {
+        let mut attempt = self.attempt.take().expect("write attempt exists");
+        let mut report = StoTpccProtocolReport::default();
+        let status = attempt.finish(u32::from(committed), &mut report);
+        shard_host_core::engine::Report { status, disposition: report.disposition }
+    }
+
+    fn commit(&mut self) -> shard_host_core::engine::Report {
+        let mut attempt = self.attempt.take().expect("write attempt exists");
+        let mut report = StoTpccProtocolReport::default();
+        // SAFETY: The guard owns this attempt. The callback only reads its request.
+        let status = unsafe { sto_tpcc_protocol_commit(
+            attempt.thread, 0, Some(shard_log_callback), ptr::null_mut(), &mut report,
+        ) };
+        attempt.open = false;
+        shard_host_core::engine::Report { status, disposition: report.disposition }
+    }
 }
 
 /// # Safety
@@ -1010,31 +1069,8 @@ unsafe fn put(
     if value.len() > MAX_LOGGED_BYTES {
         return refuse_oversized(OPERATION, entered, catalog_table, "value", value.len());
     }
-    let thread = entered.thread;
-    // SAFETY: The handle is registered and idle; the table is registered and
-    // the engine copies the key and the value before it returns.
-    unsafe {
-        let attempt = match VerbAttempt::begin(OPERATION, thread) {
-            Ok(attempt) => attempt,
-            Err(status) => return status,
-        };
-        // Reads the current version, records the write and stages it.
-        let staged = sto_tpcc_protocol_mutate(
-            thread,
-            entry.table,
-            entry.table_id,
-            PROTOCOL_UPSERT,
-            key.as_ptr(),
-            key.len(),
-            value.as_ptr(),
-            value.len(),
-            0,
-        );
-        if staged != ENGINE_OK {
-            return close_and_map(attempt, staged);
-        }
-        commit_staged(attempt)
-    }
+    let mut host = WriteHost { operation: OPERATION, entered, entry, key, attempt: None };
+    shard_status(OPERATION, shard_host_core::verbs::write_cell(&mut host, Some(value)))
 }
 
 /// # Safety
@@ -1061,32 +1097,8 @@ unsafe fn remove(
         Ok(target) => target,
         Err(refusal) => return refusal,
     };
-    let thread = entered.thread;
-    // SAFETY: As in `put`.
-    unsafe {
-        let attempt = match VerbAttempt::begin(OPERATION, thread) {
-            Ok(attempt) => attempt,
-            Err(status) => return status,
-        };
-        let staged = sto_tpcc_protocol_mutate(
-            thread,
-            entry.table,
-            entry.table_id,
-            PROTOCOL_DELETE,
-            key.as_ptr(),
-            key.len(),
-            ptr::null(),
-            0,
-            0,
-        );
-        match staged {
-            ENGINE_OK => commit_staged(attempt),
-            // The key is absent and nothing was staged. The absence is a
-            // read like any other: certify it and finish read-only.
-            ENGINE_MISS => certify_read_only(attempt),
-            failed => close_and_map(attempt, failed),
-        }
-    }
+    let mut host = WriteHost { operation: OPERATION, entered, entry, key, attempt: None };
+    shard_status(OPERATION, shard_host_core::verbs::write_cell(&mut host, None))
 }
 
 /// Makes `value` the committed value of `key` in `table` on the registered
@@ -1647,7 +1659,8 @@ mod tests {
                 scan(&two, Some(&three), Some((&two, b"a"))),
                 (SHARD_NOT_FOUND, vec![])
             );
-            assert_eq!(scan(&two, None, Some((&two, b"a"))), (SHARD_IO, vec![]));
+            // Warehouse three has never been materialized and is empty.
+            assert_eq!(scan(&two, None, Some((&two, b"a"))), (SHARD_NOT_FOUND, vec![]));
             assert_eq!(
                 scan(&[0, 0, 0, 1, 0], Some(&three), None),
                 found(&two, b"a", b"two-a")
@@ -1675,12 +1688,12 @@ mod tests {
     ///
     /// On one thread every lookahead certifies trivially, so a `scan_next`
     /// that closed its transaction as aborted and delivered the row anyway
-    /// would pass every other test. Here another engine thread commits a key
-    /// the table has never held after the walk and before the certification.
-    /// That advances the table's directory generation, which the walk read.
+    /// would pass every other test. Here another engine thread updates an
+    /// existing key after the walk and before certification. The structural
+    /// guard excludes new keys, but record-version validation is still needed.
     #[cfg(mtree_native_integration)]
     #[test]
-    fn scan_next_returns_retry_when_a_key_is_interned_between_walk_and_validation() {
+    fn scan_next_returns_retry_when_a_row_changes_between_walk_and_validation() {
         let engine = Engine::new();
         // Raw pointers are not `Send`; pass exposed addresses as the
         // neighbouring native tests do.
@@ -1692,7 +1705,7 @@ mod tests {
                 let table = ptr::with_exposed_provenance_mut::<StoTpccTable>(table_address);
                 let mut worker = ptr::null_mut();
                 assert_eq!(sto_tpcc_thread_create(db, &mut worker), ENGINE_OK);
-                commit_plain(worker, table, b"z");
+                commit_plain(worker, table, b"m");
                 assert_eq!(sto_tpcc_thread_destroy(worker), ENGINE_OK);
             })
             .join()
@@ -1704,11 +1717,9 @@ mod tests {
         assert!(AFTER_WALK.take().is_none());
         engine.assert_idle();
 
-        // Undisturbed, the same lookahead certifies, and the other thread's
-        // row is there.
+        // Undisturbed, the same lookahead certifies.
         assert_eq!(engine.scan_next(None), (SHARD_OK, vec![row(b"m")]));
-        assert_eq!(engine.scan_next(Some(b"m")), (SHARD_OK, vec![row(b"z")]));
-        assert_eq!(engine.scan_next(Some(b"z")), (SHARD_NOT_FOUND, Vec::new()));
+        assert_eq!(engine.scan_next(Some(b"m")), (SHARD_NOT_FOUND, Vec::new()));
         engine.assert_idle();
     }
 

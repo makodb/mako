@@ -1990,7 +1990,8 @@ extern "C" mt_status mt_tree_create(mt_runtime *runtime_candidate,
     if (status != MT_OK) {
       return status;
     }
-    status = checked_thread(runtime, thread, true);
+    bool controlled_rcu = false;
+    status = checked_thread(runtime, thread, true, true, &controlled_rcu);
     if (status != MT_OK) {
       return status;
     }
@@ -2000,7 +2001,7 @@ extern "C" mt_status mt_tree_create(mt_runtime *runtime_candidate,
 
     std::unique_ptr<mt_tree> pending;
     {
-      scoped_rcu_region region;
+      operation_rcu_guard region(*thread, controlled_rcu);
       pending = std::make_unique<mt_tree>(runtime);
     }
     try {
@@ -2011,7 +2012,7 @@ extern "C" mt_status mt_tree_create(mt_runtime *runtime_candidate,
       runtime->tree_registry.store(pending.get(), std::memory_order_release);
     } catch (...) {
       /* The unpublished tree is destroyed on this attached worker. */
-      scoped_rcu_region region;
+      operation_rcu_guard region(*thread, controlled_rcu);
       pending.reset();
       throw;
     }

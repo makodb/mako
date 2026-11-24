@@ -407,6 +407,11 @@ impl Runtime {
             while let Ok(job) = rx.recv() {
                 let result = if worker.stopping.load(Ordering::Acquire) { Err(Status::Retry) }
                     else { worker.handle(job.operation,job.payload) };
+                if let Err(error) = &result {
+                    if !matches!(error, Status::Retry | Status::Busy) {
+                        eprintln!("Native sharding owner {owner}: operation {} failed: {error:?}", job.operation);
+                    }
+                }
                 job.completion.complete(result);
             }
             worker.host.leave();
@@ -644,11 +649,23 @@ impl Node {
         loop {
             self.check_live()?;
             self.metadata_gate()?;
-            let bytes = self.host.peer(plan.source,wire::LIVE_CAPTURE,
-                &wire::capture_request(encoded,after.as_ref())?)?;
+            let bytes = match self.host.peer(plan.source,wire::LIVE_CAPTURE,
+                &wire::capture_request(encoded,after.as_ref())?) {
+                Ok(bytes) => bytes,
+                // Precopy creates no completeness certificate. A live writer
+                // may invalidate its observation indefinitely; proceed to the
+                // frozen, drained exact reconciliation instead of aborting the
+                // migration or spinning against ordinary transactions.
+                Err(Status::Retry | Status::Busy) => return Ok(()),
+                Err(error) => return Err(error),
+            };
             let (rows,eof) = wire::decode_rows(&bytes,plan,after.as_ref())?;
             for row in rows {
-                checked(transfer::precopy_put(&local.participant,&mut local.store,plan,&row))?;
+                match transfer::precopy_put(&local.participant,&mut local.store,plan,&row) {
+                    Status::Ok => {},
+                    Status::Retry | Status::Busy => return Ok(()),
+                    error => return Err(error),
+                }
                 after = Some(row);
             }
             if eof { return Ok(()); }
@@ -896,6 +913,9 @@ impl Node {
         })();
         let Ok((source,destination,encoded)) = prepared else {return;};
         let result = self.drive_before_commit(generation,source,destination,&encoded);
+        if let Err(error) = &result {
+            eprintln!("Native sharding generation {generation} ({source} -> {destination}) failed before commit: {error:?}");
+        }
         // An uncertain metadata append is never converted into an Abort.
         if self.metadata_gate().is_err() { return; }
         let command = {

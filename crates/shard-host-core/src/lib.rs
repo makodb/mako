@@ -1,19 +1,20 @@
-//! The decisions of Mako's sharding storage host on the Rust engine that
-//! Verus checks.
+//! Verified storage-operation control flow and cursor decisions.
 //!
-//! Every function here is pure and total: it has no precondition, so the
-//! unverified shell that calls it (`sto-tpcc-ffi`'s `shard_host.rs`) cannot
-//! call it wrongly. The shell keeps what Verus does not take: the C types, raw
-//! pointers, thread-locals, the registry lock, panic containment, the
-//! fail-stop and every call into the engine.
+//! Public entry points are total. The engine trait's internal preconditions
+//! are proved at their call sites. Native implementations must satisfy the
+//! explicit E1-E7 contracts in engine.rs and walk.rs. The shell retains C
+//! types, raw pointers, thread registration, panic containment, and fail-stop.
 //!
-//! All code of this crate is inside `verus!`, and none of it is trusted:
+//! All executable implementations here are checked inside `verus!`:
 //! `scripts/verify_shard_host_core.sh` runs the pinned Verus with
 //! `--no-cheating`, refuses any item outside the macro, and requires Verus to
 //! reject a list of deliberately wrong variants.
 #![forbid(unsafe_code)]
 
 pub mod order;
+pub mod engine;
+pub mod verbs;
+pub mod walk;
 pub mod scan;
 pub mod status;
 

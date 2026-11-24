@@ -4741,8 +4741,9 @@ alignment, lengths, the Rust `isize` slice bound, address overflow,
 owner-thread affinity, active transaction state, table ownership, enum values,
 callback presence, and output capacities.
 
-The bridge admits local, multi-shard and replicated execution with static,
-startup-time schema construction. Attachment admission is process-wide and
+The bridge admits local, multi-shard and replicated execution. Nonreplicated
+native Rust sharding also creates destination warehouse indexes on demand,
+including on an attached worker. Attachment admission is process-wide and
 counts foreground, loader, persistent helper, and replay lanes, bounded by both
 `mt_max_threads()` and `MAX_THREADS`. It is not the upper cache's worker limit.
 See the topology and lifetime contract below and Appendix M.3.
@@ -4759,6 +4760,7 @@ limit and shared structural allocation budget. The startup environment is:
 | `MAKO_STO_TPCC_MAX_RETAINED_RECORDS` | `u64::MAX` | Positive decimal integer, applied to every table. |
 | `MAKO_STO_TPCC_MAX_CONSUMED_RECORD_IDS` | `u64::MAX` | Positive decimal integer, applied to every table. |
 | `MAKO_STO_TPCC_MAX_RETAINED_KEY_BYTES` | `u64::MAX` | Positive decimal integer byte count, applied to every table. |
+| `MAKO_STO_TPCC_MAX_TRANSACTION_ITEMS` | `65536` | Positive decimal integer up to `u32::MAX`, bounding observations in one transaction. |
 
 Unset variables select defaults. Empty values, zero, leading zeros, signs,
 whitespace, invalid suffixes, and arithmetic overflow are rejected before
@@ -4768,6 +4770,13 @@ the shared budget; its zero value selects 8 GiB for zero-initialized C callers.
 That C defaulting convention does not make an explicit environment value of
 zero valid. The lockstep Rust library, wrapper, and C header MUST all be
 rebuilt after this structure change.
+
+Transaction observations include tombstones traversed by range scans, even
+when the scan returns few live rows. Repeated migrations and Delivery can
+therefore exceed the former 1,024-item benchmark limit. The configurable item
+budget preserves those observations for validation; it does not reclaim
+tombstones or bound the number of rows returned. Storage grows on demand.
+Transactions that exceed this finite budget still report resource exhaustion.
 
 `STO_TPCC_RESOURCE_EXHAUSTED`, numeric status 6, distinguishes ordinary capacity
 exhaustion from retryable conflicts and fatal integrity failures. If an access

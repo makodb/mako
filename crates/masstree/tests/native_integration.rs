@@ -639,10 +639,10 @@ fn worker_rcu_scope_spans_trees_and_drops_during_unwind() {
             first.read_scope(&worker).unwrap_err(),
             Error::Native(NativeStatus::ActiveGuards)
         );
-        assert_eq!(
-            runtime.create_tree(&worker).unwrap_err(),
-            Error::Native(NativeStatus::ActiveGuards)
-        );
+        let created = runtime.create_tree(&worker).unwrap();
+        assert_eq!(created.get(&worker, b"new-tree").unwrap(), None);
+        // Creating a tree must preserve the enclosing transaction's guard.
+        assert_eq!(first.get(&worker, b"rcu/first").unwrap(), Some(first_id));
         assert_eq!(
             runtime.shutdown(&worker),
             Err(Error::Native(NativeStatus::ActiveGuards))
@@ -652,6 +652,7 @@ fn worker_rcu_scope_spans_trees_and_drops_during_unwind() {
             Err(Error::Native(NativeStatus::ActiveGuards))
         );
         scope.close().unwrap();
+        drop(created);
     }
     worker.quiesce().unwrap();
 

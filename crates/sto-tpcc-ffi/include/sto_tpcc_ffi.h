@@ -306,6 +306,14 @@ sto_tpcc_status sto_tpcc_table_create_with_cache_policy(
     const sto_tpcc_table_config *config,
     sto_tpcc_resolved_cache_policy cache_policy,
     sto_tpcc_table **out_table) STO_TPCC_NOEXCEPT;
+/* Create an unpublished table on an already attached worker of this database.
+ * The worker must belong to this OS thread. Concurrent users of other tables
+ * may continue; retain the returned table until all of its users have stopped. */
+sto_tpcc_status sto_tpcc_table_create_on_thread(
+    sto_tpcc_db *db, const sto_tpcc_thread *thread,
+    const sto_tpcc_table_config *config,
+    sto_tpcc_resolved_cache_policy cache_policy,
+    sto_tpcc_table **out_table) STO_TPCC_NOEXCEPT;
 /* Permanently reject new keys while preserving reads and updates of existing
  * records. Call after loader transactions finish and with no concurrent table
  * users. */

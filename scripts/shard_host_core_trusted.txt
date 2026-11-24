@@ -1,8 +1,8 @@
 # shard-host-core's trusted surface.
 #
-# The crate itself trusts nothing: scripts/shard_host_core_proof.py runs Verus
-# with --no-cheating and refuses every verifier attribute, so there is no
-# external_body, assume or admit to list.
+# The crate proves the operation algorithms conditional on the E1-E7 engine
+# contracts. The concrete shell implementations of those traits are trusted.
+# The gate uses --no-cheating and refuses verifier escape attributes.
 #
 # What is trusted is the shell. Each line names a function of
 # crates/sto-tpcc-ffi/src that calls into the core, as `<file>:<function>`,
@@ -11,5 +11,7 @@
 # does. This list only changes with a review of the function it names.
 shard_host.rs:close_and_map      hands map_engine Stage::Closed only after the closing finish answered OK, with the status of the step that failed
 shard_host.rs:certify_read_only  hands map_engine Stage::ReadOnlyFinish with the status and the report of the committing finish
-shard_host.rs:commit_staged      hands map_engine Stage::Commit with the status and the report of sto_tpcc_protocol_commit
+shard_host.rs:put                lends a registered cell and its bytes to verbs::write_cell. WriteHost implements engine.rs E1-E5 with protocol exports; native commit, selected-range exclusion, frame preservation and log publication are trusted
+shard_host.rs:remove             lends a registered cell to verbs::write_cell with None. WriteHost supplies the same E1-E5 contracts, including validation of an absent deletion
 shard_host.rs:scan_next          passes the received flags and spans to the raw or fixed-coordinate rule after checking the table and thread, then applies the returned bound to its physical scan. Enumeration, registration and native lookup are trusted
+shard_host.rs:scan_physical      ScanHost supplies walk.rs E6-E7 through certified pinned lookahead. The runtime supplies a frozen, drained range for exact capture; live precopy is advisory. Each native hop's ordering and validation, and forwarding of the returned row to the sink, remain trusted

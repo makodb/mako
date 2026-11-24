@@ -752,10 +752,12 @@ TEST(MtreeAbiPoint, WorkerRcuScopeSpansTreesReadsWritesAndScans) {
   EXPECT_EQ(read_scope.owner, 0u);
   EXPECT_EQ(read_scope.generation, 0u);
 
-  mt_tree *blocked_tree = reinterpret_cast<mt_tree *>(uintptr_t{1});
-  EXPECT_EQ(mt_tree_create(runtime, worker, &blocked_tree),
-            MT_ERR_ACTIVE_GUARDS);
-  EXPECT_EQ(blocked_tree, nullptr);
+  // A new unpublished tree can use the existing controlled RCU scope without
+  // ending the transaction's protection of records in other trees.
+  mt_tree *created_tree = nullptr;
+  EXPECT_EQ(mt_tree_create(runtime, worker, &created_tree), MT_OK);
+  ASSERT_NE(created_tree, nullptr);
+  EXPECT_TRUE(rcu::s_instance.in_rcu_region());
   mt_thread *blocked_attach = reinterpret_cast<mt_thread *>(uintptr_t{1});
   EXPECT_EQ(mt_thread_attach(runtime, &blocked_attach), MT_ERR_ACTIVE_GUARDS);
   EXPECT_EQ(blocked_attach, nullptr);
@@ -768,6 +770,7 @@ TEST(MtreeAbiPoint, WorkerRcuScopeSpansTreesReadsWritesAndScans) {
   EXPECT_FALSE(rcu::s_instance.in_rcu_region());
 
   /* Standalone calls still create and release their own local RCU region. */
+  EXPECT_EQ(mt_tree_release(created_tree), MT_OK);
   found = MT_RECORD_ID_NONE;
   EXPECT_EQ(mt_get(first_tree, worker, first_key.data(), first_key.size(),
                    &found),

@@ -372,11 +372,13 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
     set(_sto_tpcc_unit_expected_tests
         shard_host::tests::a_panic_inside_scan_next_is_contained_and_closes_the_attempt
         shard_host::tests::engine_status_mapping_is_total_and_stops_on_indefinite_outcomes
-        shard_host::tests::scan_next_returns_retry_when_a_key_is_interned_between_walk_and_validation
+        shard_host::tests::fixed_warehouse_rows_use_coordinate_then_physical_key
+        shard_host::tests::scan_next_returns_retry_when_a_row_changes_between_walk_and_validation
         shard_host::tests::status_numbers_and_span_layout_are_stable
         shard_host::tests::table_registry_rejects_conflicts_and_bad_ids
         shard_host::tests::verbs_refuse_an_unentered_thread
         tests::checked_get_zeroes_actual_before_rejecting_an_invalid_handle
+        tests::attached_worker_creates_tables_without_disturbing_its_transaction
         tests::dense_item_and_stock_paths_warm_mix_and_disable_on_warehouse_mismatch
         tests::fixed_key_views_require_exact_nonoverflowing_storage
         tests::fixed_mutation_access_error_reports_only_the_delivered_prefix

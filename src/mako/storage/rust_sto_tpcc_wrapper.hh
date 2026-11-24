@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <rusty/box.hpp>
+#include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <string>
 #include <string_view>
@@ -162,6 +163,11 @@ public:
   void init() override;
   void configure_native_sharding(mako::NativeShardingHost&, MakoShardHost&) override;
   bool preopen_native_warehouses(uint64_t table, uint32_t owner, uint32_t total) override;
+  // @unsafe - Lazily publish an owner-bound warehouse index; callers retain it
+  // through native shutdown. The catalog serializes concurrent creators.
+  abstract_ordered_index* open_native_warehouse_index(const std::string& name, uint32_t owner);
+  abstract_ordered_index* ensure_native_warehouse(uint64_t table, uint32_t owner,
+                                                 uint32_t warehouse, uint32_t total);
   void native_sharding_stopped(uint32_t owner) noexcept override;
   void on_load_complete() override;
   // Quiescent snapshots after loading, after workers join, and on failure.
@@ -252,6 +258,9 @@ private:
   sto_tpcc_db *db_;
   void release_sharding_indexes() noexcept;
   bool sharding_uses_index(abstract_ordered_index*) const;
+  mutable rusty::Mutex<uint8_t> catalog_lock_{0};
+  abstract_ordered_index* open_index_impl(const std::string& name, int shard_index,
+                                         int32_t native_selector);
   std::map<int, int32_t> next_table_ids_;
   bool protocol_mode_ = false;
   bool uses_protocol() const noexcept;

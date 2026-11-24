@@ -73,6 +73,7 @@ struct Registered {
 struct Registry {
     std::map<std::tuple<uint32_t, uint64_t, uint32_t>, Registered> tables;
     std::set<uint32_t> closed;
+    std::map<uint32_t, std::pair<rust_sto_tpcc_wrapper*, uint32_t>> builders;
 };
 // Serializes registration, startup and release. open() only takes registry,
 // because the sharding crate may hold its raw-handle mutex when it calls open.
@@ -155,7 +156,7 @@ void thread_leave(void* context) {
     MasstreeContext::BindCurrentThread(nullptr);
 }
 
-// @unsafe - both handles were built before attachment. The physical index
+// @unsafe - both handles are published only after registration. The physical index
 // carries the local rows, and its stable proxy carries only the routing ID.
 uint32_t select_handle(uint64_t table, uint32_t owner, uint32_t warehouse, uint32_t proxy,
                        uintptr_t* handle, uint32_t kind) {
@@ -178,11 +179,54 @@ uint32_t open(void* context, uint64_t table, MakoShardBytes, uint32_t owner,
     return select_handle(table, owner, 0, proxy, handle, kind);
 }
 
-uint32_t open_warehouse(void*, uint64_t table, uint32_t warehouse, uint32_t owner,
+uint32_t open_warehouse(void* context, uint64_t table, uint32_t warehouse, uint32_t owner,
                         uint32_t proxy, uintptr_t* handle) {
     // A cold-start failure has no retained, stopped node to fence a cached handle.
     if (!warehouse || !mako_sharding_active(owner)) return MAKO_SHARD_INVALID;
-    return select_handle(table, owner, warehouse, proxy, handle, 0);
+    const auto selected = select_handle(table, owner, warehouse, proxy, handle, 0);
+    if (selected == MAKO_SHARD_OK) return selected;
+    if (!handle || proxy > 1) return MAKO_SHARD_INVALID;
+    try {
+        uint32_t total = 0;
+        auto* db = static_cast<rust_sto_tpcc_wrapper*>(context);
+        {
+            auto state = registry.lock().unwrap();
+            const auto builder = state->builders.find(owner);
+            if (builder == state->builders.end() || builder->second.first != db)
+                return MAKO_SHARD_INVALID;
+            total = builder->second.second;
+        }
+        db->ensure_native_warehouse(table, owner, warehouse, total);
+        return select_handle(table, owner, warehouse, proxy, handle, 0);
+    } catch (...) { return MAKO_SHARD_IO; }
+}
+
+uint32_t warehouse_write(void* context, uint64_t table, MakoShardBytes coordinate,
+                         MakoShardBytes key, MakoShardBytes value, bool remove) {
+    auto& host = *static_cast<NativeShardingHost*>(context);
+    if (entered_host != &host) return MAKO_SHARD_INVALID;
+    uint32_t kind = 0;
+    if (mako_sharding_table_coordinate(table, &kind) != MAKO_SHARD_OK) return MAKO_SHARD_INVALID;
+    if (kind == 1 && coordinate.len == 4 && coordinate.data) {
+        const auto* b = coordinate.data;
+        const uint32_t warehouse = uint32_t(b[0]) << 24 | uint32_t(b[1]) << 16
+            | uint32_t(b[2]) << 8 | uint32_t(b[3]);
+        uintptr_t handle = 0;
+        const auto opened = open_warehouse(dynamic_cast<rust_sto_tpcc_wrapper*>(host.db),
+                                           table, warehouse, host.owner, 0, &handle);
+        if (opened != MAKO_SHARD_OK) return opened;
+    }
+    return remove ? mako_sto_shard_remove(context, table, coordinate, key)
+                  : mako_sto_shard_put(context, table, coordinate, key, value);
+}
+
+uint32_t put(void* context, uint64_t table, MakoShardBytes coordinate,
+             MakoShardBytes key, MakoShardBytes value) {
+    return warehouse_write(context, table, coordinate, key, value, false);
+}
+
+uint32_t remove(void* context, uint64_t table, MakoShardBytes coordinate, MakoShardBytes key) {
+    return warehouse_write(context, table, coordinate, key, {nullptr, 0}, true);
 }
 
 uint32_t unregister_table(uint32_t owner, uint64_t table, uint32_t warehouse) noexcept {
@@ -218,8 +262,18 @@ void release_tables(std::optional<uint32_t> owner, rust_sto_tpcc_wrapper* db = n
                 (!db || db->get_index_by_table_id(current->second.index->get_table_id()) == current->second.index)) {
                 removed.insert(state->tables.extract(current));
                 auto next = state->tables.lower_bound({registered_owner, 0, 0});
-                if (next == state->tables.end() || std::get<0>(next->first) != registered_owner)
+                if (next == state->tables.end() || std::get<0>(next->first) != registered_owner) {
                     state->closed.erase(registered_owner);
+                    state->builders.erase(registered_owner);
+                }
+            }
+        }
+        for (auto at = state->builders.begin(); at != state->builders.end();) {
+            if ((!owner || *owner == at->first) && (!db || db == at->second.first)) {
+                state->closed.erase(at->first);
+                at = state->builders.erase(at);
+            } else {
+                ++at;
             }
         }
     }
@@ -238,7 +292,8 @@ MakoShardHost rust_sharding_callbacks(NativeShardingHost& base) {
     if (!db) throw std::logic_error("Rust sharding requires a Rust-engine database");
     if (BenchmarkConfig::getInstance().getIsReplicated())
         throw std::logic_error("Rust sharding requires a non-replicated engine");
-    const bool warehouses = mako_sharding_warehouse_count() > 0;
+    const uint32_t total = mako_sharding_warehouse_count();
+    const bool warehouses = total > 0;
     std::lock_guard guard(lifecycle);
     auto state = registry.lock().unwrap();
     auto first = state->tables.lower_bound({base.owner, 0, 0});
@@ -250,8 +305,9 @@ MakoShardHost rust_sharding_callbacks(NativeShardingHost& base) {
             throw std::logic_error("index belongs to a different Rust database");
     }
     if (warehouses &&
-        mako_sharding_warehouse_opener(base.owner, nullptr, open_warehouse) != MAKO_SHARD_OK)
+        mako_sharding_warehouse_opener(base.owner, db, open_warehouse) != MAKO_SHARD_OK)
         throw std::logic_error("warehouse directory has a different engine opener");
+    if (warehouses) state->builders.emplace(base.owner, std::make_pair(db, total));
     Transaction::start_epoch_advancer();
     state->closed.insert(base.owner);
     base.rust_storage = true;
@@ -260,19 +316,20 @@ MakoShardHost rust_sharding_callbacks(NativeShardingHost& base) {
     host.thread_leave = thread_leave;
     host.open = open;
     host.scan_next = mako_sto_shard_scan_next;
-    host.put = mako_sto_shard_put;
-    host.remove = mako_sto_shard_remove;
+    host.put = put;
+    host.remove = remove;
     return host;
 }
 
 static uint32_t register_index(uint64_t table, uint32_t owner, uint32_t warehouse,
-                               abstract_ordered_index* index) {
+                               abstract_ordered_index* index, uint32_t known_total = 0,
+                               bool lifecycle_locked = false) {
     try {
         auto* rust = dynamic_cast<rust_sto_tpcc_ordered_index*>(index);
         if (!rust || !rust->sharding_host_table()) return MAKO_SHARD_INVALID;
         const int32_t id = index->get_table_id();
         if (id <= 0 || id >= 0x8000
-            || static_cast<uint32_t>((id - 1) / NUM_TABLES_PER_SHARD) != owner)
+            || (!warehouse && static_cast<uint32_t>((id - 1) / NUM_TABLES_PER_SHARD) != owner))
             return MAKO_SHARD_INVALID;
         auto& bindings = get_table_registry();
         auto name = bindings.get_table_name(id);
@@ -283,7 +340,7 @@ static uint32_t register_index(uint64_t table, uint32_t owner, uint32_t warehous
         if (mako_sharding_table_coordinate(table, &coordinates) != MAKO_SHARD_OK ||
             coordinates != (warehouse ? 1u : 0u))
             return MAKO_SHARD_INVALID;
-        const uint32_t total = mako_sharding_warehouse_count();
+        const uint32_t total = known_total ? known_total : mako_sharding_warehouse_count();
         rusty::Option<std::string> coordinate = rusty::None;
         if (warehouse) {
             if (warehouse > total || rust_sto_tpcc_detail::table_has_static_directory(text))
@@ -295,18 +352,21 @@ static uint32_t register_index(uint64_t table, uint32_t owner, uint32_t warehous
                                             &canonical, &kind) != MAKO_SHARD_OK || canonical != table) {
             return MAKO_SHARD_INVALID;
         }
-        std::lock_guard guard(lifecycle);
+        std::unique_lock guard(lifecycle, std::defer_lock);
+        if (!lifecycle_locked) guard.lock();
         const auto key = std::make_tuple(owner, table, warehouse);
         {
             auto state = registry.lock().unwrap();
-            if (state->closed.contains(owner)) return MAKO_SHARD_INVALID;
+            if (state->closed.contains(owner) && !lifecycle_locked) return MAKO_SHARD_INVALID;
             auto at = state->tables.find(key);
             if (at != state->tables.end())
                 return at->second.index == index ? MAKO_SHARD_OK : MAKO_SHARD_INVALID;
-            state->tables.emplace(key, Registered{index, rust->make_sharding_proxy(), kind});
         }
-        // open() for this owner is unreachable until callbacks() closes
-        // registration. Publish the crate's irreversible handle last.
+        // Allocate the publication node first. A concurrent opener must not
+        // see the index until its routing binding and Rust registration exist.
+        decltype(Registry::tables) staged;
+        staged.emplace(key, Registered{index, rust->make_sharding_proxy(), kind});
+        auto publication = staged.extract(staged.begin());
         uint32_t result = MAKO_SHARD_IO;
         bool bound = false;
         bool verbs = false;
@@ -327,6 +387,11 @@ static uint32_t register_index(uint64_t table, uint32_t owner, uint32_t warehous
                 std::terminate();
             if (bound) bindings.forget_raw_handle(id, index);
             registry.lock().unwrap()->tables.erase(key);
+        } else {
+            // lifecycle excludes another publisher of this key. Inserting a
+            // preallocated node does not allocate after native registration.
+            auto published = registry.lock().unwrap()->tables.insert(std::move(publication));
+            if (!published.inserted) std::terminate();
         }
         return result;
     } catch (...) {
@@ -374,18 +439,43 @@ void rust_sto_tpcc_wrapper::configure_native_sharding(mako::NativeShardingHost& 
 bool rust_sto_tpcc_wrapper::preopen_native_warehouses(uint64_t table, uint32_t owner,
                                                     uint32_t total) {
     try {
-        for (uint32_t warehouse = 1; warehouse <= total; ++warehouse) {
-            const auto name = "tpcc_native_" + std::to_string(table) + "_warehouse_"
-                + std::to_string(warehouse) + "_owner_" + std::to_string(owner) + "_bytes";
-            auto* physical = open_index(name, static_cast<int>(owner));
-            if (mako::rust_sharding_register_warehouse(table, owner, warehouse, physical) != MAKO_SHARD_OK)
-                throw std::runtime_error("could not register warehouse index " + name);
-        }
+        const uint32_t owners = BenchmarkConfig::getInstance().getNshards();
+        if (!owners || total % owners || owner >= owners)
+            throw std::invalid_argument("invalid native warehouse dimensions");
+        const uint32_t per_owner = total / owners;
+        // Bootstrap only the warehouses initially assigned to this owner.
+        // Migrated destinations and remote routing handles are created on demand.
+        for (uint32_t warehouse = owner * per_owner + 1;
+             warehouse <= (owner + 1) * per_owner; ++warehouse)
+            ensure_native_warehouse(table, owner, warehouse, total);
     } catch (...) {
         native_sharding_stopped(owner);
         throw;
     }
     return true;
+}
+
+abstract_ordered_index* rust_sto_tpcc_wrapper::ensure_native_warehouse(
+    uint64_t table, uint32_t owner, uint32_t warehouse, uint32_t total) {
+    if (!warehouse || warehouse > total) throw std::invalid_argument("invalid native warehouse");
+    uint32_t coordinates = 0;
+    if (mako_sharding_table_coordinate(table, &coordinates) != MAKO_SHARD_OK || coordinates != 1)
+        throw std::invalid_argument("native warehouse requires a warehouse catalog table");
+    std::lock_guard guard(mako::lifecycle);
+    {
+        auto state = mako::registry.lock().unwrap();
+        auto [builder, added] = state->builders.emplace(owner, std::make_pair(this, total));
+        if (builder->second.first != this || builder->second.second != total)
+            throw std::logic_error("native warehouse belongs to another database");
+        const auto found = state->tables.find({owner, table, warehouse});
+        if (found != state->tables.end()) return found->second.index;
+    }
+    const auto name = "tpcc_native_" + std::to_string(table) + "_warehouse_"
+        + std::to_string(warehouse) + "_owner_" + std::to_string(owner) + "_bytes";
+    auto* physical = open_native_warehouse_index(name, owner);
+    if (mako::register_index(table, owner, warehouse, physical, total, true) != MAKO_SHARD_OK)
+        throw std::runtime_error("could not register warehouse index " + name);
+    return physical;
 }
 
 void rust_sto_tpcc_wrapper::native_sharding_stopped(uint32_t owner) noexcept {

@@ -4,7 +4,7 @@
 //! `[lo, hi)` (no upper bound when `has_hi` is 0) and whose identity
 //! `(coordinate, key)` is strictly greater than the cursor's when `has_after`
 //! is 1. The coordinate of a raw table's row is its key.
-use crate::order::*;
+use super::order::*;
 use vstd::prelude::*;
 
 verus! {

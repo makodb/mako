@@ -745,7 +745,15 @@ sto_tpcc_db_config rust_sto_tpcc_detail::db_config_for_worker_count(
   config.max_threads = static_cast<uint32_t>(
       std::max(kTpccMinimumAttachmentSlots, requested_slots));
   config.max_key_length = 1024;
-  config.max_items_per_txn = 1024;
+  // Range certification includes traversed tombstones. Repeated warehouse
+  // moves and Delivery leave more than 1,024 such observations even for a
+  // transaction returning few rows. Items grow on demand; preserve every
+  // observation and give this benchmark a configurable finite read-set budget.
+  const uint64_t max_items = capacity_environment(
+      "MAKO_STO_TPCC_MAX_TRANSACTION_ITEMS", 65'536, false);
+  if (max_items > std::numeric_limits<uint32_t>::max())
+    throw std::invalid_argument("Rust STO transaction item capacity exceeds uint32_t");
+  config.max_items_per_txn = static_cast<uint32_t>(max_items);
   config.max_locks_per_txn = 2048;
   config.max_registry_bytes = capacity_environment(
       "MAKO_STO_TPCC_REGISTRY_MEMORY", uint64_t{8} << 30, true);
@@ -1317,6 +1325,7 @@ void rust_sto_tpcc_wrapper::init() {
 }
 
 void rust_sto_tpcc_wrapper::on_load_complete() {
+  auto catalog_guard = catalog_lock_.lock().unwrap();
   for (const auto &table : tables_) {
     if (table->is_remote_ || !tpcc_table_has_static_directory(table->name_))
       continue;
@@ -1326,6 +1335,7 @@ void rust_sto_tpcc_wrapper::on_load_complete() {
 }
 
 void rust_sto_tpcc_wrapper::report_capacity_usage(const char *phase) const {
+  auto catalog_guard = catalog_lock_.lock().unwrap();
   sto_tpcc_db_usage_info db_usage{};
   require_ok("db_usage", sto_tpcc_db_usage(db_, &db_usage));
   auto output = mako::benchmark_cerr();
@@ -1988,13 +1998,38 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
 // @unsafe - Startup-only catalog publication and native C ABI table creation.
 abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     const std::string &name, int shard_index) {
+  auto catalog_guard = catalog_lock_.lock().unwrap();
+  return open_index_impl(name, shard_index, -1);
+}
+
+abstract_ordered_index *rust_sto_tpcc_wrapper::open_native_warehouse_index(
+    const std::string& name, uint32_t owner) {
+  auto catalog_guard = catalog_lock_.lock().unwrap();
+  // Protocol selectors are 15 bits. Legacy shard windows grow from the bottom;
+  // native warehouse handles use the remaining process-wide space from above.
+  static rusty::Mutex<int32_t> next_native_selector{kTableIdLimit - 1};
+  auto selector = next_native_selector.lock().unwrap();
+  const auto legacy_end = BenchmarkConfig::getInstance().getNshards() * mako::NUM_TABLES_PER_SHARD;
+  const auto existing = tables_by_name_.find({name, static_cast<int>(owner)});
+  if (existing != tables_by_name_.end()) return existing->second;
+  if (*selector <= static_cast<int64_t>(legacy_end))
+    throw std::length_error("Rust native warehouse selector capacity exhausted");
+  // Consume the selector before creation: even if later publication fails,
+  // no other database may reuse an ID that could already have been exposed.
+  const int32_t id = (*selector)--;
+  return open_index_impl(name, static_cast<int>(owner), id);
+}
+
+abstract_ordered_index *rust_sto_tpcc_wrapper::open_index_impl(
+    const std::string &name, int shard_index, int32_t native_selector) {
   auto &config = BenchmarkConfig::getInstance();
   if (shard_index == -1)
     shard_index = static_cast<int>(config.getShardIndex());
   if (shard_index < 0 ||
       static_cast<size_t>(shard_index) >= config.getNshards())
     throw std::invalid_argument("Rust STO table shard is out of range");
-  const bool remote = shard_index != static_cast<int>(config.getShardIndex());
+  const bool native = native_selector >= 0;
+  const bool remote = !native && shard_index != static_cast<int>(config.getShardIndex());
 
   const auto key = std::make_tuple(name, shard_index);
   if (const auto found = tables_by_name_.find(key);
@@ -2003,7 +2038,7 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
 
   auto [next, inserted] = next_table_ids_.try_emplace(
       shard_index, shard_index * mako::NUM_TABLES_PER_SHARD + 1);
-  int32_t table_id = next->second;
+  int32_t table_id = native ? native_selector : next->second;
   if (remote) {
     std::string local_name = name;
     const size_t marker = name.rfind("_remote_");
@@ -2035,7 +2070,7 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
       table_id = shard_index * mako::NUM_TABLES_PER_SHARD +
           (local->second->table_id_ - 1) % mako::NUM_TABLES_PER_SHARD + 1;
   }
-  if (table_id > (shard_index + 1) * mako::NUM_TABLES_PER_SHARD ||
+  if ((!native && table_id > (shard_index + 1) * mako::NUM_TABLES_PER_SHARD) ||
       table_id >= kTableIdLimit)
     throw std::length_error("Rust STO shard table ID capacity exhausted");
   if (auto *index = table_by_id(table_id)) {
@@ -2077,7 +2112,10 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   const sto_tpcc_resolved_cache_policy cache_policy =
       tpcc_resolved_cache_policy_for(name);
   sto_tpcc_table *table = nullptr;
-  if (!remote)
+  if (native && tls_thread_)
+    require_ok("table_create_on_thread", sto_tpcc_table_create_on_thread(
+        db_, tls_thread_, &table_config, cache_policy, &table));
+  else if (!remote)
     require_ok("table_create_with_cache_policy",
                sto_tpcc_table_create_with_cache_policy(
                    db_, &table_config, cache_policy, &table));
@@ -2146,13 +2184,14 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   // No engine handle is published: native placement resolves MBTA indexes.
   mako::get_table_registry().register_table(
       table_id, name, shard_index, !remote);
-  if (!remote)
+  if (!remote && !native)
     mako::setup_update_table(table_id, raw);
-  next->second = std::max(next->second, table_id + 1);
+  if (!native) next->second = std::max(next->second, table_id + 1);
   return raw;
 }
 
 void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
+  auto catalog_guard = catalog_lock_.lock().unwrap();
   if (idx == nullptr)
     return;
 

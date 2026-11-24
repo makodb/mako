@@ -4,6 +4,108 @@ Branch `sharding-on-rust-engine`, worktree `/var/tmp/mako-shard-rust`. Sections 
 
 ## Resumed implementation
 
+### Completed integration, 2026-11-23
+
+The remaining live integration work is complete, with the scope and proof
+assumptions below. The checklist refers to working integration, not a Git merge.
+
+- [x] Make migration enumeration independent of unrelated directory inserts,
+  without weakening ordinary transaction phantom validation. Check concurrent
+  insertion, tombstone traversal, and complete migration under load.
+- [x] Move storage-operation control flow into the verified core and connect its
+  contracts to the migration store specifications. Enumerate the engine and FFI
+  assumptions precisely. Cover epoch admission and completion ordering without
+  counting existing sharding proofs as new integration proofs.
+- [x] Provision destination warehouse indexes on demand and remove the
+  18-global-warehouse allocation restriction. Check publication, reuse, failure,
+  and shutdown with attached workers.
+- [x] Exercise relocation of all eleven governed warehouse tables and repeated
+  moves between independent owner processes while transactions run.
+- [x] Run Miri and the relevant native sanitizer lanes. Fix findings in this
+  integration and record any external blocker with its failing command.
+- [x] Run the transaction-manager and Masstree component targets separately,
+  the migration checks, and the proof targets against the final implementation.
+
+The scope is live, nonreplicated migration. Replication and recovery of primary
+data on restart remain separate extensions. No publication or merge is implied
+by completing this checklist.
+
+Implementation and evidence:
+
+- Migration lookahead now retains structural admission through certification.
+  Ordinary transaction scans retain optimistic phantom validation. The focused
+  nine focused lookahead checks passed. The native migration fixture includes
+  ordinary directory insertion while traversing 5,000 tombstones, with a
+  deliberately constrained 1,024-item transaction budget.
+- `shard-host-core` executes put/remove transaction control and the tombstone
+  hop loop. Its gate passed 40 obligations and 21 semantic negative controls.
+  E1-E7 explicitly name the native engine assumptions. The production sharding
+  proof imports these same sources and checks `rust_storage_bridge.rs` against
+  the real storage specifications. The full native gate passed: 1,495 production
+  obligations (including the imported host core), 707 independent model
+  obligations, 79 production and 69 model negative controls, and 69 runtime
+  tests. The production positive proof was repeated after the final lint edit
+  and again passed all 1,495 obligations. Of these, 40 come from the imported
+  host core and five are new storage bridge lemmas; the remaining 1,450 are
+  existing sharding obligations. Its separate file-backed recovery example
+  also passed; that does not establish durable primary storage for this live
+  integration. Native engine contracts E1-E7, cell/frame exclusion, pointer and
+  registry lifetimes, actual epoch announcements, and TCP completion ordering
+  remain trusted. Their runtime checks are not an end-to-end formal proof.
+- The full pinned Miri script completed successfully. Its final Masstree
+  library lane passed 224 tests with seven existing exclusions. Native ASan,
+  UBSan and TSan integration checks, all 38 native ABI tests, and all six migration
+  fixture outcomes passed. ASan migration runs enabled leak detection without
+  added suppressions. The final separate component targets passed 406
+  transaction-manager tests and 32 Masstree tests. The C++ sharding smoke passed
+  both process arrangements, its metadata restart cases, mixed scans and epoch RCU.
+- Lazy creation and selectors outside the legacy per-owner windows are
+  implemented. The warehouse fixture provisions 231 additional indexes per
+  owner with an attached worker, checks reuse and out-of-range refusal, and
+  destroys the database after the nodes and workers stop. The native ABI and
+  FFI checks cover creating a table within an existing transaction's RCU scope.
+- `examples/rust_sharding_tpcc.py` runs all eleven tables through repeated
+  relocations between independent processes. The first round runs at the load
+  barrier and later rounds during TPC-C. All 33 moves committed and both owner
+  processes exited 0 after the 240-second workload. Owner 0 committed 58,678
+  transactions and owner 1 committed 2,946,695. Both accounting identities and
+  NewOrder/Payment progress passed. These are sequential table moves, not an
+  atomic multi-table migration. Logs and parsed results are in
+  `build_docker/rust-warehouse-relocations-wt1yglhx/`.
+- Large accepted migration RPCs now retain effect ownership until their reply
+  or connection failure. The generic one-second RPC deadline previously
+  abandoned successful multi-second customer copies. A fixture delays the
+  first destination write by 1.5 seconds to cover this failure. Conflicts during
+  advisory precopy now advance to frozen, drained reconciliation.
+- Ordinary scans still validate every traversed record, including tombstones.
+  The benchmark's former 1,024-item limit exhausted during repeated warehouse
+  moves and Delivery. `MAKO_STO_TPCC_MAX_TRANSACTION_ITEMS` now defaults to
+  65,536 and accepts positive decimal values through `u32::MAX`. Allocation
+  grows on demand. Zero, overflow and a suffix-bearing value were rejected
+  with startup exit 2. This is a finite capacity adjustment, not tombstone
+  reclamation or a relaxation of transaction validation.
+
+The broad TSan script, `scripts/ci/run_rust_sto_sanitizer.sh thread`, stopped
+in the separate `mrx` workspace tests with a race report in
+`rocksdb::ThreadPoolImpl::Impl::SetBackgroundThreadsInternal` from the system
+`librocksdb.so.8.9`. No suppression was added for it. This does not establish
+whether that report is a RocksDB defect or incomplete instrumentation. The
+transaction-manager, Masstree and migration targets passed when run directly.
+TSan needs a container that permits `setarch x86_64 -R` on this host; no global
+ASLR setting was changed. Existing UBSan and TSan suppression policies apply.
+
+Logs for this run are under `/tmp/mako-integration-`: `miri.log`,
+`bridge-proof.log`, `native-positive-final.log`, `lint-proof-final-02.log`,
+`native-06.log`, `live-final.log`, `asan-native-final.log`,
+`asan-fixture-final-02.log`, `ubsan-native-final-02.log`,
+`ubsan-fixture-final.log`, `tsan-04.log`, `tsan-native-final.log`, and
+`cpp-components-final.log`, and `cpp-compat-final.log`. In `native-06.log` and the UBSan native log, the
+native checks passed before the fixture detected its changed default budget;
+the final fixture logs cover the explicit 1,024-item setting.
+The C++ compatibility build initially found an ASan Redis archive in the shared
+Cargo output. Rebuilding that archive normally and relinking the already-built
+objects resolved it; `cpp-compat-final.log` contains the passing smoke run.
+
 | Milestone | What to check |
 | --- | --- |
 | Register the storage engine | Bootstrap chooses the Rust callbacks, keeps physical tables alive through shutdown, and fences each migration peer message by engine. C++ retains the original wire encoding. |
@@ -11,7 +113,13 @@ Branch `sharding-on-rust-engine`, worktree `/var/tmp/mako-shard-rust`. Sections 
 | Move a raw range under load | Hold a real writer across freeze, reject a late write, and compare both physical images after commit and abort. Use the former owner's original index to read, write and scan through the ordinary TCP participant protocol. |
 | Move warehouse tables | Address a row by warehouse **and** physical key. Move two warehouses containing the same key, reconcile stale destination rows, and verify the neighboring warehouse. Exercise benchmark bootstrap and a live move during the workload. |
 
-The Rust benchmark preopens each governed warehouse table on each participating owner before loaders attach. A physical index and its routing proxy share a selector. With eleven governed tables and one item selector, the 200-selector owner window accommodates 18 global warehouses. Replicated Rust migration stays disabled.
+The Rust benchmark opens initially assigned warehouse tables before loading.
+It creates other physical indexes and routing proxies on demand, including on
+attached workers. Physical indexes and their proxies share a selector. Native
+warehouse selectors occupy the remaining 15-bit protocol space above the
+legacy owner windows, so the 18-global-warehouse restriction is removed. The
+finite protocol selector and database registry budgets still apply. Replicated
+Rust migration stays disabled.
 
 The resumed implementation adds an exact-handle unregister operation to the native directory because an unsuccessful cold start leaves its pre-registered raw handle reachable. The receiver's completion decision now runs in the verified Rust admission module. The page reader obtains its row limit from the same Rust codec that writes the response.
 
@@ -26,9 +134,13 @@ Run these commands separately inside the build container.
 | Storage callback decisions, including warehouse cursor bounds | `./scripts/verify_shard_host_core.sh` |
 | Native sharding and receiver completion proofs | `./scripts/verify_native_sharding.sh` |
 | Rust migration, including real transactions over TCP | `cmake --build build_docker --target rust_sharding_storage_fixture && python3 examples/rust_sharding_storage.py` |
+| Repeated all-table relocation during TPC-C | `cmake --build build_docker --target sto_tpcc_bench mako_admin && python3 examples/rust_sharding_tpcc.py` |
 | C++ compatibility | `./ci/ci.sh nativeShardingSmoke` |
 
-Verus checks the status, cursor and receiver decisions used by the running code. The Rust FFI, C++ adapter, actual epoch announcements, and TCP send/receive ordering are exercised by the integration fixture.
+Verus checks the executed storage-operation control flow, status and cursor
+decisions, their storage-specification bridge, and receiver decisions under the
+listed engine contracts. The Rust FFI, C++ adapter, actual epoch announcements,
+and TCP send/receive ordering are exercised by the integration fixture.
 
 For a live TPC-C move, start the two-owner workload in the build container.
 

@@ -53,7 +53,7 @@ RELEASE_SOURCES = {
 # release keeps the repository's Cargo.toml, the package keeps it as .orig.
 PACKAGING = {"Cargo.lock", "Cargo.toml.orig", ".cargo_vcs_info.json", "README.md"}
 # The functions the shell calls, as module::function.
-ENTRY_POINTS = ["status::map_engine", "scan::scan_flags_valid", "scan::scan_arguments", "scan::fixed_scan"]
+ENTRY_POINTS = ["status::map_engine", "scan::scan_flags_valid", "scan::scan_arguments", "scan::fixed_scan", "verbs::write_cell", "walk::scan_first"]
 
 VERUS = shutil.which(os.environ.get("VERUS_PATH", "verus"))
 if VERUS is None:
@@ -197,8 +197,15 @@ def audit_sources():
             qualifiers, function = match[1], match[2]
             if "spec" in qualifiers or "proof" in qualifiers:
                 continue
-            header = body[match.end():body.index("{", match.end())]
-            if re.search(r"\brequires\b", header):
+            # Trait contracts end at a semicolon instead of a function body.
+            # Both forms are checked for executable preconditions.
+            end = re.search(r"[;{]", body[match.end():])
+            if end is None:
+                raise SystemExit(f"{name}: unterminated function {function}")
+            header = body[match.end():match.end() + end.start()]
+            engine_method = (path.name == "engine.rs" and end[0] == ";"
+                             and function in {"stage", "validate", "finish", "commit"})
+            if re.search(r"\brequires\b", header) and not engine_method:
                 raise SystemExit(f"{name}: `{function}` runs and has a precondition; the "
                                  "unverified shell could call it wrongly")
             if "pub" in qualifiers:
@@ -233,7 +240,7 @@ def audit_sources():
                          f"is not listed {sorted(callers - trusted)}; listed but does not call "
                          f"the core {sorted(trusted - callers)}")
     print(f"Source audit: {len(files)} files, all items inside verus!, no verifier escapes, "
-          f"no preconditions on code that runs, {len(exported)} public names defined once, "
+          f"total public entries and explicit engine method contracts, {len(exported)} public names defined once, "
           f"{len(trusted)} trusted shell functions call the core; Verus proof follows")
 
 
@@ -274,6 +281,34 @@ def check_pins():
 
 # (what the variant does wrong, file, the text, its replacement, (module, function))
 CONTROLS = [
+    (
+        "a staged write is finished read-only instead of committed",
+        "src/verbs.rs",
+        "let report = engine.commit();",
+        "let report = engine.finish(true);",
+        ("verbs", "write_cell"),
+    ),
+    (
+        "an absent deletion bypasses read validation",
+        "src/verbs.rs",
+        "let validated = engine.validate();",
+        "let validated = ENGINE_OK;",
+        ("verbs", "write_cell"),
+    ),
+    (
+        "a failed stage returns without closing its attempt",
+        "src/verbs.rs",
+        "    close(engine, staged)",
+        "    Mapped::Shard(SHARD_IO)",
+        ("verbs", "write_cell"),
+    ),
+    (
+        "a skipped tombstone hop is reported as end of range",
+        "src/walk.rs",
+        "Ok(Hop::Resume(key)) => after = Some(key),",
+        "Ok(Hop::Resume(key)) => return Ok(None),",
+        ("walk", "scan_first"),
+    ),
     (
         "a fixed warehouse repeats the cursor row when coordinate and cursor coincide",
         "src/scan.rs",

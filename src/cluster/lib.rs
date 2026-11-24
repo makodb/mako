@@ -2,6 +2,11 @@
 //! The default engine-host feature includes native runtime/foreign callbacks.
 //! Without it, only immutable routing/catalog and their byte codecs are exported.
 pub mod types;
+#[cfg(verus_keep_ghost)]
+#[path = "../../crates/shard-host-core/src/lib.rs"]
+pub mod rust_storage_core;
+#[cfg(verus_keep_ghost)]
+pub mod rust_storage_bridge;
 pub mod bytes;
 pub mod catalog;
 pub mod directory;
