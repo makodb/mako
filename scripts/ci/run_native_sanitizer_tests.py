@@ -54,7 +54,9 @@ def main():
             print(event["message"].get("rendered", ""), end="", file=sys.stderr)
         if event.get("reason") == "compiler-artifact" and event.get("profile", {}).get("test") and event.get("executable"):
             package = Path(event["manifest_path"]).parent.name
-            suite = "lib" if "lib" in event["target"]["kind"] else event["target"]["name"]
+            library = any(kind in {"lib", "rlib", "staticlib", "cdylib", "dylib"}
+                          for kind in event["target"]["kind"])
+            suite = "lib" if library else event["target"]["name"]
             executables[event["executable"]] = (package, suite, str(Path(event["manifest_path"]).parent))
     if built.returncode:
         return built.returncode

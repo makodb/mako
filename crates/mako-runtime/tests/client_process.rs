@@ -117,7 +117,7 @@ fn encode(args: &[&[u8]]) -> Vec<u8> {
     }
     bytes
 }
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Resp {
     Text(String),
     Error(String),
@@ -229,7 +229,7 @@ fn redis_exec_is_atomic_across_shards_and_idle_clients_do_not_own_workers() {
         Resp::Text("QUEUED".into())
     );
     assert!(matches!(
-        command(stream, &[b"SET", &vec![b'k'; 1025], b"bad"]),
+        command(stream, &[b"SET", &vec![b'k'; 8193], b"bad"]),
         Resp::Error(_)
     ));
     assert!(matches!(command(stream, &[b"EXEC"]), Resp::Error(_)));
@@ -293,6 +293,50 @@ fn redis_exec_is_atomic_across_shards_and_idle_clients_do_not_own_workers() {
     }
     origin.stop();
     remote.stop();
+}
+
+#[test]
+fn redis_large_records_long_keys_and_large_atomic_batches() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut server = Server::start(
+        directory.path(),
+        config(0, BTreeMap::from([(0, "127.0.0.1:0".into())])),
+    );
+    let mut stream = connect(&server.redis);
+    let key = vec![b'k'; 4096];
+    for size in [1, 100 * 1024, 1024 * 1024, 10 * 1024 * 1024, 0] {
+        let value = (0..size).map(|i| i as u8).collect::<Vec<_>>();
+        assert_eq!(
+            batch(
+                &mut stream,
+                &[vec![b"SET", &key, &value], vec![b"GET", &key]]
+            ),
+            Resp::Array(Some(vec![Resp::Text("OK".into()), Resp::Bulk(Some(value))]))
+        );
+    }
+    assert_eq!(command(&mut stream, &[b"DEL", &key]), Resp::Number(1));
+    assert_eq!(command(&mut stream, &[b"GET", &key]), Resp::Bulk(None));
+    let keys = (0..500)
+        .map(|i| format!("batch-{i}").into_bytes())
+        .collect::<Vec<_>>();
+    assert_eq!(command(&mut stream, &[b"MULTI"]), Resp::Text("OK".into()));
+    for key in &keys {
+        assert_eq!(
+            command(&mut stream, &[b"SET", key, key]),
+            Resp::Text("QUEUED".into())
+        );
+    }
+    assert_eq!(
+        command(&mut stream, &[b"EXEC"]),
+        Resp::Array(Some(vec![Resp::Text("OK".into()); 500]))
+    );
+    for key in &keys {
+        assert_eq!(
+            command(&mut stream, &[b"GET", key]),
+            Resp::Bulk(Some(key.clone()))
+        );
+    }
+    server.stop();
 }
 
 #[test]

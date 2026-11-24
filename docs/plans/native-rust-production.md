@@ -523,3 +523,33 @@ these existing components while preserving the current application contracts.
   now bounds argument count at 64 and returns the normal unsupported-command
   error, allowing clients to continue. Native process coverage asserts the
   handshake error followed by a successful PING on the same socket.
++ `/tmp/mako-native-rust-retired-runtime-audit-01.log`: all 50 runtime cases
+  passed in debug and release after source retirement and the handshake fix.
+  The final link audit passed for 12 production executables and 37 Rust archives.
++ `/tmp/mako-native-rust-retired-rocksdb-01.log`: direct RocksDB/Raft's 11 CTest
+  gates and all process scenarios passed. This includes every commit-boundary
+  SIGKILL, interrupted >64 MiB snapshot transfer, snapshot publication faults,
+  and a full-cluster restart with matching dataset digests.
++ Sanitizer diagnostics passed 334 independent transaction cases, 284 tree
+  cases and 84 adapter cases in each of ASan/UBSan/TSan. The adapter inventory
+  runner now normalizes Cargo staticlib/rlib test targets as library suites.
+  Runtime diagnostics passed all 53 cases under ASan and UBSan. TSan reported
+  a race inside uninstrumented system RocksDB's reclamation/read paths. A
+  pinned, instrumented RocksDB build and executable linkage check are being
+  added; TSan runtime qualification is not complete.
++ The external Redis suite uncovered larger values, long keys and 500-command
+  batches supported by the previous service. A native Rust record directory
+  now disambiguates hash collisions by full keys and stores large values in
+  transactional chunks. Deleted directory entries retain collision-chain
+  identity. Overwrites remove obsolete chunks. Durable writes are bounded
+  before installation to fit the existing redo protocol.
++ `/tmp/mako-native-rust-redis-large-01.log`: codec collision/chunk tests,
+  native Redis/gateway process tests, Clippy and doctests passed. The native
+  cases include 10 MiB values, 4 KiB keys and a 500-command atomic transaction.
+  `/tmp/mako-native-rust-redis-correctness-05.log`: all 83 external correctness
+  tests passed. One old abort test assumed read-your-writes was an OCC error;
+  it now actually dooms MULTI with an invalid command, asserts EXEC rejection
+  and checks that no queued row exists. It no longer relies on a retired bug.
++ `/tmp/mako-native-rust-storage-fuzz-03.log`: the preserved Masstree fuzzer
+  compiled and completed 1000 inputs. Its packaged libFuzzer dependency uses
+  libstdc++; only that separate test target links the additional runtime.

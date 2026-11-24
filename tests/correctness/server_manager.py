@@ -36,12 +36,10 @@ def start_server():
     binary = Path(MAKOCON_BIN)
     if not binary.is_file():
         raise RuntimeError(f"Build the native Redis executable first: {binary}")
-    if _server_dir is not None:
-        _server_dir.cleanup()
     runs = binary.parent / "runs"
     runs.mkdir(exist_ok=True)
-    _server_dir = tempfile.TemporaryDirectory(prefix="redis-correctness-", dir=runs)
-    directory = Path(_server_dir.name)
+    _server_dir = Path(tempfile.mkdtemp(prefix="redis-correctness-", dir=runs))
+    directory = _server_dir
     config = dict(node=dict(owner=0, nodes=1, listen="127.0.0.1:0", workers=4,
         warehouses_per_shard=1, tables=[dict(id=1, name="records", kind="governed",
         warehouse=True, initial_owner=0)]), redis_listen=f"{MAKO_HOST}:{MAKO_PORT}")

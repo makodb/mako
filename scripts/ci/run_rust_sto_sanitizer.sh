@@ -737,6 +737,14 @@ printf '#!/usr/bin/env bash\nexec %q -fsanitize=%q -fno-omit-frame-pointer "$@"\
     "${rust_linker}" "${sanitizer}" >"${native_cc}"
 chmod +x "${native_cc}"
 libcxx_dir="$(dirname "$(dirname "$(readlink -f "${cxx_compiler}")")")/lib"
+if [[ "${sanitizer}" == thread ]]; then
+    # An uninstrumented RocksDB hides atomic publication/reclamation edges.
+    # Build the pinned dependency rather than suppressing reports in its DSO.
+    run_logged rocksdb-build env "CC=${rust_linker}" "CXX=${cxx_compiler}" \
+        bash "${repo_root}/scripts/ci/build_tsan_rocksdb.sh" "${build_dir}/tsan-rocksdb" "${jobs}"
+    export ROCKSDB_LIB_DIR="${build_dir}/tsan-rocksdb/build"
+    export LD_LIBRARY_PATH="${ROCKSDB_LIB_DIR}:${libcxx_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
 export CC="${native_cc}" CXX="${cxx_compiler}"
 export MAKO_BUILD_DIR="${build_dir}" LIBCXX_DIR="${libcxx_dir}"
 export MAKO_MTREE_NATIVE_INTEGRATION=1
@@ -765,6 +773,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "asan_options=${ASAN_OPTIONS:-}"
     echo "ubsan_options=${UBSAN_OPTIONS:-}"
     echo "tsan_options=${TSAN_OPTIONS:-}"
+    echo "rocksdb_library_dir=${ROCKSDB_LIB_DIR:-system}"
     echo "gate_status=running"
 } >"${manifest}"
 trap 'status=$?; if (( status != 0 )); then echo "gate_status=failed:${status}" >>"${manifest}"; fi' EXIT
@@ -824,6 +833,36 @@ print('verified first-party Rust sanitizer hooks')
 PY
 fi
 audit_one_rust_std native --tree "${CARGO_TARGET_DIR}/${rust_target}"
+if [[ "${sanitizer}" == thread ]]; then
+    sha256sum --check --strict "${build_dir}/tsan-rocksdb/library.sha256"
+    python3 - "${CARGO_TARGET_DIR}/${rust_target}" "${ROCKSDB_LIB_DIR}" \
+        "${build_dir}/sanitizer-logs/rocksdb-links.json" <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+target, native, report = map(Path, sys.argv[1:])
+expected = (native/'librocksdb.so').resolve(strict=True)
+linked = {}
+for path in target.rglob('*'):
+    if path.is_symlink() or not path.is_file() or not path.stat().st_mode & 0o111:
+        continue
+    with path.open('rb') as stream:
+        if stream.read(4) != b'\x7fELF':
+            continue
+    output = subprocess.run(['ldd', path], text=True, capture_output=True, check=False)
+    for line in output.stdout.splitlines():
+        if 'librocksdb.so' in line:
+            fields = line.split()
+            if len(fields) < 3 or fields[1] != '=>' or Path(fields[2]).resolve() != expected:
+                raise SystemExit(f'unqualified RocksDB linkage in {path}: {line}')
+            linked[str(path)] = str(expected)
+if not linked:
+    raise SystemExit('no instrumented RocksDB consumer found')
+report.write_text(json.dumps(linked, indent=2)+'\n')
+print(f'verified instrumented RocksDB in {len(linked)} executable links')
+PY
+fi
 verify_unwind_config
 final_head_sha="$("${repository_git[@]}" rev-parse --verify HEAD)"
 final_tree_status="$("${repository_git[@]}" status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)"

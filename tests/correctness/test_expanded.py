@@ -382,7 +382,7 @@ def test_6_5_overwrite_varying_sizes():
 def test_6_6_no_phantom_keys():
     """Task 6.6: No phantom keys after failed transactions"""
     print("\n--- Task 6.6: No Phantom Keys After Failed Txn ---")
-    print("Trigger OCC abort (SET+GET same new key in MULTI), verify key absent.")
+    print("Queue a SET followed by an invalid command, verify EXEC aborts and key is absent.")
     r = get_client()
 
     n_attempts = 20
@@ -394,8 +394,12 @@ def test_6_6_no_phantom_keys():
         sock = raw_session()
         raw_cmd_simple(sock, "MULTI")
         raw_cmd_simple(sock, "SET", key, f"phantom_val_{i}")
-        raw_cmd_simple(sock, "GET", key)  # Triggers OCC abort
+        rejected = raw_cmd_simple(sock, "SET", key)  # Wrong arity dooms MULTI.
+        if not rejected.startswith("-ERR"):
+            raise AssertionError(f"invalid queued command was accepted: {rejected!r}")
         resp = raw_cmd_simple(sock, "EXEC")
+        if not resp.startswith("-ERR"):
+            raise AssertionError(f"invalid transaction did not abort: {resp!r}")
         sock.close()
 
         # Key should NOT exist (txn aborted)

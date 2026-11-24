@@ -31,6 +31,13 @@ option(MASSTREE_FUZZER "Build the native tree's libFuzzer entry point" OFF)
 if(MASSTREE_FUZZER)
     add_executable(fuzz_masstree "${CMAKE_SOURCE_DIR}/src/masstree/tests/fuzz_masstree.cc")
     target_link_libraries(fuzz_masstree PRIVATE mako_native_storage)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # The packaged Clang libFuzzer runtime uses libstdc++, while Masstree
+        # uses libc++. Their boundary is the C LLVMFuzzerTestOneInput function.
+        find_library(_fuzzer_cpp_runtime NAMES stdc++ libstdc++.so.6 REQUIRED)
+        target_link_libraries(fuzz_masstree PRIVATE
+            "-Wl,--push-state,--no-as-needed" "${_fuzzer_cpp_runtime}" "-Wl,--pop-state")
+    endif()
     target_compile_options(fuzz_masstree PRIVATE -fsanitize=fuzzer)
     target_link_options(fuzz_masstree PRIVATE -fsanitize=fuzzer)
 endif()

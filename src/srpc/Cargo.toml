@@ -6,7 +6,7 @@ publish = false
 
 [workspace]
 # verify/ is the Verus harness: it builds SRPC's sources with Verus's ghost
-# cfgs and must never enter the production build or the rusty-cpp transpile,
+# cfgs and must never enter the production build,
 # so keep it out of the workspace. (Production does link vstd now, but only
 # the erased library that Lion's crates depend on; see [dependencies].)
 # bench/ is the microbenchmark harness, excluded for the same reason in the

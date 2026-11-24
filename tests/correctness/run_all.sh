@@ -14,7 +14,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 MAKO_ROOT="$(pwd)"
 TEST_DIR="$MAKO_ROOT/tests/correctness"
-RESULTS_FILE="$MAKO_ROOT/${BUILD_DIR:-build}/redis-correctness-results.txt"
+build_path="${BUILD_DIR:-build}"
+[[ "$build_path" = /* ]] || build_path="$MAKO_ROOT/$build_path"
+RESULTS_FILE="$build_path/redis-correctness-results.txt"
 
 echo "============================================================"
 echo " Mako Correctness Test Suite"
@@ -24,7 +26,7 @@ echo " Date: $(date -Iseconds)"
 echo "============================================================"
 
 # Check prerequisites
-if [ ! -f "$MAKO_ROOT/${BUILD_DIR:-build}/mako_redis" ]; then
+if [ ! -f "$build_path/mako_redis" ]; then
     echo "ERROR: build/mako_redis not found. Build the native Rust targets first."
     exit 1
 fi
@@ -123,8 +125,8 @@ echo ""
 echo "--- Individual test results ---"
 grep -E "^\[(PASS|FAIL)\]" "$RESULTS_FILE" | sort || echo "(no test results)"
 
-PASS_COUNT=$(grep -cE "^\[PASS\]" "$RESULTS_FILE" 2>/dev/null || echo 0)
-FAIL_COUNT=$(grep -cE "^\[FAIL\]" "$RESULTS_FILE" 2>/dev/null || echo 0)
+PASS_COUNT=$(grep -cE "^\[PASS\]" "$RESULTS_FILE" 2>/dev/null || true)
+FAIL_COUNT=$(grep -cE "^\[FAIL\]" "$RESULTS_FILE" 2>/dev/null || true)
 echo ""
 echo "Total: $PASS_COUNT passed, $FAIL_COUNT failed"
 

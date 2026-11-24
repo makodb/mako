@@ -16,9 +16,10 @@ use std::{
     },
     time::Duration,
 };
+mod records;
 
-const MAX_BUFFER: usize = 1024 * 1024;
-const MAX_COMMANDS: usize = 64;
+const MAX_BUFFER: usize = 64 * 1024 * 1024;
+const MAX_COMMANDS: usize = 1024;
 const MAX_CONNECTIONS: usize = 64;
 
 #[derive(Clone, Debug)]
@@ -82,7 +83,7 @@ fn frame(bytes: &[u8]) -> std::result::Result<Parsed, &'static str> {
         let rest = &bytes[start..];
         if let Some(end) = rest.windows(2).position(|pair| pair == b"\r\n") {
             Ok(Some((&rest[..end], start + end + 2)))
-        } else if rest.len() > MAX_VALUE {
+        } else if rest.len() > records::MAX_VALUE {
             Err("RESP line too long")
         } else {
             Ok(None)
@@ -131,7 +132,7 @@ fn frame(bytes: &[u8]) -> std::result::Result<Parsed, &'static str> {
             continue;
         }
         let length = number(value)?;
-        if length > MAX_VALUE {
+        if length > records::MAX_VALUE {
             return Err("value exceeds storage limit");
         }
         let end = next + length;
@@ -161,8 +162,37 @@ struct Worker<'a> {
     client: Client,
     worker: sto_tpcc_ffi::native::Worker,
 }
+struct TransactionRows<'a, 'client, 'worker> {
+    transaction: &'a mut crate::client::Transaction<'client, 'worker>,
+    target: &'a Target,
+}
+impl records::Rows for TransactionRows<'_, '_, '_> {
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.transaction.get(self.target, key)
+    }
+    fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.transaction
+            .mutate(self.target, Mutation::Put, key, value)
+    }
+    fn remove(&mut self, key: &[u8]) -> Result<()> {
+        self.transaction
+            .mutate(self.target, Mutation::Remove, key, b"")
+    }
+}
 impl Worker<'_> {
     fn execute(&mut self, commands: &[Command]) -> Result<Vec<u8>> {
+        // Durable redo has a bounded frame. Reject oversized writes before
+        // installation, leaving room for row/chunk metadata in every shard.
+        if (self.config.replication.is_some()
+            || self.config.persistence.is_some()
+            || !self.config.replica_groups.is_empty())
+            && commands.iter().map(Command::bytes).sum::<usize>() > MAX_BYTES / 2
+        {
+            return Err(Error::new(
+                ErrorCode::Capacity,
+                "Redis durable transaction byte limit",
+            ));
+        }
         self.client
             .run(self.host.store.clone(), &mut self.worker, |tx| {
                 let mut output = Vec::new();
@@ -180,17 +210,20 @@ impl Worker<'_> {
                         self.config.owner,
                         self.config.migration,
                     )?;
+                    let mut rows = TransactionRows {
+                        transaction: tx,
+                        target: &target,
+                    };
                     match command {
-                        Command::Get(key) => bulk(&mut output, tx.get(&target, key)?.as_deref()),
+                        Command::Get(key) => {
+                            bulk(&mut output, records::get(&mut rows, key)?.as_deref())
+                        }
                         Command::Set(key, value) => {
-                            tx.mutate(&target, Mutation::Put, key, value)?;
+                            records::set(&mut rows, key, Some(value))?;
                             output.extend_from_slice(b"+OK\r\n");
                         }
                         Command::Delete(key) => {
-                            let found = tx.get(&target, key)?.is_some();
-                            if found {
-                                tx.mutate(&target, Mutation::Remove, key, b"")?;
-                            }
+                            let found = records::set(&mut rows, key, None)?;
                             output.extend_from_slice(if found { b":1\r\n" } else { b":0\r\n" });
                         }
                     }
@@ -287,7 +320,7 @@ impl Worker<'_> {
             } else {
                 None
             };
-            if args.get(1).is_some_and(|key| key.len() > MAX_KEY) || command.is_none() {
+            if args.get(1).is_some_and(|key| key.len() > records::MAX_KEY) || command.is_none() {
                 connection.failed |= connection.multi;
                 connection.error("unsupported command, arguments or key length");
             } else if let Some(command) = command {

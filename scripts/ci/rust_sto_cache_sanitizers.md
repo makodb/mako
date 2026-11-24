@@ -37,8 +37,11 @@ suites and makes no claim about their coverage.
 
 ASan and TSan instrument Rust and rebuild its standard library using
 `nightly-2026-08-12`. UBSan instruments native C/C++, with stable Rust 1.97.1
-linked to the matching runtime; it is not Rust UBSan coverage. The system
-RocksDB library is outside this instrumentation claim.
+linked to the matching runtime; it is not Rust UBSan coverage. ASan/UBSan use the system
+RocksDB library, outside their compiler-instrumentation claim. The TSan driver
+builds pinned RocksDB 8.9.1 with Clang instrumentation and verifies the loaded
+library in every executable that links RocksDB. It records the source archive
+hash, compiler commands, instrumentation hooks and library hash.
 
 An explicitly rebuilt RocksDB can be selected through the existing
 `ROCKSDB_LIB_DIR` and matching runtime library search path. For TSan, build it

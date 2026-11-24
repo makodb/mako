@@ -93,6 +93,10 @@ native code; stable Rust has no UBSan compiler mode. See
 - The gateway's operation API commits each operation. Its session grouping does
   not undo already committed operations. Redis MULTI/EXEC uses a distributed
   transaction.
+- Redis accepts keys up to 8 KiB and values up to 16 MiB in volatile mode,
+  stored in bounded transactional chunks. Durable Redis rejects transactions
+  above 2 MiB of logical command data before installation. Other transaction
+  resource limits still apply.
 - Native durable formats are not compatible with the retired C++ WAL. This
   migration does not add a durable distributed coordinator recovery protocol.
 
