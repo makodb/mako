@@ -363,3 +363,21 @@ these existing components while preserving the current application contracts.
   the micro workload, the two-shard/three-replica TPC-C executable case, and
   persistent executable restart. Legacy CLI/configuration translation and
   remaining application examples are next; no default switch is claimed.
++ Native CLI compatibility now reads both existing topology formats, including
+  site selection, shard selection and colocated shard lists. Worker count,
+  runtime, readiness timeout, CPU duty cycle, Rust engine selection and the micro
+  workload have native options. Raft configuration accepts mode/site fragments
+  and explicit shard-qualified files for colocated groups. Durable topology mode
+  requires an explicit data directory; `--create` allows first creation.
++ Per-worker Raft logs convert to one native log per shard using the first
+  group's peer ports. Conversion checks membership consistency and reports the
+  grouping change and retired mode batch/retry knobs. The native runtime uses
+  committed load markers instead of the old `--sync-dir` barrier. `--print-config`
+  emits validated JSON without starting listeners or creating storage.
++ `/tmp/mako-native-rust-compat-tests-01.log`: all-target Clippy, four native
+  configuration/CLI cases, the multithreaded TPC-C case and the two replicated
+  shard workload passed. Tests read the repository's role-based and site-map
+  YAML and its six-group Raft configuration, checking ports, membership, worker
+  selection and the absence of filesystem side effects during conversion.
+  Remaining stage 5: application examples and launch scripts, then default
+  native build/CI. Stage 6 C++/transpiler retirement remains pending.

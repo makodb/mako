@@ -1,6 +1,6 @@
 use mako_runtime::{
     benchmark,
-    configuration::{self, BenchmarkFile},
+    configuration::cli::{Args, HELP},
     node::RunningNode,
 };
 use std::{
@@ -23,34 +23,24 @@ fn main() {
     }
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut path = None;
-    let mut load_only = false;
-    let mut serve_only = false;
-    let mut exit_after_run = false;
-    let mut stdin_close = false;
-    let mut args = std::env::args().skip(1);
-    while let Some(argument) = args.next() {
-        match argument.as_str() {
-            "--config" => path = Some(args.next().ok_or("--config requires a file")?),
-            "--load-only" => load_only = true,
-            "--serve-only" => serve_only = true,
-            "--exit-after-run" => exit_after_run = true,
-            "--exit-on-stdin-close" => stdin_close = true,
-            "--help" | "-h" => {
-                println!("Usage: mako_bench --config FILE [--load-only | --serve-only] [--exit-after-run] [--exit-on-stdin-close]\nRuns native TPC-C or micro workers on each shard leader; replicas remain available.\nAfter the run, keeps serving until SIGINT, SIGTERM or controlled stdin shutdown.\n--config accepts JSON or YAML with one node or a nodes list.\n--exit-after-run requires all unreplicated shards in this process.");
-                return Ok(());
-            }
-            _ => return Err(format!("unknown argument: {argument}").into()),
-        }
+    let args = Args::parse(std::env::args().skip(1))?;
+    if args.help {
+        println!("{HELP}");
+        return Ok(());
     }
-    if load_only && serve_only {
-        return Err("choose --load-only or --serve-only".into());
+    let (file, notices) = args.load()?;
+    for notice in notices {
+        eprintln!("{notice}");
     }
-    if serve_only && exit_after_run {
-        return Err("--serve-only has no run to exit after".into());
+    if args.print_config {
+        println!("{}", serde_json::to_string_pretty(&file)?);
+        return Ok(());
     }
-    let config: BenchmarkFile = configuration::read(path.ok_or("--config is required")?)?;
-    let (configs, settings) = config.into_parts()?;
+    let (configs, settings) = file.into_parts()?;
+    let load_only = args.load_only;
+    let serve_only = args.serve_only;
+    let exit_after_run = args.exit_after_run;
+    let stdin_close = args.stdin_close;
     if exit_after_run
         && (configs.len() != configs[0].nodes as usize
             || configs.iter().any(|node| node.replication.is_some()))

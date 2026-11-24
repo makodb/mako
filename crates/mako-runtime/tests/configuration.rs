@@ -113,6 +113,104 @@ fn native_executable_runs_two_colocated_shards_from_yaml_and_joins_workers() {
         );
     }
     for address in &addresses {
-        assert!(std::net::TcpStream::connect_timeout(&address.parse().unwrap(),std::time::Duration::from_millis(200)).is_err());
+        assert!(std::net::TcpStream::connect_timeout(
+            &address.parse().unwrap(),
+            std::time::Duration::from_millis(200)
+        )
+        .is_err());
     }
+}
+
+#[test]
+fn existing_topologies_and_raft_fragments_translate_to_reviewable_native_configuration() {
+    use mako_runtime::configuration::cli::Args;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let directory = tempfile::tempdir().unwrap();
+    let data = directory.path().join("not-created-by-conversion");
+    let topology = root.join("src/mako/config/local-shards2-warehouses1.yml");
+    let raft = root.join("config/1leader_2followers/raft6_shardidx1.yml");
+    let mode = root.join("config/raft.yml");
+    let arguments = vec![
+        "-q".into(),
+        topology.to_str().unwrap().into(),
+        "-g1".into(),
+        "-Pp1".into(),
+        "-t2".into(),
+        "-Rraft".into(),
+        "-F".into(),
+        raft.to_str().unwrap().into(),
+        "-F".into(),
+        mode.to_str().unwrap().into(),
+        "--data-dir".into(),
+        data.to_str().unwrap().into(),
+        "--create".into(),
+        "--runtime=4".into(),
+        "-C5".into(),
+        "-Y50".into(),
+    ];
+    let (file, notices) = Args::parse(arguments).unwrap().load().unwrap();
+    let (nodes, settings) = file.into_parts().unwrap();
+    assert_eq!(nodes.len(), 1);
+    let node = &nodes[0];
+    assert_eq!((node.owner, node.nodes, node.workers), (1, 2, 2));
+    assert_eq!(node.listen, "127.0.0.1:32100");
+    let raft = node.replication.as_ref().unwrap();
+    assert_eq!((raft.group, raft.id, raft.peers.len()), (2, 2, 3));
+    assert_eq!(raft.listen, "127.0.0.1:56101");
+    assert_eq!(raft.peers[0].address, "127.0.0.1:56001");
+    assert_eq!(raft.directory, data.join("replica-1/shard-1"));
+    assert_eq!(
+        node.replica_groups[&0].endpoints,
+        vec!["127.0.0.1:31000", "127.0.0.1:32000", "127.0.0.1:33000"]
+    );
+    assert_eq!(settings.seconds, 4);
+    assert_eq!(settings.cpu_limit_percent, 5.0);
+    assert_eq!(settings.throttle_cycle_ms, 50);
+    assert!(notices.iter().any(|notice| notice.contains("6 per-worker")));
+    assert!(!data.exists());
+    for (file, site, expected) in [
+        ("mako_single_node.yml", "local_s0", "127.0.0.1:31000"),
+        ("mako_new_format.yml", "s0_follower1", "127.0.0.1:32000"),
+    ] {
+        let arguments = vec![
+            "--shard-config".into(),
+            root.join("config").join(file).to_str().unwrap().into(),
+            "-N".into(),
+            site.into(),
+        ];
+        let (file, _) = Args::parse(arguments).unwrap().load().unwrap();
+        let (nodes, _) = file.into_parts().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].listen, expected);
+        assert_eq!(nodes[0].warehouses_per_shard, 6);
+    }
+    assert!(Args::parse(["--replication=paxos".into()]).is_err());
+    assert!(Args::parse(["--storage-engine=cpp".into()]).is_err());
+    assert!(Args::parse(["-g0".into(), "-Lall".into()]).is_err());
+    assert!(Args::parse(["--is-micro=true".into()]).is_err());
+}
+
+#[test]
+fn native_cli_prints_converted_config_without_opening_listeners_or_storage() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = Command::new(env!("CARGO_BIN_EXE_mako_bench"))
+        .args([
+            "-q",
+            root.join("config/mako_single_node.yml").to_str().unwrap(),
+            "--print-config",
+            "-u2",
+            "-E",
+            "rust",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config: BenchmarkFile = serde_json::from_slice(&output.stdout).unwrap();
+    let (nodes, settings) = config.into_parts().unwrap();
+    assert_eq!(nodes[0].listen, "127.0.0.1:31000");
+    assert_eq!(settings.seconds, 2);
 }

@@ -5,6 +5,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::BTreeSet, io::Read, path::Path};
 
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+pub mod cli;
+pub mod topology;
 pub fn read<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
     let path = path.as_ref();
     let file = std::fs::File::open(path)

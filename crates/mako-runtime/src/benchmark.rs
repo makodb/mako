@@ -42,6 +42,8 @@ pub struct Config {
     pub transactions_per_worker: Option<u64>,
     pub retry_aborted: bool,
     pub startup_timeout_seconds: u64,
+    pub cpu_limit_percent: f64,
+    pub throttle_cycle_ms: u64,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -51,13 +53,21 @@ impl Default for Config {
             micro: None,
             seconds: 30,
             transactions_per_worker: None,
-            retry_aborted: false,
+            retry_aborted: true,
             startup_timeout_seconds: 300,
+            cpu_limit_percent: 0.0,
+            throttle_cycle_ms: 100,
         }
     }
 }
 impl Config {
     pub fn validate(&self, node: &NodeConfig) -> Result<()> {
+        if !self.cpu_limit_percent.is_finite()
+            || !(0.0..=100.0).contains(&self.cpu_limit_percent)
+            || !(1..=10_000).contains(&self.throttle_cycle_ms)
+        {
+            return Err(invalid("invalid CPU duty cycle"));
+        }
         self.scale.validate()?;
         if let Some(micro) = &self.micro {
             micro.validate()?;
@@ -346,6 +356,10 @@ fn run_worker(
     let mut stats = Stats::default();
     let mut attempts = 0;
     let mut pending = None;
+    let cycle = Duration::from_millis(settings.throttle_cycle_ms);
+    let duty = settings.cpu_limit_percent / 100.0;
+    let mut cycle_start = Instant::now();
+    let mut work_time = Duration::ZERO;
     while !stop.load(Ordering::Relaxed)
         && Instant::now() < deadline
         && settings
@@ -395,6 +409,26 @@ fn run_worker(
                 std::thread::yield_now();
             }
             Err(error) => return Err(error),
+        }
+        if duty > 0.0 && duty < 1.0 {
+            work_time += start.elapsed();
+            if work_time >= cycle.mul_f64(duty) {
+                let remaining = cycle.saturating_sub(cycle_start.elapsed());
+                // Short sleeps keep process cancellation responsive.
+                let wake = Instant::now() + remaining;
+                while !stop.load(Ordering::Relaxed) && Instant::now() < wake.min(deadline) {
+                    std::thread::sleep(
+                        wake.min(deadline)
+                            .saturating_duration_since(Instant::now())
+                            .min(Duration::from_millis(20)),
+                    );
+                }
+                cycle_start = Instant::now();
+                work_time = Duration::ZERO;
+            } else if cycle_start.elapsed() >= cycle {
+                cycle_start = Instant::now();
+                work_time = Duration::ZERO;
+            }
         }
     }
     Ok(stats)
