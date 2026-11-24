@@ -134,3 +134,58 @@ fn ignoring_a_remote_operation_error_cannot_commit_a_partial_local_body() {
         })
         .unwrap();
 }
+
+#[test]
+fn failed_abort_is_reported_as_unknown_and_fences_the_client_immediately() {
+    use mako_runtime::rpc::RpcServer;
+    let local = store(0);
+    let network = Arc::new(Network::default());
+    let server = RpcServer::start(&network, "127.0.0.1:0", |message, respond| match message {
+        Message::OpenStream { .. } => respond(Reply::OpenStream(Ok(400))),
+        Message::Participant(request) => {
+            let result = match request.action {
+                Action::Get { .. } => Ok(Value::Point {
+                    value: Some(b"read".to_vec()),
+                    time_term: 10,
+                }),
+                Action::Timestamp => Ok(Value::Timestamp(10)),
+                Action::Validate | Action::Abort => {
+                    Err(Error::new(ErrorCode::Conflict, "injected phase rejection"))
+                }
+                _ => Err(Error::new(ErrorCode::Invalid, "unexpected action")),
+            };
+            respond(Reply::Participant(Response {
+                identity: request.identity,
+                result,
+            }));
+        }
+        _ => respond(Reply::Error(Error::new(
+            ErrorCode::Invalid,
+            "unexpected message",
+        ))),
+    })
+    .unwrap();
+    let mut client = Client::new(
+        network,
+        BTreeMap::from([(1, server.address().into())]),
+        Stream { node: 0, worker: 0 },
+        0,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let mut worker = local.database.worker().unwrap();
+    let result = client.run(local.clone(), &mut worker, |tx| {
+        assert!(tx.get(&target(1), b"key")?.is_some());
+        Ok(())
+    });
+    assert_eq!(result.unwrap_err().code, ErrorCode::Unknown);
+    assert_eq!(
+        client
+            .run(local.clone(), &mut worker, |_| Ok(()))
+            .unwrap_err()
+            .code,
+        ErrorCode::Unknown
+    );
+    let cut = local.epochs.cut().unwrap();
+    assert!(!local.epochs.drained(cut).unwrap());
+}

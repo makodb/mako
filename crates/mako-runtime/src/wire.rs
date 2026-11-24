@@ -1,7 +1,7 @@
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const RPC_ID: i32 = 0x4d4b5201;
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_KEY: usize = 1024;
@@ -295,6 +295,10 @@ impl Response {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
+    OpenStream {
+        stream: Stream,
+        nonce: u64,
+    },
     ReplicaStatus,
     Gateway(GatewayRequest),
     Route(RouteRequest),
@@ -307,6 +311,7 @@ pub enum Message {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    OpenStream(Result<u64>),
     ReplicaStatus(ReplicaStatus),
     Gateway(GatewayResponse),
     Route(Result<Target>),

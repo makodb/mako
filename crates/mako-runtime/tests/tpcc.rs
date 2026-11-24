@@ -410,3 +410,138 @@ fn sharded_tpcc_executes_all_five_transactions_and_aborts_remote_stock_changes()
         })
         .unwrap();
 }
+
+#[test]
+fn multithreaded_native_workload_preserves_order_totals() {
+    use mako_runtime::benchmark;
+    use std::sync::{atomic::AtomicBool, Arc};
+    let mut config = config(0, 1);
+    config.workers = 3;
+    let node = RunningNode::start(config.clone()).unwrap();
+    let settings = benchmark::Config {
+        scale: small(),
+        transactions_per_worker: Some(200),
+        seconds: 30,
+        mix: Mix {
+            weights: [20; 5],
+            ..Mix::default()
+        },
+        ..benchmark::Config::default()
+    };
+    let host = benchmark::Host::from(&node);
+    let stop = Arc::new(AtomicBool::new(false));
+    benchmark::prepare(&host, &config, &settings, &stop, |_| Ok(())).unwrap();
+    let stats = benchmark::run(&host, &config, &settings, stop).unwrap();
+    assert_eq!(
+        stats.committed.iter().sum::<u64>() + stats.aborted.iter().sum::<u64>(),
+        600
+    );
+    assert!(stats.committed.iter().all(|count| *count > 0), "{stats:?}");
+    let context = Context {
+        schema: &node.schema,
+        owner: 0,
+        migration: false,
+        scale: &settings.scale,
+    };
+    let mut client = client(&node, BTreeMap::new());
+    let mut worker = node.store.database.worker().unwrap();
+    client
+        .run(node.store.clone(), &mut worker, |tx| {
+            let mut committed = 0u64;
+            for district in 1..=settings.scale.districts {
+                let row: District = context.read(tx, DISTRICT, 1, &key(&[1, district]))?;
+                committed += row.next_order as u64 - u64::from(settings.scale.customers) - 1;
+                let rows = tx.scan(
+                    &context.target(ORDER, 1, &[])?,
+                    Bound::Included(key(&[1, district, 0])),
+                    Bound::Excluded(key(&[1, district + 1, 0])),
+                    false,
+                    4096,
+                )?;
+                assert_eq!(rows.len(), row.next_order as usize - 1);
+            }
+            assert_eq!(committed, stats.committed[0]);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+#[cfg(feature = "replication")]
+fn native_benchmark_process_reopens_persistent_workload_without_reloading() {
+    use mako_runtime::{benchmark, node::PersistenceConfig};
+    use std::process::Command;
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = config(0, 1);
+    config.persistence = Some(PersistenceConfig {
+        directory: directory.path().join("data"),
+        create: true,
+        sync_writes: true,
+    });
+    let settings = benchmark::Config {
+        scale: small(),
+        transactions_per_worker: Some(20),
+        seconds: 30,
+        mix: Mix {
+            weights: [100, 0, 0, 0, 0],
+            ..Mix::default()
+        },
+        ..benchmark::Config::default()
+    };
+    let file = directory.path().join("bench.json");
+    for run in 0..2 {
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&serde_json::json!({"node":config,"benchmark":settings})).unwrap(),
+        )
+        .unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_mako_bench"))
+            .args(["--config", file.to_str().unwrap(), "--exit-after-run"])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let text = String::from_utf8(result.stdout).unwrap();
+        let stats: benchmark::Stats = serde_json::from_str(
+            text.lines()
+                .find_map(|line| line.strip_prefix("MAKO_BENCH_RESULT "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stats.committed, [20, 0, 0, 0, 0]);
+        assert!(
+            text.lines().any(|line| line.starts_with("MAKO_LOADED ")
+                && line.ends_with(if run == 0 { "false" } else { "true" })),
+            "{text}"
+        );
+        config.persistence.as_mut().unwrap().create = false;
+    }
+    let node = RunningNode::start(config).unwrap();
+    let context = Context {
+        schema: &node.schema,
+        owner: 0,
+        migration: false,
+        scale: &settings.scale,
+    };
+    let mut client = client(&node, BTreeMap::new());
+    let mut worker = node.store.database.worker().unwrap();
+    client
+        .run(node.store.clone(), &mut worker, |tx| {
+            let mut orders = 0;
+            for district in 1..=settings.scale.districts {
+                orders += context
+                    .read::<District>(tx, DISTRICT, 1, &key(&[1, district]))?
+                    .next_order
+                    - settings.scale.customers as i32
+                    - 1;
+            }
+            assert_eq!(orders, 40);
+            assert_eq!(context.reserve_dates(tx, 1)?.start, 2 + 2 * 65_536);
+            Ok(())
+        })
+        .unwrap();
+}

@@ -316,3 +316,28 @@ these existing components while preserving the current application contracts.
   aborts the order header and prior remote stock work. Workload scheduling,
   executable/CLI/config ports, persistent workload checks, and the default
   switch remain outstanding. Stage 5 is still in progress.
++ Native `mako_bench` now owns workload threads, the configured TPC-C mix,
+  local loading and all-shard completion checks. Each worker owns its STO
+  context and native SRPC stream. Replicas remain available after the workload;
+  controlled shutdown joins work before closing the node. Single-shard runs
+  can explicitly exit after completion. The native CMake profile builds it.
++ The replicated workload exposed two lifecycle gaps: readiness could conflict
+  with another shard reserving dates, and a new client could not reuse a
+  cleaned-up loader stream. Readiness now retries confirmed aborts. An explicit
+  OPEN binds a receiver-generated lease; replacement requires physical cleanup,
+  stale requests cannot use retired leases, and uncertain installed outcomes
+  remain fenced. Paged scans bind their identity to that participant lease.
+  Failed remote cleanup now returns Unknown immediately instead of a retryable
+  conflict followed by a later fence. The unreleased native wire version is 2.
++ `/tmp/mako-native-rust-stream-handoff-03.log`: all 38 runtime cases,
+  all-target Clippy, and native CMake server/benchmark targets passed. Coverage
+  includes two shard processes with three Raft replicas each running remote
+  NewOrders, verified against committed order counters; three local workload
+  threads; and two executable runs reopening the same persistent TPC-C data
+  without reloading it. The separate default-feature library suite has 11
+  passing cases (`/tmp/mako-native-rust-stream-handoff-02.log`). Earlier runs
+  exposed the startup conflict, client handoff and scan identity issues above.
++ Remaining stage-5 work: the micro workload, configuration/CLI compatibility,
+  simple-transaction/examples and colocated orchestration, then the default
+  switch. The old production profile and C++ application remain until those
+  ports pass. Stage 6 retirement and final proof/dependency audits are pending.

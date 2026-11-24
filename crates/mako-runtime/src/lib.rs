@@ -3,6 +3,8 @@
 //! mako-sharding. This crate owns their process and network lifetimes.
 pub mod admission;
 #[cfg(feature = "native-storage")]
+pub mod benchmark;
+#[cfg(feature = "native-storage")]
 pub mod client;
 #[cfg(feature = "durable-storage")]
 pub mod durable;

@@ -33,11 +33,28 @@ fn provision(store: &Store) {
     let mut worker = store.database.worker().unwrap();
     store.open(&mut worker, access().table, 1).unwrap();
 }
+thread_local! { static LEASE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+fn bind(network: &Network, address: &str) {
+    let reply = network
+        .call(
+            address,
+            Message::OpenStream {
+                stream: Stream { node: 0, worker: 0 },
+                nonce: 42,
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    let Reply::OpenStream(Ok(lease)) = reply else {
+        panic!("claim reply: {reply:?}");
+    };
+    LEASE.set(lease);
+}
 fn request(attempt: u64, sequence: u64, action: Action) -> Request {
     Request {
         stream: Stream { node: 0, worker: 0 },
         identity: Identity {
-            incarnation: 42,
+            incarnation: LEASE.get(),
             attempt,
             sequence,
             term: 0,
@@ -80,6 +97,7 @@ fn retained_srpc_participant_commits_replays_receipt_scans_and_aborts() {
     let network = Arc::new(Network::default());
     let address = address();
     let server = RunningShard::start(store.clone(), network.clone(), &address, 1, 1, 8).unwrap();
+    bind(&network, &address);
     assert_eq!(
         call(&network, &address, request(1, 1, write(b"first")))
             .result
@@ -167,6 +185,7 @@ fn failed_install_is_retained_as_unknown_and_blocks_migration_drain() {
     let network = Arc::new(Network::default());
     let address = address();
     let server = RunningShard::start(store.clone(), network.clone(), &address, 1, 1, 8).unwrap();
+    bind(&network, &address);
     call(&network, &address, request(1, 1, write(b"installed")))
         .result
         .unwrap();
@@ -208,6 +227,7 @@ fn new_attempt_cannot_steal_locks_and_delayed_abort_cannot_cancel_its_successor(
     let network = Arc::new(Network::default());
     let address = address();
     let _server = RunningShard::start(store, network.clone(), &address, 1, 1, 8).unwrap();
+    bind(&network, &address);
     call(&network, &address, request(1, 1, write(b"old")))
         .result
         .unwrap();

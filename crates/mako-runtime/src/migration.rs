@@ -37,7 +37,7 @@ pub enum Kind {
     Replicated,
     Static,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TableSpec {
     pub id: u64,

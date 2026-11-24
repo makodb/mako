@@ -33,3 +33,8 @@ name = "mako_node"
 path = "src/bin/node.rs"
 required-features = ["native-storage"]
 
+[[bin]]
+name = "mako_bench"
+path = "src/bin/bench.rs"
+required-features = ["native-storage"]
+

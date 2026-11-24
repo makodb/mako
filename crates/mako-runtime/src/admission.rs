@@ -1,6 +1,6 @@
 //! Sequential participant identity and terminal receipts. This is application
 //! protocol state only; it neither reads a tree nor implements transaction CC.
-use crate::wire::{Action, ErrorCode, Request, Response, Value};
+use crate::wire::{Action, Error, ErrorCode, Request, Response, Result, Value};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Phase {
@@ -17,6 +17,7 @@ pub enum Admission {
     Reply(Response),
 }
 pub struct Session {
+    binding: Option<(u64, u64)>,
     phase: Phase,
     last: Option<Request>,
     response: Option<Response>,
@@ -24,6 +25,7 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self {
+            binding: None,
             phase: Phase::Idle,
             last: None,
             response: None,
@@ -31,6 +33,39 @@ impl Default for Session {
     }
 }
 impl Session {
+    /// Replace only a physically cleaned-up stream. The receiver mints a fresh
+    /// lease, so a delayed OPEN cannot make its old data packets current again.
+    /// Repeating the current OPEN returns the same lease after a lost reply.
+    pub fn claim(&mut self, nonce: u64, fresh_lease: u64) -> Result<u64> {
+        if nonce == 0 || fresh_lease == 0 {
+            return Err(Error::new(ErrorCode::Invalid, "invalid stream claim"));
+        }
+        if let Some((current, lease)) = self.binding {
+            if nonce == current {
+                return Ok(lease);
+            }
+        }
+        if self.phase == Phase::Unknown {
+            return Err(Error::new(
+                ErrorCode::Unknown,
+                "stream has an unresolved outcome",
+            ));
+        }
+        if self.active() {
+            return Err(Error::new(
+                ErrorCode::Busy,
+                "stream has a retained transaction",
+            ));
+        }
+        if self.binding.is_some_and(|(_, lease)| lease == fresh_lease) {
+            return Err(Error::new(ErrorCode::Capacity, "stream lease collision"));
+        }
+        self.binding = Some((nonce, fresh_lease));
+        self.phase = Phase::Idle;
+        self.last = None;
+        self.response = None;
+        Ok(fresh_lease)
+    }
     pub fn phase(&self) -> Phase {
         self.phase
     }
@@ -46,6 +81,12 @@ impl Session {
             ErrorCode::Conflict
         };
         let reject = |code, message| Admission::Reply(Response::error(identity, code, message));
+        if !self
+            .binding
+            .is_some_and(|(_, lease)| identity.incarnation == lease)
+        {
+            return reject(rejected, "participant stream lease is absent or retired");
+        }
         if !identity.valid() || !request.action.valid() || identity.term < minimum_term {
             return reject(rejected, "invalid or stale participant request");
         }
@@ -152,6 +193,11 @@ impl Session {
 mod tests {
     use super::*;
     use crate::wire::{Access, Identity, Stream, TableKey};
+    fn opened() -> Session {
+        let mut session = Session::default();
+        session.claim(100, 7).unwrap();
+        session
+    }
     fn request(sequence: u64, action: Action) -> Request {
         Request {
             stream: Stream { node: 0, worker: 0 },
@@ -188,7 +234,7 @@ mod tests {
     }
     #[test]
     fn duplicates_require_identical_payload_and_stale_packets_cannot_adopt_a_new_attempt() {
-        let mut session = Session::default();
+        let mut session = opened();
         assert!(matches!(session.admit(&read(1), 0), Admission::Begin));
         record(&mut session, read(1));
         assert!(matches!(session.admit(&read(1), 0), Admission::Reply(r) if r.result.is_ok()));
@@ -207,7 +253,7 @@ mod tests {
     }
     #[test]
     fn install_requires_validation_and_unknown_fences_even_newer_terms() {
-        let mut session = Session::default();
+        let mut session = opened();
         record(&mut session, read(1));
         let install = request(3, Action::Install { timestamp: 2 });
         assert!(
@@ -231,7 +277,7 @@ mod tests {
     }
     #[test]
     fn committed_receipt_survives_retries_and_abort_cannot_relabel_it() {
-        let mut session = Session::default();
+        let mut session = opened();
         record(&mut session, request(1, Action::Validate));
         let install = request(2, Action::Install { timestamp: 9 });
         record(&mut session, install.clone());
@@ -242,15 +288,47 @@ mod tests {
     }
     #[test]
     fn higher_term_cancels_uninstalled_attempt_and_abort_creates_cancellation_fence() {
-        let mut session = Session::default();
+        let mut session = opened();
         record(&mut session, read(1));
         let mut fresh = request(1, Action::Abort);
-        fresh.identity.incarnation = 8;
         fresh.identity.term = 1;
         assert!(matches!(session.admit(&fresh, 0), Admission::Begin));
         record(&mut session, fresh.clone());
         fresh.identity.sequence += 1;
         assert!(matches!(session.admit(&fresh, 1), Admission::Reply(r) if r.result.is_ok()));
         assert!(matches!(session.admit(&read(2), 1), Admission::Reply(r) if r.result.is_err()));
+    }
+
+    #[test]
+    fn stream_handoff_requires_cleanup_and_stale_open_cannot_revive_old_packets() {
+        let mut session = opened();
+        assert_eq!(session.claim(100, 8).unwrap(), 7); // Lost OPEN reply.
+        record(&mut session, read(1));
+        assert_eq!(session.claim(200, 9).unwrap_err().code, ErrorCode::Busy);
+        record(&mut session, request(2, Action::Abort));
+        assert_eq!(session.claim(200, 9).unwrap(), 9);
+        let mut current = read(1);
+        current.identity.incarnation = 9;
+        assert!(matches!(session.admit(&current, 0), Admission::Begin));
+        assert!(matches!(session.admit(&read(3),0),Admission::Reply(r) if r.result.is_err()));
+        // A delayed OPEN from the retired client gets a new lease, not its
+        // old one. Its old writes and abort packets remain stale.
+        assert_eq!(session.claim(100, 10).unwrap(), 10);
+        assert!(matches!(session.admit(&read(3),0),Admission::Reply(r) if r.result.is_err()));
+        assert!(matches!(session.admit(&current,0),Admission::Reply(r) if r.result.is_err()));
+        let mut active = read(1);
+        active.identity.incarnation = 10;
+        record(&mut session, active);
+        let mut install = request(2, Action::Install { timestamp: 2 });
+        install.identity.incarnation = 10;
+        session.record(
+            install.clone(),
+            Response::error(install.identity, ErrorCode::Unknown, "uncertain"),
+        );
+        assert_eq!(session.claim(300, 11).unwrap_err().code, ErrorCode::Unknown);
+        assert_eq!(session.claim(100, 11).unwrap(), 10);
+        assert!(
+            matches!(session.admit(&install,0),Admission::Reply(r) if matches!(&r.result,Err(e) if e.code == ErrorCode::Unknown))
+        );
     }
 }

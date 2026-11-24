@@ -15,9 +15,61 @@ use std::{
 };
 use sto_tpcc_ffi::native as sto;
 
+enum WorkKind {
+    Participant(Request),
+    Open(u64),
+}
 struct Work {
-    request: Request,
+    request: WorkKind,
     respond: Respond,
+}
+impl Work {
+    fn reject(self, code: ErrorCode, message: &str) {
+        let reply = match self.request {
+            WorkKind::Participant(request) => {
+                Reply::Participant(Response::error(request.identity, code, message))
+            }
+            WorkKind::Open(_) => Reply::OpenStream(Err(Error::new(code, message))),
+        };
+        (self.respond)(reply);
+    }
+}
+fn enqueue(
+    lanes: &[SyncSender<Work>],
+    workers: u32,
+    stopped: &AtomicBool,
+    stream: Stream,
+    request: WorkKind,
+    respond: Respond,
+) {
+    let work = Work { request, respond };
+    if stopped.load(Ordering::Acquire) {
+        work.reject(ErrorCode::Closed, "shard is stopping");
+        return;
+    }
+    if stream.node as usize >= lanes.len() / workers as usize || stream.worker >= workers {
+        work.reject(
+            ErrorCode::Invalid,
+            "participant stream outside configured lanes",
+        );
+        return;
+    }
+    let index = (stream.node * workers + stream.worker) as usize;
+    if let Err(error) = lanes[index].try_send(work) {
+        let (work, code) = match error {
+            mpsc::TrySendError::Full(work) => (work, ErrorCode::Busy),
+            mpsc::TrySendError::Disconnected(work) => (work, ErrorCode::Closed),
+        };
+        work.reject(code, "participant lane unavailable");
+    }
+}
+fn fresh_lease() -> Result<u64> {
+    use std::io::Read;
+    let mut bytes = [0; 8];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| Error::new(ErrorCode::Fatal, format!("stream lease entropy: {error}")))?;
+    Ok(u64::from_ne_bytes(bytes).max(1))
 }
 struct Lane {
     worker: sto::Worker,
@@ -343,35 +395,24 @@ impl RunningShard {
                     }
                 }
                 Message::Participant(request) => {
-                    if stopped.load(Ordering::Acquire) {
-                        respond(Reply::Participant(Response::error(
-                            request.identity,
-                            ErrorCode::Closed,
-                            "shard is stopping",
-                        )));
-                        return;
-                    }
-                    let stream = request.stream;
-                    if stream.node >= nodes || stream.worker >= workers_per_node {
-                        respond(Reply::Participant(Response::error(
-                            request.identity,
-                            ErrorCode::Invalid,
-                            "participant stream outside configured lanes",
-                        )));
-                        return;
-                    }
-                    let lane = (stream.node * workers_per_node + stream.worker) as usize;
-                    if let Err(error) = lanes[lane].try_send(Work { request, respond }) {
-                        let (work, code) = match error {
-                            mpsc::TrySendError::Full(work) => (work, ErrorCode::Busy),
-                            mpsc::TrySendError::Disconnected(work) => (work, ErrorCode::Closed),
-                        };
-                        (work.respond)(Reply::Participant(Response::error(
-                            work.request.identity,
-                            code,
-                            "participant lane unavailable",
-                        )));
-                    }
+                    enqueue(
+                        &lanes,
+                        workers_per_node,
+                        &stopped,
+                        request.stream,
+                        WorkKind::Participant(request),
+                        respond,
+                    );
+                }
+                Message::OpenStream { stream, nonce } => {
+                    enqueue(
+                        &lanes,
+                        workers_per_node,
+                        &stopped,
+                        stream,
+                        WorkKind::Open(nonce),
+                        respond,
+                    );
                 }
                 Message::Migration {
                     owner,
@@ -417,17 +458,21 @@ fn lane_loop(
     }
     while !stopped.load(Ordering::Acquire) {
         match receive.recv_timeout(Duration::from_millis(50)) {
-            Ok(work) => (work.respond)(Reply::Participant(lane.process(work.request))),
+            Ok(work) => {
+                let reply = match work.request {
+                    WorkKind::Participant(request) => Reply::Participant(lane.process(request)),
+                    WorkKind::Open(nonce) => Reply::OpenStream(
+                        fresh_lease().and_then(|lease| lane.session.claim(nonce, lease)),
+                    ),
+                };
+                (work.respond)(reply);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => (),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
     for work in receive.try_iter() {
-        (work.respond)(Reply::Participant(Response::error(
-            work.request.identity,
-            ErrorCode::Closed,
-            "shard stopped",
-        )));
+        work.reject(ErrorCode::Closed, "shard stopped");
     }
 }
 impl Drop for RunningShard {

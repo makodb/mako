@@ -103,6 +103,7 @@ impl Client {
             targets: BTreeMap::new(),
             log: store.log.clone(),
             timeout: self.timeout,
+            cleanup_failure: None,
         };
         Ok(Transaction {
             participant: Some(participant),
@@ -136,10 +137,12 @@ impl Client {
 }
 
 struct Peer {
+    incarnation: u64,
     sequence: u64,
     endpoint: String,
 }
 struct Remotes {
+    cleanup_failure: Option<Error>,
     network: Arc<Network>,
     endpoints: Arc<BTreeMap<u32, String>>,
     replicas: BTreeMap<u32, ReplicaSet>,
@@ -151,7 +154,7 @@ struct Remotes {
     timeout: Duration,
 }
 impl Remotes {
-    fn call(&mut self, owner: u32, action: Action) -> Result<Value> {
+    fn select(&mut self, owner: u32) -> Result<()> {
         if !self.peers.contains_key(&owner) {
             let endpoint = if let Some(replicas) = self.replicas.get(&owner) {
                 self.network.find_leader(owner, replicas, self.timeout)?
@@ -161,14 +164,36 @@ impl Remotes {
                     .cloned()
                     .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing shard endpoint"))?
             };
+            let incarnation = match self.network.call(
+                &endpoint,
+                Message::OpenStream {
+                    stream: self.stream,
+                    nonce: self.identity.incarnation,
+                },
+                self.timeout,
+            )? {
+                Reply::OpenStream(result) => result?,
+                Reply::Error(error) => return Err(error),
+                _ => {
+                    return Err(Error::new(
+                        ErrorCode::Transport,
+                        "invalid stream claim reply",
+                    ))
+                }
+            };
             self.peers.insert(
                 owner,
                 Peer {
+                    incarnation,
                     sequence: 0,
                     endpoint,
                 },
             );
         }
+        Ok(())
+    }
+    fn call(&mut self, owner: u32, action: Action) -> Result<Value> {
+        self.select(owner)?;
         // A lost initial reply may leave a remote session requiring ABORT.
         let peer = self
             .peers
@@ -181,6 +206,7 @@ impl Remotes {
             )
         })?;
         let identity = Identity {
+            incarnation: peer.incarnation,
             sequence: peer.sequence,
             ..self.identity
         };
@@ -291,7 +317,14 @@ impl sto::ProtocolCallbacks for Remotes {
             .map_err(callback_error)
     }
     fn abort(&mut self) -> sto::Result<()> {
-        self.all(Action::Abort).map_err(callback_error)
+        self.all(Action::Abort).map_err(|error| {
+            let error = Error::new(
+                ErrorCode::Unknown,
+                format!("remote cleanup was not confirmed: {error}"),
+            );
+            self.cleanup_failure = Some(error.clone());
+            callback_error(error)
+        })
     }
     fn log(&mut self, bytes: &[u8], time_term: u32) -> sto::Result<()> {
         self.log.append(bytes, time_term).map_err(callback_error)
@@ -384,7 +417,16 @@ impl Transaction<'_, '_> {
         rows: &mut Vec<Row>,
         limit: usize,
     ) -> Result<()> {
-        let identity = self.remotes.identity;
+        let mut identity = self.remotes.identity;
+        if target.owner != self.store.owner {
+            self.participant
+                .as_mut()
+                .expect("live transaction")
+                .flush_remote(&mut self.remotes)
+                .map_err(engine)?;
+            self.remotes.select(target.owner)?;
+            identity.incarnation = self.remotes.peers[&target.owner].incarnation;
+        }
         let mut driver = crate::scan::Driver::new(target, identity, lower, upper, reverse)?;
         loop {
             let request = driver.request()?;
@@ -640,6 +682,10 @@ impl Transaction<'_, '_> {
             .commit(0, &mut self.remotes)
             .map(|_| ())
             .map_err(engine);
+        if let Some(error) = self.remotes.cleanup_failure.take() {
+            *self.client_fenced = true;
+            return Err(error);
+        }
         if matches!(&result, Err(e) if !matches!(e.code, ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy | ErrorCode::Capacity))
         {
             *self.client_fenced = true;
@@ -653,10 +699,14 @@ impl Transaction<'_, '_> {
         let result = self.participant.take().map_or(Ok(()), |participant| {
             participant.abort(&mut self.remotes).map_err(engine)
         });
-        if result.is_err() {
+        if let Err(error) = result {
             *self.client_fenced = true;
+            return Err(Error::new(
+                ErrorCode::Unknown,
+                format!("transaction cleanup was not confirmed: {error}"),
+            ));
         }
-        result
+        Ok(())
     }
 }
 impl Drop for Transaction<'_, '_> {

@@ -82,6 +82,15 @@ add_custom_target(mako_node ALL
 
 # The existing direct RocksDB service also uses native SRPC/Raft. Keep its
 # production tools in the new profile without introducing a Masstree dependency.
+add_custom_target(mako_bench ALL
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+        -p mako-runtime --features replication --bin mako_bench
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${MAKO_NATIVE_CARGO_TARGET}/debug/mako_bench" "${CMAKE_BINARY_DIR}/mako_bench"
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+
 add_custom_target(rocksdb_raft_tools ALL
     COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
         "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"

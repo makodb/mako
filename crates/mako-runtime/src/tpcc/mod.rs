@@ -3,9 +3,11 @@ pub mod codec;
 mod load;
 mod operations;
 mod random;
+mod workload;
 pub use load::*;
 pub use operations::*;
 pub use random::{last_name, Random};
+pub use workload::{Generator, Mix, Request as WorkloadRequest};
 
 use crate::{
     client::Transaction,
