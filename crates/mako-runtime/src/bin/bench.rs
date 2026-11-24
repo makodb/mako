@@ -5,6 +5,7 @@ use mako_runtime::{
     wire::{Error, ErrorCode},
 };
 fn main() {
+    srpc::logging::Log::set_level(srpc::logging::Log::WARN);
     if let Err(error) = run() {
         eprintln!("mako_bench: {error}");
         std::process::exit(1);

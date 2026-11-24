@@ -30,6 +30,19 @@ raft-host = { path = "../raft-host", optional = true }
 tempfile = "3"
 
 [[bin]]
+name = "mako_admin"
+path = "src/bin/admin.rs"
+
+[[bin]]
+name = "mako_redis"
+path = "src/bin/redis.rs"
+required-features = ["native-storage"]
+
+[[bin]]
+name = "mako_client"
+path = "src/bin/client.rs"
+
+[[bin]]
 name = "mako_node"
 path = "src/bin/node.rs"
 required-features = ["native-storage"]

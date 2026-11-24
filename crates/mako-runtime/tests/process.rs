@@ -213,12 +213,58 @@ fn separate_process_migration_moves_raw_and_lazy_warehouse_tables() {
             source: 0,
             destination: 1,
         };
+        let hex = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let output = Command::new(env!("CARGO_BIN_EXE_mako_admin"))
+            .args([
+                "begin",
+                &peers[&0],
+                &nonce.client.to_string(),
+                &nonce.sequence.to_string(),
+                name,
+                &hex(&begin.lo),
+                &begin
+                    .hi
+                    .as_ref()
+                    .map_or_else(|| "inf".to_owned(), |hi| hex(hi)),
+                "0",
+                "1",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "native admin begin: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // Repeating the same accepted identity through the library is idempotent.
         admin(control::ADMIN_BEGIN, control::encode_begin(&begin).unwrap());
         let deadline = Instant::now() + Duration::from_secs(20);
         while admin(control::ADMIN_POLL, control::encode_nonce(nonce).unwrap()).1 != 1 {
             assert!(Instant::now() < deadline, "migration deadline");
             std::thread::sleep(Duration::from_millis(10));
         }
+        let output = Command::new(env!("CARGO_BIN_EXE_mako_admin"))
+            .args([
+                "poll",
+                &peers[&0],
+                &nonce.client.to_string(),
+                &nonce.sequence.to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "native admin poll: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("outcome=committed"));
         let route = gateway
             .resolve(RouteRequest {
                 table: Some(table),

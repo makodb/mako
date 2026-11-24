@@ -1,0 +1,9 @@
+node:
+  owner: 0
+  nodes: 1
+  listen: 127.0.0.1:31000
+  workers: 4
+  warehouses_per_shard: 1
+  tables:
+    - {id: 1, name: records, kind: governed, warehouse: true, initial_owner: 0}
+redis_listen: 127.0.0.1:6380

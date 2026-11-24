@@ -71,7 +71,7 @@ set(_cargo_manifest "${CMAKE_SOURCE_DIR}/crates/Cargo.toml")
 
 # Cargo owns all application and network code. Only the audited storage archive
 # crosses the native boundary; SRPC is compiled directly as a Rust dependency.
-foreach(_program mako_node mako_bench mako_transactions)
+foreach(_program mako_node mako_bench mako_transactions mako_redis)
     add_custom_target(${_program} ALL
         COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
             "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
@@ -79,6 +79,17 @@ foreach(_program mako_node mako_bench mako_transactions)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${MAKO_NATIVE_CARGO_TARGET}/debug/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         DEPENDS mako_native_storage
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+endforeach()
+
+# External clients only use native SRPC and the checked wire protocol.
+foreach(_program mako_client mako_admin)
+    add_custom_target(${_program} ALL
+        COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
+            "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}"
+            -p mako-runtime --bin ${_program}
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${MAKO_NATIVE_CARGO_TARGET}/debug/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
 

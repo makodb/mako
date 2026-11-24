@@ -22,6 +22,8 @@ pub mod node;
 pub mod process;
 #[cfg(feature = "native-storage")]
 pub mod receiver;
+#[cfg(feature = "native-storage")]
+pub mod redis;
 pub mod redo;
 #[cfg(feature = "replication")]
 pub mod replication;

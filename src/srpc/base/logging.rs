@@ -69,9 +69,10 @@ pub unsafe fn log_line(level: i32, line: i32, file: *const i8, msg: &str) {
     }
 }
 
-/// Write the exact line bytes, append one newline, and flush stdout.
+/// Write the exact line bytes, append one newline, and flush stderr.
+/// Diagnostics must not share the application protocol/result stream.
 pub fn log_sink_write(line: &str) {
-    let mut output = std::io::stdout();
+    let mut output = std::io::stderr();
     let _ = output.write_all(line.as_bytes());
     let _ = output.write_all(b"\n");
     let _ = output.flush();

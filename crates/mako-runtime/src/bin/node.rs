@@ -13,6 +13,7 @@ extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 fn main() {
+    srpc::logging::Log::set_level(srpc::logging::Log::WARN);
     if let Err(error) = run() {
         eprintln!("mako_node: {error}");
         std::process::exit(1);

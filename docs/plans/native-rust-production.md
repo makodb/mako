@@ -397,3 +397,27 @@ these existing components while preserving the current application contracts.
   cases also passed after sharing the supervisor. The external client/Redis
   entry points, launch scripts, production default switch and C++ retirement
   remain outstanding.
+
++ Stage 5 client/server checkpoint: native `mako_client` provides binary-safe
+  JSON-line CRUD and the existing gateway's auto-commit session contract.
+  `mako_admin` now sends begin/poll/abort directly through native SRPC with the
+  checked migration codecs. Both clients build without native-storage features.
++ `mako_redis` replaces the Redis example's C++ callbacks with native Rust
+  transactions. GET/SET/DEL and MULTI/EXEC use the production shard coordinator;
+  keys route by a stable byte hash. Bounded RESP parsing, transaction queues and
+  nonblocking connection handling preserve binary/empty values and allow more
+  idle clients than workers. Unknown outcomes stop serving rather than reusing
+  the worker. `examples/native/redis.yml` is runnable.
++ Executable testing found a logging deadlock: the CLI held stdout across an RPC
+  while the SRPC reactor tried to log there. Output locking now covers only the
+  result write, and SRPC diagnostics go to stderr. Native entry points default
+  to WARN. A test also exposed a listener reservation race; the origin's port
+  stays reserved while the remote chooses its ephemeral Redis port.
++ `/tmp/mako-native-rust-clients-06.log`: all-target Clippy, gateway CLI and
+  cross-shard Redis cases, native admin migration, replicated TPC-C regression,
+  SRPC logging tests, and all four new CMake executable targets passed. Redis
+  coverage includes concurrent atomic batches, invalid/discarded batches,
+  growing connection counts, fragmented/pipelined requests, half-close, and
+  shutdown with idle clients. The bounded parser's unit case passed in the
+  preceding run. Default build, cache/tool dependency conversion, launcher/CI
+  replacement and C++ retirement still remain.
