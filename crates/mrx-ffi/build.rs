@@ -42,13 +42,13 @@ fn main() {
 fn mako_build_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("MAKO_BUILD_DIR") {
         let p = PathBuf::from(d);
-        return p.join("libmako_mtree_boundary.a").exists().then_some(p);
+        return p.join("libmako_native_storage.a").exists().then_some(p);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
-    ["build_c22", "build", "build_docker"]
+    ["build", "build_native", "build_docker"]
         .iter()
         .map(|d| root.join(d))
-        .find(|p| p.join("libmako_mtree_boundary.a").exists())
+        .find(|p| p.join("libmako_native_storage.a").exists())
 }
 
 fn rocksdb_dir() -> Option<PathBuf> {

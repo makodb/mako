@@ -63,7 +63,7 @@ fn configure_mako(build: &Path) {
 
     let libcxx = libcxx_dir(&cache).unwrap_or_else(|| {
         panic!(
-            "could not derive libmako's libc++ directory from {}; set \
+            "could not derive native storage's libc++ directory from {}; set \
              LIBCXX_DIR to the exact toolchain library directory",
             cache_path.display()
         )
@@ -79,14 +79,14 @@ fn mako_build_dir() -> Option<PathBuf> {
         return path.join(native_archive_name()).is_file().then_some(path);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
-    ["build_mrx", "build_c22", "build", "build_docker"]
+    ["build", "build_native", "build_docker"]
         .iter()
         .map(|dir| root.join(dir))
         .find(|path| path.join(native_archive_name()).is_file())
 }
 
 fn native_archive_name() -> &'static str {
-    "libmako_mtree_boundary.a"
+    "libmako_native_storage.a"
 }
 fn native_is_required() -> bool {
     std::env::var("MAKO_MTREE_NATIVE_INTEGRATION").is_ok_and(|v| v == "1")

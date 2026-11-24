@@ -24,7 +24,7 @@ fn main() {
     let libraries = env::var(LIBS).unwrap_or_else(|_| {
         panic!(
             "{LIBS} must be a comma-separated rustc link-lib list, for example \
-             static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+             static=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
         )
     });
     for library in libraries

@@ -3,7 +3,7 @@
 //!
 //! Dependency build-script link arguments are package-local.  The benchmark
 //! is a separate package, so it must repeat the rpaths used by `mako-cache`:
-//! Mako's in-tree yaml-cpp, the configured libc++, and any non-system process
+//! The configured libc++ and any non-system process
 //! allocator resolved by CMake.
 
 use std::path::{Path, PathBuf};
@@ -23,9 +23,9 @@ fn main() {
     let build = std::env::var_os("MAKO_BUILD_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("mako-cache-bench requires MAKO_BUILD_DIR"));
-    if !build.join("libmako_mtree_boundary.a").is_file() {
+    if !build.join("libmako_native_storage.a").is_file() {
         panic!(
-            "MAKO_BUILD_DIR={} does not contain libmako_mtree_boundary.a",
+            "MAKO_BUILD_DIR={} does not contain libmako_native_storage.a",
             build.display()
         );
     }
@@ -44,7 +44,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", libcxx.display());
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libcxx.display());
 
-    // Preserve Mako's private yaml-cpp/libc++ precedence if the allocator is
+    // Preserve the configured libc++ precedence if the allocator is
     // found in a broad directory such as /usr/lib.
     configure_allocator_rpath(&build, &cache);
 

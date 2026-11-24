@@ -421,3 +421,19 @@ these existing components while preserving the current application contracts.
   shutdown with idle clients. The bounded parser's unit case passed in the
   preceding run. Default build, cache/tool dependency conversion, launcher/CI
   replacement and C++ retirement still remain.
+
++ Cache dependency checkpoint: `mako-cache`, `mrx`, `mrx-ffi`, their Masstree
+  adapter and benchmark tools now select `libmako_native_storage.a`. The index
+  adapter validates and links the allocator selected by the same CMake build.
+  The native profile builds the existing Rust cache comparison/GC tools and
+  exposes the existing adapter/cache qualification runner.
++ `/tmp/mako-native-rust-cache-01.log` passed: cache tools built, all eight
+  native index tests passed, and `build_native/rust-cache-tests.json` records
+  the adapter/cache gate's pass. It includes 52 engine cases and 237 cache
+  cases, plus the independent local-version tree cases. No legacy application
+  archive participates in those links.
++ Compiler dependency inspection is saved at
+  `/tmp/mako-native-storage-project-deps.txt`. It identified an unused
+  `thread.h` include in `rcu.cc` for removal during retirement. Native storage
+  currently still imports the third-party ownership library's umbrella header;
+  that library's transpiler is not built by the native profile.
