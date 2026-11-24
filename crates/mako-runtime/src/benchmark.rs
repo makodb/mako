@@ -37,6 +37,7 @@ use std::{
 pub struct Config {
     pub scale: Scale,
     pub mix: Mix,
+    pub micro: Option<tpcc::Micro>,
     pub seconds: u64,
     pub transactions_per_worker: Option<u64>,
     pub retry_aborted: bool,
@@ -47,6 +48,7 @@ impl Default for Config {
         Self {
             scale: Scale::default(),
             mix: Mix::default(),
+            micro: None,
             seconds: 30,
             transactions_per_worker: None,
             retry_aborted: false,
@@ -57,7 +59,11 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self, node: &NodeConfig) -> Result<()> {
         self.scale.validate()?;
-        self.mix.validate()?;
+        if let Some(micro) = &self.micro {
+            micro.validate()?;
+        } else {
+            self.mix.validate()?;
+        }
         node.schema()?;
         if node.tables != tpcc::tables()
             || node.warehouses_per_shard == 0
@@ -127,14 +133,25 @@ pub fn prepare(
     let context = context(node, config, settings);
     let mut client = client(node, config, 0)?;
     let mut progress = progress;
-    let loaded = tpcc::load_local(&context, &mut client, node.store.clone(), |step| {
+    let progress = |step| {
         if stop.load(Ordering::Relaxed) {
             return Err(cancelled());
         }
         progress(step)
-    })?;
-    let deadline = Instant::now() + Duration::from_secs(settings.startup_timeout_seconds);
+    };
     let mut worker = node.store.database.worker().map_err(engine)?;
+    let loaded = if let Some(micro) = &settings.micro {
+        context.load_micro(
+            &mut client,
+            node.store.clone(),
+            &mut worker,
+            micro.keys,
+            progress,
+        )?
+    } else {
+        context.load(&mut client, node.store.clone(), &mut worker, progress)?
+    };
+    let deadline = Instant::now() + Duration::from_secs(settings.startup_timeout_seconds);
     loop {
         if stop.load(Ordering::Relaxed) {
             return Err(cancelled());
@@ -179,7 +196,13 @@ pub fn prepare(
             }
         }
         if ready {
-            match client.run(node.store.clone(), &mut worker, |tx| context.all_loaded(tx)) {
+            match client.run(node.store.clone(), &mut worker, |tx| {
+                if let Some(micro) = &settings.micro {
+                    context.all_micro_loaded(tx, micro.keys)
+                } else {
+                    context.all_loaded(tx)
+                }
+            }) {
                 Ok(true) => return Ok(loaded),
                 Ok(false) => (),
                 Err(error) if retryable(&error) => (),
@@ -192,6 +215,8 @@ pub fn prepare(
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Stats {
+    #[serde(default)]
+    pub workload: String,
     pub committed: [u64; 5],
     pub aborted: [u64; 5],
     pub elapsed_seconds: f64,
@@ -230,7 +255,15 @@ pub fn run(
                 result
             }));
         }
-        let mut total = Stats::default();
+        let mut total = Stats {
+            workload: if settings.micro.is_some() {
+                "micro"
+            } else {
+                "tpcc"
+            }
+            .into(),
+            ..Stats::default()
+        };
         let mut failure = None;
         for worker in workers {
             match worker
@@ -257,6 +290,29 @@ pub fn run(
         }
     })
 }
+enum Work {
+    Tpcc(tpcc::WorkloadRequest),
+    Micro(tpcc::MicroRequest),
+}
+impl Work {
+    fn index(&self) -> usize {
+        match self {
+            Self::Tpcc(request) => request.index(),
+            Self::Micro(request) => request.index(),
+        }
+    }
+    fn execute(
+        &self,
+        context: &Context<'_>,
+        tx: &mut crate::client::Transaction<'_, '_>,
+    ) -> Result<()> {
+        match self {
+            Self::Tpcc(request) => request.execute(context, tx),
+            Self::Micro(request) => request.execute(context, tx),
+        }
+    }
+}
+
 fn run_worker(
     node: &Host,
     config: &NodeConfig,
@@ -273,7 +329,16 @@ fn run_worker(
         .seed
         .wrapping_add(u64::from(index))
         .wrapping_add(u64::from(config.owner) << 32);
-    let mut generator = Generator::new(&context, settings.mix.clone(), seed)?;
+    let mut generator = settings
+        .micro
+        .is_none()
+        .then(|| Generator::new(&context, settings.mix.clone(), seed))
+        .transpose()?;
+    let mut micro = settings
+        .micro
+        .clone()
+        .map(|micro| tpcc::MicroGenerator::new(micro, config.owner, config.nodes, seed))
+        .transpose()?;
     let mut dates = 0..0;
     let mut stats = Stats::default();
     let mut attempts = 0;
@@ -286,7 +351,7 @@ fn run_worker(
     {
         node.store.log.health()?;
         if pending.is_none() {
-            if dates.is_empty() {
+            if micro.is_none() && dates.is_empty() {
                 match client.run(node.store.clone(), &mut worker, |tx| {
                     context.reserve_dates(tx, 65_536)
                 }) {
@@ -298,7 +363,11 @@ fn run_worker(
                     Err(error) => return Err(error),
                 }
             }
-            pending = Some(generator.next(dates.next().unwrap()));
+            pending = Some(if let Some(micro) = &mut micro {
+                Work::Micro(micro.generate())
+            } else {
+                Work::Tpcc(generator.as_mut().unwrap().next(dates.next().unwrap()))
+            });
         }
         let request = pending.as_ref().unwrap();
         let kind = request.index();

@@ -1,10 +1,12 @@
 //! Native driver for the repository's TPC-C workload and storage layout.
 pub mod codec;
 mod load;
+mod micro;
 mod operations;
 mod random;
 mod workload;
 pub use load::*;
+pub use micro::{Micro, MicroGenerator, MicroRequest};
 pub use operations::*;
 pub use random::{last_name, Random};
 pub use workload::{Generator, Mix, Request as WorkloadRequest};

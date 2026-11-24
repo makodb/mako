@@ -545,3 +545,115 @@ fn native_benchmark_process_reopens_persistent_workload_without_reloading() {
         })
         .unwrap();
 }
+
+#[test]
+fn micro_workload_loads_shard_local_items_and_aborts_partial_remote_updates() {
+    use mako_runtime::benchmark;
+    use std::sync::{atomic::AtomicBool, Arc};
+    let local = RunningNode::start(config(0, 2)).unwrap();
+    let remote = RunningNode::start(config(1, 2)).unwrap();
+    let peers = BTreeMap::from([(0, local.address().into()), (1, remote.address().into())]);
+    let scale = small();
+    for node in [&local, &remote] {
+        let context = Context {
+            schema: &node.schema,
+            owner: node.store.owner,
+            migration: false,
+            scale: &scale,
+        };
+        let mut worker = node.store.database.worker().unwrap();
+        context
+            .load_micro(
+                &mut client(node, peers.clone()),
+                node.store.clone(),
+                &mut worker,
+                64,
+                |_| Ok(()),
+            )
+            .unwrap();
+    }
+    let context = Context {
+        schema: &local.schema,
+        owner: 0,
+        migration: false,
+        scale: &scale,
+    };
+    {
+        let mut client = client(&local, peers.clone());
+        let mut worker = local.store.database.worker().unwrap();
+        client
+            .run(local.store.clone(), &mut worker, |tx| {
+                assert!(context.all_micro_loaded(tx, 64)?);
+                MicroRequest {
+                    write: true,
+                    keys: vec![(1, 0), (0, 1)],
+                }
+                .execute(&context, tx)
+            })
+            .unwrap();
+        let failed = client.run(local.store.clone(), &mut worker, |tx| {
+            MicroRequest {
+                write: true,
+                keys: vec![(1, 2), (0, 65)],
+            }
+            .execute(&context, tx)
+        });
+        assert_eq!(failed.unwrap_err().code, ErrorCode::Invalid);
+        client
+            .run(local.store.clone(), &mut worker, |tx| {
+                for (owner, id, expected) in [
+                    (1, 0, b"aaaaaaaa"),
+                    (0, 1, b"aaaaaaaa"),
+                    (1, 2, b"cccccccc"),
+                ] {
+                    let key = key(&[id]);
+                    let mut target = context.target(ITEM, 0, &key)?;
+                    target.owner = owner;
+                    let row = MicroItem::decode(&tx.get(&target, &key)?.unwrap())?;
+                    assert_eq!(row.name.0, expected);
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            context
+                .load_micro(
+                    &mut client,
+                    local.store.clone(),
+                    &mut worker,
+                    64,
+                    |_| Ok(())
+                )
+                .unwrap()
+                .already_loaded
+        );
+        assert_eq!(
+            context
+                .load(&mut client, local.store.clone(), &mut worker, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            ErrorCode::Invalid
+        );
+    }
+    let mut config = config(0, 2);
+    config.peers = peers;
+    let settings = benchmark::Config {
+        scale,
+        micro: Some(Micro {
+            keys: 64,
+            remote_percent: 100,
+            ..Micro::default()
+        }),
+        transactions_per_worker: Some(100),
+        seconds: 30,
+        ..benchmark::Config::default()
+    };
+    let host = benchmark::Host::from(&local);
+    let stop = Arc::new(AtomicBool::new(false));
+    benchmark::prepare(&host, &config, &settings, &stop, |_| Ok(())).unwrap();
+    let stats = benchmark::run(&host, &config, &settings, stop).unwrap();
+    assert_eq!(stats.workload, "micro");
+    assert_eq!(stats.committed.iter().sum::<u64>(), 100);
+    assert!(stats.committed[0] > 0 && stats.committed[1] > 0);
+    assert_eq!(&stats.committed[2..], &[0, 0, 0]);
+}

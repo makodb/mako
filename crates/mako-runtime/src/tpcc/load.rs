@@ -7,6 +7,7 @@ use std::{ops::Range, sync::Arc};
 use sto_tpcc_ffi::native::Worker;
 
 const LOAD_KEY: &[u8] = b"tpcc/v1";
+const MICRO_LOAD_KEY: &[u8] = b"micro/v1";
 const BATCH_ROWS: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -14,6 +15,8 @@ const BATCH_ROWS: usize = 32;
 struct State {
     version: u32,
     scale: Scale,
+    #[serde(default)]
+    micro_keys: Option<u32>,
     owner: u32,
     nodes: u32,
     warehouses: u32,
@@ -22,9 +25,10 @@ struct State {
     next_date: u32,
 }
 impl State {
-    fn new(context: &Context<'_>) -> Self {
+    fn new(context: &Context<'_>, micro_keys: Option<u32>) -> Self {
         Self {
             version: 1,
+            micro_keys,
             scale: context.scale.clone(),
             owner: context.owner,
             nodes: context.schema.nodes,
@@ -41,6 +45,7 @@ impl State {
         let state: Self =
             serde_json::from_slice(bytes).map_err(|_| invalid("TPC-C load marker encoding"))?;
         if state.version != expected.version
+            || state.micro_keys != expected.micro_keys
             || state.scale != expected.scale
             || state.owner != expected.owner
             || state.nodes != expected.nodes
@@ -80,9 +85,37 @@ impl Context<'_> {
         client: &mut Client,
         store: Arc<Store>,
         worker: &mut Worker,
+        progress: impl FnMut(LoadProgress) -> Result<()>,
+    ) -> Result<LoadProgress> {
+        self.load_dataset(client, store, worker, None, progress)
+    }
+    pub fn load_micro(
+        &self,
+        client: &mut Client,
+        store: Arc<Store>,
+        worker: &mut Worker,
+        keys: u32,
+        progress: impl FnMut(LoadProgress) -> Result<()>,
+    ) -> Result<LoadProgress> {
+        if keys == 0 || keys > i32::MAX as u32 {
+            return Err(invalid("micro key count"));
+        }
+        self.load_dataset(client, store, worker, Some(keys), progress)
+    }
+    fn load_dataset(
+        &self,
+        client: &mut Client,
+        store: Arc<Store>,
+        worker: &mut Worker,
+        micro_keys: Option<u32>,
         mut progress: impl FnMut(LoadProgress) -> Result<()>,
     ) -> Result<LoadProgress> {
         self.scale.validate()?;
+        let load_key = if micro_keys.is_some() {
+            MICRO_LOAD_KEY
+        } else {
+            LOAD_KEY
+        };
         if self.owner >= self.schema.nodes
             || self.schema.per_shard == 0
             || store.owner != self.owner
@@ -90,12 +123,21 @@ impl Context<'_> {
             return Err(invalid("invalid TPC-C loader ownership"));
         }
         let target = self.load_target(self.owner)?;
-        let expected = State::new(self);
+        let expected = State::new(self, micro_keys);
         let mut state = client.run(store.clone(), worker, |tx| {
-            if let Some(bytes) = tx.get(&target, LOAD_KEY)? {
+            let other_key = if micro_keys.is_some() {
+                LOAD_KEY
+            } else {
+                MICRO_LOAD_KEY
+            };
+            if tx.get(&target, other_key)?.is_some() {
+                return Err(invalid("cannot mix TPC-C and micro data in one database"));
+            }
+
+            if let Some(bytes) = tx.get(&target, load_key)? {
                 State::decode(&bytes, &expected)
             } else {
-                tx.mutate(&target, Mutation::Insert, LOAD_KEY, &expected.encode()?)?;
+                tx.mutate(&target, Mutation::Insert, load_key, &expected.encode()?)?;
                 Ok(expected.clone())
             }
         })?;
@@ -116,7 +158,7 @@ impl Context<'_> {
             let next = ordinal.max(state.rows);
             client.run(store.clone(), worker, |tx| {
                 let bytes = tx
-                    .get(&target, LOAD_KEY)?
+                    .get(&target, load_key)?
                     .ok_or_else(|| invalid("load marker disappeared"))?;
                 if State::decode(&bytes, &expected)? != state {
                     return Err(invalid("another loader changed the load marker"));
@@ -141,7 +183,7 @@ impl Context<'_> {
                 }
                 let mut updated = state.clone();
                 updated.rows = next;
-                tx.mutate(&target, Mutation::Put, LOAD_KEY, &updated.encode()?)
+                tx.mutate(&target, Mutation::Put, load_key, &updated.encode()?)
             })?;
             state.rows = next;
             batch.clear();
@@ -151,28 +193,33 @@ impl Context<'_> {
                 already_loaded: false,
             })
         };
-        self.generate(|row| {
+        let emit = |row| {
             ordinal += 1;
             batch.push(row);
             if batch.len() == BATCH_ROWS {
                 flush(&mut batch, ordinal)?;
             }
             Ok(())
-        })?;
+        };
+        if let Some(keys) = micro_keys {
+            self.generate_micro(keys, emit)?;
+        } else {
+            self.generate(emit)?;
+        }
         flush(&mut batch, ordinal)?;
         if state.rows != ordinal {
             return Err(invalid("stored load prefix exceeds generated rows"));
         }
         client.run(store, worker, |tx| {
             let bytes = tx
-                .get(&target, LOAD_KEY)?
+                .get(&target, load_key)?
                 .ok_or_else(|| invalid("load marker disappeared"))?;
             if State::decode(&bytes, &expected)? != state {
                 return Err(invalid("load marker changed"));
             }
             let mut completed = state.clone();
             completed.complete = true;
-            tx.mutate(&target, Mutation::Put, LOAD_KEY, &completed.encode()?)
+            tx.mutate(&target, Mutation::Put, load_key, &completed.encode()?)
         })?;
         let result = LoadProgress {
             rows: ordinal,
@@ -183,11 +230,26 @@ impl Context<'_> {
         Ok(result)
     }
     pub fn all_loaded(&self, tx: &mut Transaction<'_, '_>) -> Result<bool> {
+        self.all_loaded_dataset(tx, None)
+    }
+    pub fn all_micro_loaded(&self, tx: &mut Transaction<'_, '_>, keys: u32) -> Result<bool> {
+        self.all_loaded_dataset(tx, Some(keys))
+    }
+    fn all_loaded_dataset(
+        &self,
+        tx: &mut Transaction<'_, '_>,
+        micro_keys: Option<u32>,
+    ) -> Result<bool> {
+        let load_key = if micro_keys.is_some() {
+            MICRO_LOAD_KEY
+        } else {
+            LOAD_KEY
+        };
         for owner in 0..self.schema.nodes {
-            let Some(bytes) = tx.get(&self.load_target(owner)?, LOAD_KEY)? else {
+            let Some(bytes) = tx.get(&self.load_target(owner)?, load_key)? else {
                 return Ok(false);
             };
-            let mut expected = State::new(self);
+            let mut expected = State::new(self, micro_keys);
             expected.owner = owner;
             if !State::decode(&bytes, &expected)?.complete {
                 return Ok(false);
@@ -205,7 +267,7 @@ impl Context<'_> {
         let bytes = tx
             .get(&target, LOAD_KEY)?
             .ok_or_else(|| invalid("TPC-C is not loaded"))?;
-        let mut state = State::decode(&bytes, &State::new(self))?;
+        let mut state = State::decode(&bytes, &State::new(self, None))?;
         if !state.complete {
             return Err(invalid("TPC-C is still loading"));
         }
@@ -215,6 +277,16 @@ impl Context<'_> {
             .ok_or_else(|| invalid("TPC-C dates exhausted"))?;
         tx.mutate(&target, Mutation::Put, LOAD_KEY, &state.encode()?)?;
         Ok(first..state.next_date)
+    }
+
+    fn generate_micro(&self, keys: u32, mut emit: impl FnMut(SeedRow) -> Result<()>) -> Result<()> {
+        let value = MicroItem {
+            name: Inline(b"cccccccc".to_vec()),
+        };
+        for id in 0..keys {
+            seed(&mut emit, ITEM, 0, key(&[id]), &value)?;
+        }
+        Ok(())
     }
 
     fn generate(&self, mut emit: impl FnMut(SeedRow) -> Result<()>) -> Result<()> {

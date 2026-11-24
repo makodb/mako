@@ -341,3 +341,13 @@ these existing components while preserving the current application contracts.
   simple-transaction/examples and colocated orchestration, then the default
   switch. The old production profile and C++ application remain until those
   ports pass. Stage 6 retirement and final proof/dependency audits are pending.
++ The native benchmark now also runs the micro workload: four operations by
+  default, a configurable read/write mix, and an optional first access on a
+  different shard. It preserves the existing big-endian item keys and padded
+  eight-byte values. Micro loading uses the same bounded resumable transaction
+  path, keeps a separate completion marker, and refuses mixing TPC-C and micro
+  layouts in one database. Metrics identify the selected workload.
++ `/tmp/mako-native-rust-micro-tests-01.log`: all-target Clippy, the two-shard
+  micro workload/rollback case, interrupted-loader regression, and persistent
+  executable restart regression passed. Configuration/CLI ports, remaining
+  examples and the production default switch are still outstanding.
