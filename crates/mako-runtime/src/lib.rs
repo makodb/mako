@@ -19,6 +19,8 @@ pub mod migration;
 #[cfg(feature = "native-storage")]
 pub mod node;
 #[cfg(feature = "native-storage")]
+pub mod process;
+#[cfg(feature = "native-storage")]
 pub mod receiver;
 pub mod redo;
 #[cfg(feature = "replication")]
@@ -30,4 +32,6 @@ mod scan;
 pub mod storage;
 #[cfg(feature = "native-storage")]
 pub mod tpcc;
+#[cfg(feature = "native-storage")]
+pub mod transactions;
 pub mod wire;

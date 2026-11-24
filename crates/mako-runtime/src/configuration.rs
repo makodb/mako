@@ -45,51 +45,59 @@ pub struct BenchmarkFile {
 }
 impl BenchmarkFile {
     pub fn into_parts(self) -> Result<(Vec<Config>, benchmark::Config)> {
-        let nodes = match (self.node, self.nodes.is_empty()) {
-            (Some(node), true) => vec![node],
-            (None, false) => self.nodes,
-            _ => return Err(invalid("configure one node or a nonempty nodes list")),
-        };
-        let first = &nodes[0];
-        let mut owners = BTreeSet::new();
-        let mut listeners = BTreeSet::new();
-        let mut directories = BTreeSet::new();
+        let nodes = select_nodes(self.node, self.nodes)?;
         for node in &nodes {
             self.benchmark.validate(node)?;
-            if node.nodes != first.nodes
-                || node.warehouses_per_shard != first.warehouses_per_shard
-                || node.tables != first.tables
-                || node.workers != first.workers
-            {
-                return Err(invalid(
-                    "colocated shards must share schema, topology and worker count",
-                ));
-            }
-            if !owners.insert(node.owner) {
-                return Err(invalid("duplicate colocated shard owner"));
-            }
-            if nodes.len() > 1 && node.listen.ends_with(":0") {
-                return Err(invalid(
-                    "colocated shards require explicit listener ports for peer routing",
-                ));
-            }
-            if !listeners.insert(&node.listen) {
-                return Err(invalid("duplicate listener"));
-            }
-            if let Some(replica) = &node.replication {
-                if !listeners.insert(&replica.listen) {
-                    return Err(invalid("duplicate Raft listener"));
-                }
-                if !directories.insert(&replica.directory) {
-                    return Err(invalid("duplicate persistence directory"));
-                }
-            }
-            if let Some(persistence) = &node.persistence {
-                if !directories.insert(&persistence.directory) {
-                    return Err(invalid("duplicate persistence directory"));
-                }
-            }
         }
         Ok((nodes, self.benchmark))
     }
+}
+
+pub fn select_nodes(node: Option<Config>, selected: Vec<Config>) -> Result<Vec<Config>> {
+    let nodes = match (node, selected.is_empty()) {
+        (Some(node), true) => vec![node],
+        (None, false) => selected,
+        _ => return Err(invalid("configure one node or a nonempty nodes list")),
+    };
+    let first = &nodes[0];
+    let mut owners = BTreeSet::new();
+    let mut listeners = BTreeSet::new();
+    let mut directories = BTreeSet::new();
+    for node in &nodes {
+        node.schema()?;
+        if node.nodes != first.nodes
+            || node.warehouses_per_shard != first.warehouses_per_shard
+            || node.tables != first.tables
+            || node.workers != first.workers
+        {
+            return Err(invalid(
+                "colocated shards must share schema, topology and worker count",
+            ));
+        }
+        if !owners.insert(node.owner) {
+            return Err(invalid("duplicate colocated shard owner"));
+        }
+        if nodes.len() > 1 && node.listen.ends_with(":0") {
+            return Err(invalid(
+                "colocated shards require explicit listener ports for peer routing",
+            ));
+        }
+        if !listeners.insert(&node.listen) {
+            return Err(invalid("duplicate listener"));
+        }
+        if let Some(replica) = &node.replication {
+            if !listeners.insert(&replica.listen) {
+                return Err(invalid("duplicate Raft listener"));
+            }
+            if !directories.insert(&replica.directory) {
+                return Err(invalid("duplicate persistence directory"));
+            }
+        }
+        if let Some(persistence) = &node.persistence {
+            if !directories.insert(&persistence.directory) {
+                return Err(invalid("duplicate persistence directory"));
+            }
+        }
+    }
+    Ok(nodes)
 }

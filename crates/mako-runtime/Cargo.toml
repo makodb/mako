@@ -35,6 +35,11 @@ path = "src/bin/node.rs"
 required-features = ["native-storage"]
 
 [[bin]]
+name = "mako_transactions"
+path = "src/bin/transactions.rs"
+required-features = ["native-storage"]
+
+[[bin]]
 name = "mako_bench"
 path = "src/bin/bench.rs"
 required-features = ["native-storage"]

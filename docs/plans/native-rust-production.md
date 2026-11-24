@@ -381,3 +381,19 @@ these existing components while preserving the current application contracts.
   selection and the absence of filesystem side effects during conversion.
   Remaining stage 5: application examples and launch scripts, then default
   native build/CI. Stage 6 C++/transpiler retirement remains pending.
+
++ Stage 5 transaction-example checkpoint: `mako_transactions` replaces the
+  simple/continuous example behavior with owned Rust workers and the production
+  shard coordinator. It checks CRUD, ordered scans, growing/shrinking values,
+  explicit local/remote abort, delete/reinsert, and concurrent cross-shard
+  counters. Fixed runs count successful commits; duration-based runs continue
+  until their deadline. Native persistent reruns preserve the counter.
++ Process startup, leader admission, cancellation and joins now share one Rust
+  supervisor with `mako_bench`. Example schema validation is independent of the
+  TPC-C catalog. `examples/native/transactions.yml` is a runnable local config.
++ `/tmp/mako-native-rust-transactions-01.log`: Clippy and all three executable
+  transaction cases passed: local persistence/reopen, separate shard processes,
+  and two three-replica Raft shards. The four configuration/colocation regression
+  cases also passed after sharing the supervisor. The external client/Redis
+  entry points, launch scripts, production default switch and C++ retirement
+  remain outstanding.

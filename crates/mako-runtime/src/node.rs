@@ -186,6 +186,24 @@ impl Config {
     }
 }
 
+/// Shareable application services. Each calling thread creates its own affine
+/// storage worker; the process still owns shutdown through RunningNode.
+#[derive(Clone)]
+pub struct Handle {
+    pub store: Arc<Store>,
+    pub schema: Arc<Schema>,
+    pub network: Arc<Network>,
+}
+impl From<&RunningNode> for Handle {
+    fn from(node: &RunningNode) -> Self {
+        Self {
+            store: node.store.clone(),
+            schema: node.schema.clone(),
+            network: node.network.clone(),
+        }
+    }
+}
+
 pub struct RunningNode {
     server: Option<RunningShard>,
     migration: Option<RunningMigration>,

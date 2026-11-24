@@ -2,28 +2,14 @@
 //! An unknown outcome ends the run; it is never counted as an ordinary abort.
 use crate::{
     client::Client,
-    node::{Config as NodeConfig, RunningNode},
+    node::Config as NodeConfig,
     storage::engine,
     tpcc::{self, Context, Generator, LoadProgress, Mix, Scale},
     wire::*,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
-pub struct Host {
-    store: Arc<crate::storage::Store>,
-    schema: Arc<crate::migration::Schema>,
-    network: Arc<crate::rpc::Network>,
-}
-impl From<&RunningNode> for Host {
-    fn from(node: &RunningNode) -> Self {
-        Self {
-            store: node.store.clone(),
-            schema: node.schema.clone(),
-            network: node.network.clone(),
-        }
-    }
-}
+pub use crate::node::Handle as Host;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
