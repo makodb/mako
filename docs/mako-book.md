@@ -27,7 +27,7 @@ verified decisions from assumptions about storage, RPC and replication.
 | Local transaction manager | `crates/sto-core` | OCC read/write sets, locking, validation and terminal cleanup |
 | Ordered storage | `crates/sto-masstree`, `crates/sto-tpcc-ffi` | Masstree adapter, versioned rows, scans, retained affine workers and owned redo |
 | Log persistence | `src/deptran/raft/store/src/journal.rs` | Shared RocksDB entries, commit prefix, identity and snapshot format for local and Raft ordering |
-| Applied storage | `crates/sto-rocksdb`, runtime `durable.rs` | Atomic persistent row, intent, decision and receipt records |
+| Applied storage | `crates/mako-storage-rocksdb`, `crates/sto-rocksdb`, runtime `log/materialization.rs` | Common RocksDB rows and protocol state, direct or batched from the optional Masstree layer |
 | Replication | `crates/raft-host`, `src/deptran/raft` | Raft authority, committed prefixes, read barriers, snapshots and recovery |
 | RPC | `src/srpc`, runtime `rpc.rs` | Rust transport, reactor, bounded owned requests and pending-reply cancellation |
 
@@ -154,8 +154,9 @@ Each participating shard chooses one journal policy:
 A configuration with synchronous writes disabled cannot advertise durable
 transactions. All members of a transaction must agree on the durability policy.
 
-Both production modes use `<data>/log/base` for the ordered RocksDB log and
-`<data>/rows` for the applied RocksDB state. The log stores index/term/payload
+Both production modes use `<log-root>/log/base` for the ordered RocksDB log.
+The configured `engine.directory` holds the common applied RocksDB state.
+The `kind: masstree` compatibility spelling derives `<log-root>/data`. The log stores index/term/payload
 entries, hard state, committed prefix, durable sequence, snapshot boundary and
 exact authority metadata in one versioned format. Raft additionally uses the
 vote and election-term fields. RocksDB WAL is enabled; synchronous atomic
@@ -182,8 +183,9 @@ configuration cannot turn an old Raft suffix into local committed data.
 
 The journal records `Begin`, `Prepare`, `Decide` and `Complete`. A prepare stores
 the full descriptor, final row intents and any gateway receipt. Completion
-atomically writes committed rows, the participant outcome and the gateway
-receipt in the durable adapter. Prepared rows stay separate from committed rows.
+records committed rows, the participant outcome and the gateway receipt. The
+direct adapter persists them immediately; the Masstree path batches them into
+RocksDB while the committed log covers the gap. Prepared rows stay separate from committed rows.
 The descriptor binds protocol version, transaction ID, common timestamp,
 membership, participant leases and recovery endpoints.
 
@@ -230,11 +232,58 @@ new runtime.
 Local logs reclaim obsolete checkpoint generations and abandoned attempts only
 after validating recovered authority or flushing the replacement snapshot
 reference. The current checkpoint remains intact. Raft retirement separately
-waits for outgoing snapshot streams to release their image leases. A Masstree
-bootstrap checkpoint is a single retained baseline artifact; it does not grow
-with later checkpoints. Protocol decisions, receipts and replay fingerprints
+waits for outgoing snapshot streams to release their image leases. Both
+transaction adapters use the same native RocksDB checkpoint format. Protocol decisions, receipts and replay fingerprints
 remain retained until a separate stale-request-safe garbage collection protocol
 exists.
+
+## RocksDB with optional Masstree
+
+RocksDB is the final data store in both configurations. Select the transaction
+adapter with one flag and keep the data and log directories unchanged:
+
+```yaml
+engine:
+  kind: rocksdb
+  directory: /data/shard/data
+  masstree: true # false uses the direct RocksDB STO adapter
+persistence:
+  directory: /data/shard
+  create: false
+  sync_writes: true
+```
+
+The direct adapter applies each committed command atomically to RocksDB. With
+Masstree enabled, its STO adapter serves transactions from a full in-memory
+committed image. Each transaction still saves its Prepare and decision through
+LocalLog or ReplicatedLog. Already committed effects accumulate in bounded
+batches for RocksDB. No second validation or transaction decision occurs during
+materialization. Undecided Prepare rows remain invisible.
+
+The default flush targets are 128 log records, 8 MiB of estimated buffered data,
+50,000 row effects, or a 100 ms timer. A single legal command larger than a target
+flushes alone. Checkpoints and orderly shutdown also flush. A failed or uncertain
+flush fences admission, leaving recovery to the committed log.
+
+Let C be the committed log position, A the applied application position and D the
+materialized RocksDB position. Healthy application cuts satisfy D <= A <= C. Direct mode
+keeps D = A; Masstree can have D < A. Each RocksDB batch atomically saves its rows,
+tombstones, logical versions, protocol metadata, receipts, replay identities and
+D. A checkpoint pauses committed publication, flushes D to A, then creates and
+publishes the native RocksDB snapshot before the host trims covered log entries.
+This includes a saved Complete even if its affine worker has not installed yet.
+
+Recovery loads the RocksDB base and replays the committed log suffix above D.
+Masstree reconstructs its in-memory image before restoring unresolved prepares,
+write protection and migration pins. Previous RAM progress never authorizes
+skipping replay. The two modes use the same owner/schema identity and checkpoint
+format. Compatible replicas in one Raft group may use different adapters.
+
+Stop the node, change only `masstree`, and restart with `create: false` to switch
+modes. No conversion or data copy is required. This is a restart toggle; it does
+not add live switching, eviction or lazy cache misses. Masstree must fit the full
+committed image in RAM. Old file-only Masstree stores require the offline upgrade
+below. The [adjustment plan](plans/rocksdb-optional-masstree.md) tracks the change.
 
 ## Gateway and application APIs
 
@@ -278,13 +327,13 @@ as permission to drain them.
 
 Migration uses the selected data engine and transaction log. Durable mode
 requires `sync_writes: true`; Masstree and direct RocksDB work with LocalLog or
-ReplicatedLog, including transfers between engines. Every replica within one
-Raft group uses the same engine. Volatile fixtures still use MemoryLog and have
+ReplicatedLog, including transfers between adapters. Replicas within one
+Raft group may choose different adapters over the common RocksDB format. Volatile fixtures still use MemoryLog and have
 no restart guarantee.
 
 The durable coordinator and participant journals live in a reserved internal
 table in the selected engine. Their atomic batches use the same OCC + 2PC log
-as user rows. Masstree checkpoints and RocksDB checkpoints therefore include
+as user rows. The common RocksDB checkpoints therefore include
 control state without a second metadata database. Application schemas and
 ordinary data requests cannot access this namespace. Checkpoint identity binds
 the migration format; enabling migration on an existing fixed-placement
@@ -311,22 +360,23 @@ The [migration chapter](architecture/sharding-migration.md) gives the protocol
 proofs. Actual engine effects, serialization, filesystem durability, the Rust
 runtime authority scopes and RPC delivery remain adapter obligations. Crash
 qualification and release evidence are tracked in the
-[pluggable engine plan](plans/pluggable-distributed-engines.md).
+[optional-Masstree plan](plans/rocksdb-optional-masstree.md).
 
 ## Offline engine conversion
 
 Stop every replica in the shard group before conversion. Each replica retains
 its own term, vote, committed cut and uncommitted suffix. Convert the entire
-group to the same engine before restarting; this is not a rolling upgrade.
+group to the common storage format before restarting. This offline format
+upgrade is separate from toggling Masstree on an already upgraded directory.
 
 ```sh
 mako_convert --config old-node.yml --destination /data/shard-converted --engine masstree
-# Or select --engine rocksdb for persistent user data.
+# Or select --engine rocksdb to disable the Masstree layer.
 mako_node --config /data/shard-converted/node.json
 ```
 
 The source must have a shared `mako-rocks-log/1` log. The converter reads legacy
-`rows` mirrors, current Masstree checkpoints, or direct RocksDB data. It restores
+`rows` mirrors, old file-only Masstree checkpoints, or common RocksDB data. It restores
 the published checkpoint and committed suffix without starting elections or
 choosing transaction outcomes. An existing source log or data lease excludes a
 running server. Already committed source effects may be replayed during recovery;
@@ -341,16 +391,15 @@ sets `create: false`; `conversion.json` records the cut and counts. A failed
 attempt leaves an unpublished `.mako-convert-*` staging directory for inspection.
 Discard that staging directory rather than serving or resuming it.
 
-Masstree output contains a bootstrap checkpoint and log/checkpoint artifacts,
-without a RocksDB user-row mirror. RocksDB output contains a separate `data`
-directory and the same log format. Conversion preserves existing migration
+Both output modes contain a `data` RocksDB directory and the same native
+checkpoint and log formats. `--engine masstree` sets `engine.masstree: true`;
+`--engine rocksdb` sets it to false. Conversion preserves existing migration
 control state but does not enable migration on a fixed-placement schema, import
 legacy external migration metadata, or infer missing log history. Those changes
 require a separate authority migration.
 
-The converter uses bounded row batches; its protocol index and Masstree logical
-image are held in memory. Peak offline memory can include both source and target
-images. Checkpoint publication pauses normal committed publication on live
+The converter uses bounded row batches. Its protocol index and an old file-only
+source image are held in memory; the target rows are streamed into RocksDB. Checkpoint publication pauses normal committed publication on live
 nodes. Performance qualification remains a separate weekly/manual gate.
 
 ## Workers, RPC and ownership
@@ -425,9 +474,9 @@ workers.
 
 Node configuration specifies owner count, listen addresses, worker counts,
 tables, peer endpoints and optional replica groups. Choose either local
-`persistence` with a log directory or `replication`. Select Masstree or a
-separate RocksDB data directory with `engine`. Both default to synchronous
-writes. Omitting both is an error unless `volatile: true` explicitly selects
+`persistence` with a log directory or `replication`. Configure the RocksDB
+data directory and optional Masstree layer with `engine`. Both log policies
+default to synchronous writes. Omitting both is an error unless `volatile: true` explicitly selects
 development/test mode. Volatile mode cannot be combined with either persistent
 policy. Creating a new durable directory is explicit; use `create: false` when
 reopening it. Initial durable data is loaded through
@@ -440,7 +489,7 @@ Inside the container, a bounded two-shard example is:
 python3 examples/run_native.py transactions --build build --shards 2 --workers 3 --count 50
 ```
 
-The launcher uses Masstree data and a local RocksDB log by default. Add `--replicas 3` for Raft, or
+The launcher uses Masstree over RocksDB data and a local RocksDB log by default. Add `--replicas 3` for Raft, or
 `--volatile` for an explicitly ephemeral development run. The launcher
 owns its processes, assigns ports and retains failure diagnostics. Consult its
 `--help` for supported combinations.
@@ -461,10 +510,10 @@ the machine. Detailed reports record the source inputs and wall time. The
 checks for that cutover. The later
 [unified-log qualification](testing/unified-rocks-log-2026-11-25/README.md) records
 the shared local/Raft format, crash/refusal tests and explicit backend contract
-checks. The pluggable-engine upper run completed in 176 seconds on 32 CPUs,
-including 25 semantic negative controls. Backend/component, process recovery,
+checks. The optional-Masstree upper run completed in 175 seconds on 32 CPUs,
+including 29 semantic negative controls. Backend/component, process recovery,
 release, sanitizer and link-audit evidence is recorded separately in the
-[pluggable-engine qualification](testing/pluggable-engines-2026-11-25/README.md).
+[optional-Masstree qualification](testing/rocksdb-masstree-2026-11-25/README.md).
 
 The 2PC proof covers the lock barrier, participant-specific Yes votes, the saved
 decision requirement, decision immutability, completion acknowledgements and

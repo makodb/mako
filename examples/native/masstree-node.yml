@@ -4,10 +4,13 @@ nodes: 1
 listen: 127.0.0.1:7810
 workers: 4
 gateway_workers: 4
+# To switch an existing node, change masstree and set create to false.
 engine:
-  kind: masstree
+  kind: rocksdb
+  directory: ./data/shared-node/data
+  masstree: true
 persistence:
-  directory: ./data/masstree-node
+  directory: ./data/shared-node
   create: true
   sync_writes: true
 tables:

@@ -1,0 +1,425 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:6:22
+  |
+6 | use crate::storage::{self,Image};
+  |                      ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `DurableKv`, `Namespace`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:7:25
+  |
+7 | use crate::durable_kv::{self,DurableKv,Namespace};
+  |                         ^^^^ ^^^^^^^^^ ^^^^^^^^^
+
+warning: unused imports: `Operation` and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^ ^^^^^^^^^
+
+warning: unused imports: `ActorHistory`, `NativeStep`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:9:28
+  |
+9 | use super::replay_proofs::{self,ActorHistory,NativeStep};
+  |                            ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `crate::leases`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:7:5
+  |
+7 | use crate::leases;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^
+
+warning: unused variable: `n`
+   --> /var/tmp/mako-shard-rust/src/cluster/directory.rs:153:22
+    |
+153 |         let (mut out,n) = self.copy_prefix(lo);
+    |                      ^ help: if this is intentional, prefix it with an underscore: `_n`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `hi`
+   --> /var/tmp/mako-shard-rust/src/cluster/participant_metadata.rs:558:21
+    |
+558 |         if let Some(hi) = &range.hi {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_hi`
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:256:34
+    |
+256 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+318 |             after = Some(row);
+    |             ----- `after` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:345:34
+    |
+345 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+367 |         after = Some(row);
+    |         ----- `after` is overwritten here before the previous value is read
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:22
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:43
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                                           ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:25
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:46
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `cleanup`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:67
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cleanup`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:277:13
+    |
+277 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:329:13
+    |
+329 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `value`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:251:17
+    |
+251 |             let value = match read_blob(&mut reader) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:951:21
+    |
+951 |                 let status = self.request.bounds.advance(last);
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:955:13
+    |
+955 |         let status = self.completion.complete(page.count,page.eof,page.stopped);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1016:13
+     |
+1016 |         let a = bytes.write_u32(PAGE_TAG);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1017:13
+     |
+1017 |         let b = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1018:13
+     |
+1018 |         let c = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1019:13
+     |
+1019 |         let d = bytes.write_u64(request.identity.snapshot_version);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1058:13
+     |
+1058 |         let a = self.bytes.write_bytes(key);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1059:13
+     |
+1059 |         let b = self.bytes.write_bytes(value);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `payload`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_kv.rs:413:17
+    |
+413 |             let payload = match decode_record(&bytes) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `node_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:136:9
+    |
+136 |     let node_count = nodes.len();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_count`
+
+warning: unused variable: `table_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:137:9
+    |
+137 |     let table_count = tables.len();
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_table_count`
+
+warning: unused variable: `response`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:174:9
+    |
+174 |     let response = match apply(actor,op) { Ok(r) => r, Err(e) => return Err(e) };
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:222:9
+    |
+222 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:256:9
+    |
+256 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: variable `status` is assigned to, but never used
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1062:13
+     |
+1062 |         let mut status=Status::Ok;
+     |             ^^^^^^^^^^
+     |
+     = note: consider using `_status` instead
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1073:17
+     |
+1073 |                 status=self.actor.deliver(&plan,command).status;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1075:48
+     |
+1075 |             Operation::Begin{id,incarnation}=>{status=self.begin_origin(id,incarnation);}
+     |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1076:38
+     |
+1076 |             Operation::Resolve(id)=>{status=self.actor.resolve(id);}
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1077:37
+     |
+1077 |             Operation::Finish(id)=>{status=self.actor.finish(id);}
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1079:17
+     |
+1079 | / ...   status=if point{
+1080 | | ...       if range.hi.is_some(){return false;}self.actor.acquire(id,range.table,&range.lo,grant)
+1081 | | ...   }else{self.actor.acquire_range(id,range.table,&range.lo,match &range.hi{Some(h)=>Some(h.as_slice()),None=>None},grant)};
+     | |_____________________________________________________________________________________________________________________________^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1083:55
+     |
+1083 |             Operation::Release{id,table,coordinate}=>{status=self.actor.release(id,table,&coordinate);}
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1114:63
+     |
+1114 |                 if result.certificate.is_none(){return false;}status=result.status;
+     |                                                               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: fields `query`, `expected`, and `taken` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:800:5
+    |
+793 | pub struct PageCursor<'a> {
+    |            ---------- fields in this struct
+...
+800 |     query: Ghost<Request>,
+    |     ^^^^^
+801 |     snapshot_version: u64,
+802 |     expected: Ghost<Seq<WireRow>>,
+    |     ^^^^^^^^
+803 |     taken: Ghost<Seq<WireRow>>,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `rows` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:979:5
+    |
+971 | pub struct Page {
+    |            ---- field in this struct
+...
+979 |     rows: Ghost<Seq<WireRow>>,
+    |     ^^^^
+
+warning: fields `window` and `initial` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:161:5
+    |
+158 | pub struct DurableRows<'a,E:DurableEngine>{
+    |            ----------- fields in this struct
+...
+161 |     window:Ghost<KeyRange>,
+    |     ^^^^^^
+162 |     initial:Ghost<E>,
+    |     ^^^^^^^
+
+warning: fields `index`, `records`, and `fact` are never read
+  --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:84:5
+   |
+80 | pub(crate) struct ReplayCompletion<'a> {
+   |                   ---------------- fields in this struct
+...
+84 |     index:u64,
+   |     ^^^^^
+85 |     records:Ghost<Seq<Seq<u8>>>,
+   |     ^^^^^^^
+86 |     fact:Ghost<CompletionFact>,
+   |     ^^^^
+
+PASS benchmark_process-61e69efcb4c397b3::two_replicated_shards_run_native_tpcc_and_retain_committed_order_counts
+PASS client_process-ecbf15a3565a447d::native_gateway_cli_roundtrips_binary_values_and_session_contract
+PASS client_process-ecbf15a3565a447d::redis_exec_is_atomic_across_shards_and_idle_clients_do_not_own_workers
+PASS client_process-ecbf15a3565a447d::redis_large_records_long_keys_and_large_atomic_batches
+PASS configuration-9488aaf9d14bee5b::existing_topologies_and_raft_fragments_translate_to_reviewable_native_configuration
+PASS configuration-9488aaf9d14bee5b::native_cli_prints_converted_config_without_opening_listeners_or_storage
+PASS configuration-9488aaf9d14bee5b::native_executable_runs_two_colocated_shards_from_yaml_and_joins_workers
+PASS configuration-9488aaf9d14bee5b::production_configuration_requires_local_or_replicated_log_and_volatile_is_explicit
+PASS configuration-9488aaf9d14bee5b::typed_yaml_anchors_parse_and_invalid_topologies_are_rejected_before_startup
+PASS conversion-1a12a777c6cdd3f9::converted_migration_node_recovers_its_control_namespace
+PASS conversion-1a12a777c6cdd3f9::converted_node_serves_checkpoint_suffix_and_accepts_new_transactions
+PASS conversion-1a12a777c6cdd3f9::converted_raft_node_preserves_distinct_shard_and_replica_group_identities
+PASS conversion-1a12a777c6cdd3f9::local_node_toggles_masstree_over_the_same_files
+PASS conversion-1a12a777c6cdd3f9::migration_node_toggles_masstree_over_the_same_control_state
+PASS conversion-1a12a777c6cdd3f9::raft_node_toggles_masstree_over_the_same_files
+PASS coordinator-a7e569361adea161::a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion
+PASS coordinator-a7e569361adea161::failed_abort_is_reported_as_unknown_and_fences_the_client_immediately
+PASS coordinator-a7e569361adea161::global_lock_barrier_rejects_point_absence_and_scan_write_skew
+PASS coordinator-a7e569361adea161::ignoring_a_remote_operation_error_cannot_commit_a_partial_local_body
+PASS coordinator-a7e569361adea161::native_coordinator_commits_across_shards_and_releases_remote_body_errors
+PASS durable-1b704eb4d098408c::committed_rows_reopen_with_tombstones_and_checkpoint_generations
+PASS durable-1b704eb4d098408c::prepared_intent_survives_restart_without_becoming_a_committed_row
+PASS durable_migration-0c646c4349560941::local_masstree_to_rocks_migration_recovers_without_row_mirror
+PASS durable_migration-0c646c4349560941::local_mixed_migration_recovers_interrupted_prepare_copy_decision_and_cleanup
+PASS durable_migration-0c646c4349560941::local_rocks_migration_recovers_checkpointed_ownership_and_lazy_tables
+PASS durable_migration-0c646c4349560941::local_rocks_migration_recovers_interrupted_prepare_copy_decision_and_cleanup
+PASS durable_migration-0c646c4349560941::local_rocks_to_masstree_migration_recovers_without_row_mirror
+PASS durable_migration-0c646c4349560941::replicated_mixed_engines_migrate_after_control_leader_failover
+PASS durable_migration-0c646c4349560941::replicated_rocks_migration_recovers_control_after_both_leaders_fail
+PASS durable_migration-0c646c4349560941::replicated_rocks_migration_resumes_copy_and_saved_commit_after_leader_crashes
+PASS engine_checkpoint-dc75db45cb399811::checkpoint_covers_saved_complete_before_affine_install
+PASS engine_checkpoint-dc75db45cb399811::corrupt_engine_checkpoint_is_rejected_before_admission
+PASS engine_checkpoint-dc75db45cb399811::local_checkpoint_replays_suffix_and_tombstones_from_rocks_base
+PASS gateway-8f151f6ad1e4af1b::forwarded_gateway_resolves_lost_reply_without_replaying_effect
+PASS gateway-8f151f6ad1e4af1b::native_gateway_retains_mutation_result_bits_and_exact_read_bytes
+PASS gateway-8f151f6ad1e4af1b::unknown_gateway_commit_is_not_reexecuted_or_reported_as_an_abort
+PASS log_contract-e22ed813d02cc279::all_three_backends_obey_the_same_transaction_log_contract
+PASS mako_runtime-43e8c1bf31a1512b::conversion::tests::conversion_refuses_live_source_existing_target_and_corrupt_checkpoint
+PASS mako_runtime-43e8c1bf31a1512b::conversion::tests::file_only_masstree_checkpoint_upgrades_to_common_rocks_format
+PASS mako_runtime-43e8c1bf31a1512b::conversion::tests::legacy_trimmed_log_converts_both_engines_and_roundtrips_prepares_receipts_tombstones
+PASS mako_runtime-43e8c1bf31a1512b::gateway_client::tests::unresolved_sdk_request_retains_identity_and_original_routing_tuple
+PASS mako_runtime-43e8c1bf31a1512b::redis::records::tests::chunk_growth_shrink_delete_and_missing_chunk_detection
+PASS mako_runtime-43e8c1bf31a1512b::redis::records::tests::forced_hash_collisions_and_deleted_slots_preserve_full_key_identity
+PASS mako_runtime-43e8c1bf31a1512b::redis::tests::resp_bounds_binary_fragmentation_and_pipeline
+PASS mako_runtime-43e8c1bf31a1512b::rpc::tests::native_srpc_preserves_owned_request_and_reply_across_worker_threads
+PASS mako_runtime-43e8c1bf31a1512b::rpc::tests::timed_out_decision_is_unknown_and_pending_call_is_cancelled
+PASS materialization-ac398db76a6153c1::byte_and_row_limits_flush_large_single_effects
+PASS materialization-ac398db76a6153c1::failed_batch_fences_admission_and_replays_the_committed_gap
+PASS materialization-ac398db76a6153c1::local_crash_recovers_log_gap_and_switches_to_direct_rocks
+PASS materialization-ac398db76a6153c1::local_crash_recovers_log_gap_in_masstree
+PASS materialization-ac398db76a6153c1::materialization_crash_fixture
+PASS materialization-ac398db76a6153c1::raft_crash_recovers_log_gap_and_switches_to_direct_rocks
+PASS materialization-ac398db76a6153c1::raft_crash_recovers_log_gap_in_masstree
+PASS materialization-ac398db76a6153c1::record_limit_flushes_and_keeps_later_effects_buffered
+PASS materialization-ac398db76a6153c1::timer_and_shutdown_materialize_committed_rows
+PASS materialization-ac398db76a6153c1::uncertain_batch_fences_admission_and_recovers_without_redeciding
+PASS migration-78c64da873415da1::failed_cold_start_leaves_only_owned_weak_callback_anchors
+PASS migration-78c64da873415da1::migration_copies_between_rocksdb_engines
+PASS migration-78c64da873415da1::migration_copies_masstree_into_rocksdb
+PASS migration-78c64da873415da1::migration_copies_rocksdb_into_masstree
+PASS migration-78c64da873415da1::native_migration_drains_old_admission_and_copies_latest_raw_and_warehouse_rows
+PASS migration-78c64da873415da1::paged_scans_preserve_binary_cursors_order_and_limits_across_migrated_ranges
+PASS mixed_replication-138098b44c0a57f6::contract::clients_discover_new_leaders_and_recover_durable_gateway_receipts
+PASS mixed_replication-138098b44c0a57f6::contract::elected_replica_restores_prepared_intent_and_obeys_the_saved_decision
+PASS mixed_replication-138098b44c0a57f6::contract::lost_quorum_before_prepare_never_installs_and_rejects_new_admission
+PASS mixed_replication-138098b44c0a57f6::contract::native_raft_commit_checkpoint_and_restart_recover_engine
+PASS mixed_replication-138098b44c0a57f6::contract::native_replicas_fail_over_and_install_a_checkpoint_for_a_missing_peer
+PASS participant-b3a395e3acc8f8b8::client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin
+PASS participant-b3a395e3acc8f8b8::durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_restart
+PASS participant-b3a395e3acc8f8b8::frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin
+PASS participant-b3a395e3acc8f8b8::new_attempt_cannot_steal_execution_and_delayed_abort_cannot_cancel_its_successor
+PASS participant-b3a395e3acc8f8b8::prepared_participant_commits_once_and_old_decision_cannot_touch_a_new_attempt
+PASS participant-b3a395e3acc8f8b8::prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort
+PASS participant-b3a395e3acc8f8b8::prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin
+PASS process-b4a203ab98f376f8::local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft
+PASS process-b4a203ab98f376f8::replicated_server_recovers_rows_in_a_fresh_process
+PASS process-b4a203ab98f376f8::rocksdb_local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft
+PASS process-b4a203ab98f376f8::rocksdb_replicated_server_recovers_rows_in_a_fresh_process
+PASS process-b4a203ab98f376f8::separate_process_clocks_commit_and_abort_through_native_srpc
+PASS process-b4a203ab98f376f8::separate_process_migration_moves_raw_and_lazy_warehouse_tables
+PASS replication-75f4636d2a6efaf0::contract::clients_discover_new_leaders_and_recover_durable_gateway_receipts
+PASS replication-75f4636d2a6efaf0::contract::elected_replica_restores_prepared_intent_and_obeys_the_saved_decision
+PASS replication-75f4636d2a6efaf0::contract::lost_quorum_before_prepare_never_installs_and_rejects_new_admission
+PASS replication-75f4636d2a6efaf0::contract::native_raft_commit_checkpoint_and_restart_recover_engine
+PASS replication-75f4636d2a6efaf0::contract::native_replicas_fail_over_and_install_a_checkpoint_for_a_missing_peer
+PASS rocks_local-442cb9d4ccf940d9::persistent_log_rejects_a_proposal_from_another_admission_term
+PASS rocks_local-442cb9d4ccf940d9::rocks_local_checkpoint_reopens_atomic_data_and_metadata
+PASS rocks_replication-354e59b049bf3143::contract::clients_discover_new_leaders_and_recover_durable_gateway_receipts
+PASS rocks_replication-354e59b049bf3143::contract::elected_replica_restores_prepared_intent_and_obeys_the_saved_decision
+PASS rocks_replication-354e59b049bf3143::contract::lost_quorum_before_prepare_never_installs_and_rejects_new_admission
+PASS rocks_replication-354e59b049bf3143::contract::native_raft_commit_checkpoint_and_restart_recover_engine
+PASS rocks_replication-354e59b049bf3143::contract::native_replicas_fail_over_and_install_a_checkpoint_for_a_missing_peer
+PASS tpcc-d6fd7998d708c338::codecs_match_existing_fused_kernel_bytes_and_reject_corruption
+PASS tpcc-d6fd7998d708c338::competing_order_after_district_read_aborts_speculative_insertions
+PASS tpcc-d6fd7998d708c338::loader_resumes_committed_batches_and_never_reloads_completed_workloads
+PASS tpcc-d6fd7998d708c338::micro_workload_loads_shard_local_items_and_aborts_partial_remote_updates
+PASS tpcc-d6fd7998d708c338::multithreaded_native_workload_preserves_order_totals
+PASS tpcc-d6fd7998d708c338::native_benchmark_process_reopens_persistent_workload_without_reloading
+PASS tpcc-d6fd7998d708c338::sharded_tpcc_executes_all_five_transactions_and_aborts_remote_stock_changes
+PASS transaction_process-862a5708d3bdbe87::local_transaction_example_reopens_persistent_data
+PASS transaction_process-862a5708d3bdbe87::replicated_shards_run_transaction_example
+PASS transaction_process-862a5708d3bdbe87::separate_shards_run_transaction_example
+native Rust tests: 102 passed in fresh processes

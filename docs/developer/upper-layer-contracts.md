@@ -95,34 +95,35 @@ specializations of `mako_runtime::log::Log<C>` and share one command codec and
 state machine with either `LocalHost` or Raft authority/read barriers. Both ordering drivers persist the
 same RocksDB log format through `raft_store::journal`; a local append saves its
 commit prefix atomically, while Raft controls that prefix through consensus.
-Masstree rows and the derived protocol index are volatile in both modes. The
-recoverable prefix comes from an exact logical checkpoint; recovery restores
-that state and replays the committed suffix. Checkpoints include prepares,
-decisions, receipts and tombstones. The publication gate includes the interval
-between saving Complete and physically installing it: the checkpoint overlays
-the saved committed rows when installation is still pending. Synchronous storage
-is required to advertise durability. The memory implementation has no process
-restart guarantee and requires development/test opt-in in node configuration.
-A transaction cannot mix these durability policies.
+Both adapters use a common RocksDB data image. Direct application persists every
+committed effect immediately. Masstree keeps a full RAM image and batches the
+same committed effects into RocksDB. The log covers any materialization gap.
+Prepare remains private intent. A batch atomically writes rows, logical versions,
+tombstones, protocol metadata, receipts, replay identities and its final durable
+position. Logical transaction time is distinct from RocksDB STO's conflict
+generation. Physical installation never reruns validation after Commit.
 
-Direct RocksDB stores committed data, logical timestamps/tombstones, prepared
-records, decisions, receipts and applied-prefix identities in one atomic native
-batch. Startup checks that the protocol metadata and data report the same
-prefix, then replays the committed suffix. Native checkpoints include both.
-Logical transaction time is distinct from RocksDB STO's conflict generation.
-The adapter checks a committed installation before releasing the retained STO
-frame; it never runs another conflict validation after the decision. These
-atomicity, snapshot and checkpoint properties are trusted storage contracts
-checked by native tests, not additional facts proved by the upper Verus core.
+Checkpoint creation flushes through the exact application cut before taking the
+native RocksDB snapshot. Saved Complete effects are included even if affine
+installation is still pending. The host publishes durable snapshot authority
+before trimming. Startup validates the data/metadata cut, rebuilds Masstree when
+enabled, and replays the missing committed suffix. Both adapters read the same
+checkpoint and can be selected on restart without conversion.
 
-The recovery core verifies checkpoint-cut agreement, preservation of the counted
-prepare obligations, publication before trimming, and replay starting from the
-restored checkpoint rather than lost RAM progress. It assumes that the engine
-exporter supplies the stated committed cut, serialization preserves the supplied
-index, and successful file/reference publication meets the storage policy.
-Checksums, native copies and filesystem behavior are tested adapter obligations,
-not Verus proofs. Local prefix replacement records the snapshot reference and
-log trimming atomically in the existing RocksDB log batch.
+The recovery core verifies contiguous materialization beginning at D + 1,
+materialization ending no later than A, checkpoint equality D = A, and rejection
+of a durable position beyond log commitment C. It also verifies prepare-count
+coverage, publication before trimming and replay from restored durable progress.
+The runtime and storage adapters establish the inputs to these policies. Verus
+does not prove native WriteBatch atomicity, serialization, checksums, filesystem
+persistence, timer scheduling or reconstruction of physical locks. Separate
+component and crash tests check those obligations. The upper gate has semantic
+negative controls for skipped records, unapplied effects, lagging checkpoints
+and recovery beyond commitment.
+
+Synchronous storage is required to advertise durability. MemoryLog has no
+restart guarantee and requires explicit development/test configuration. A
+transaction cannot mix durability policies.
 
 The participant service restores unresolved prepares before new foreground
 admission after startup or authority change. Only the coordinator may resolve
@@ -183,7 +184,7 @@ separate from Raft position, routing generation, transaction ID and cache HLC.
 | Lease and execution admission | Core and ordinary `admission.rs`, generic `participant::Lane` | Core proof plus changed-payload, retired-lease and delayed-request scenarios |
 | Serializability composition | Frozen reads/writes and row/predicate storage contract | Exhaustive small histories with independent serial-order oracle; focused native write-skew tests |
 | Prepared physical lifetime | Runtime `prepared.rs`, `receiver.rs`, owned native API | Native listener teardown, late message, migration pin, restart and saved-decision regressions |
-| Authoritative journal and replay | Runtime `log.rs`, `durable.rs` | Separate RocksDB and Raft checks; native checkpoint, restart, prepared failover and receipt recovery |
+| Authoritative journal and replay | Runtime `log.rs`, `log/materialization.rs` | Separate RocksDB and Raft checks; native checkpoint, restart, prepared failover and receipt recovery |
 | Delivery and discovery | `remote.rs`, gateway SDK, runtime `rpc.rs` | Deterministic delivery faults and separate real SRPC/runtime tests |
 | Sharding/migration effects | Existing protocol actors, storage host and native migration adapter | Production Verus proofs, semantic controls, ordered byte/absence oracles and native migration tests |
 

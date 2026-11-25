@@ -1,6 +1,8 @@
 # Pluggable distributed transaction engines
 
-Status: complete and qualified locally on `pluggable-distributed-engines`.
+Status: historical baseline, complete and qualified on `pluggable-distributed-engines`.
+The [optional Masstree adjustment](rocksdb-optional-masstree.md) supersedes its
+independent durability design with a common RocksDB final data store.
 Executable implementation: `c79ba2617`. No push has been performed for this work.
 Baseline: `mako-dev` at `2b0387b91`. Work is paced by the exit conditions below;
 a passing intermediate stage does not mean the integration is complete.

@@ -1041,8 +1041,10 @@ path described below are historical integration baselines, not the current
 application-log-backed path.
 
 Coordinator and participant namespaces occupy a reserved internal engine table.
-Each journal batch is a single OCC + 2PC transaction. Engine checkpoints include
-that table; no separately authoritative metadata RocksDB database is added.
+Each journal batch is a single OCC + 2PC transaction. Both transaction adapters
+materialize that table into the common RocksDB data image and native checkpoint.
+The optional Masstree layer batches decided effects while the log covers the gap;
+no separately authoritative migration metadata database is added.
 Captured Raft terms fence namespace handles and row callbacks, and guarded
 journal proposals use the captured term at Raft admission. Recovery settles old
 internal operations, restores ordinary prepared protection, replays the verified

@@ -135,57 +135,52 @@ persistent prefix and replays only its missing suffix. Retained Prepare records
 remain private intent; Complete publishes their effects. A local STO guard then
 checks installation and completes without validating the decision again.
 
-Node configuration defaults to `engine: {kind: masstree}`. A build with
-`rocksdb-engine` also accepts `engine: {kind: rocksdb, directory: /path/to/data}`.
-The engine directory is separate from the configured log directory. Data and log
-must use the same durability policy. Reopening a missing RocksDB directory
-requires explicit creation; schema/profile mismatches fail before admission.
+Node configuration accepts `engine: {kind: rocksdb, directory: /path/to/data,
+masstree: false}` for direct RocksDB or `masstree: true` for the Masstree STO
+adapter above the same durable image. The default `kind: masstree` spelling
+remains a shorthand deriving `<log-root>/data`. Data and log must use the same
+durability policy. Reopening a missing directory requires explicit creation;
+schema/profile mismatches and old file-only images fail before admission.
+
+Masstree keeps the full committed working image in RAM. The log application
+queues exact decided effects for bounded atomic RocksDB materialization,
+including row versions, tombstones, prepares, decisions, receipts and replay
+identities. Defaults flush at 128 records, 8 MiB, 50,000 row effects or 100 ms.
+Checkpoint and shutdown also flush. Every externally visible durable cut is an
+exact prefix, D <= A <= C, where D is RocksDB, A is application and C is log
+commitment. Unknown materialization outcomes fence admission.
+
+Checkpoint creation pauses publication, flushes through the applied cut and
+uses the same native RocksDB checkpoint in both modes. It includes saved
+Complete effects even before affine installation and excludes undecided intent
+from visible rows. The host publishes snapshot authority before trimming.
+Recovery rebuilds Masstree from RocksDB and replays only the committed suffix,
+then restores prepares and migration protection before ordinary admission.
+Switching adapters requires a restart and one flag change over the same files.
+Compatible replicas can use different adapters within one Raft group.
+
 A fresh CMake build with `-DMAKO_BUILD_PROFILE=ROCKSDB_RUNTIME` builds all Mako
 entry points with `logging,rocksdb-engine`, without configuring a C++ compiler or
 compiling Masstree. `rocks_runtime_audit` checks Cargo dependencies and all seven
-executables' symbols. `rust_runtime_tests` runs the direct RocksDB scenarios.
-`NATIVE_RUST` builds both adapters and keeps Masstree as the configuration default.
-Examples are [Masstree with LocalLog](../../examples/native/masstree-node.yml),
-[RocksDB with LocalLog](../../examples/native/rocksdb-node.yml), and
+executables' symbols. `NATIVE_RUST` includes both adapters.
+Examples are [Masstree over RocksDB](../../examples/native/masstree-node.yml),
+[direct RocksDB](../../examples/native/rocksdb-node.yml), and
 [RocksDB with ReplicatedLog](../../examples/native/rocksdb-raft-node.yml).
-Run `mako_node --config FILE`; set `create: false` when reopening an existing
-installation. `mako_admin checkpoint ADDRESS OWNER` creates a recovery cut and
-retires its covered log prefix. Durable migration uses the same engine and log;
-its control rows are included in checkpoints. `mako_convert` converts stopped
-shared-log directories between engines and imports the old `DurableRows` mirror.
-See the [offline procedure](../mako-book.md#offline-engine-conversion).
+Use `create: false` on restart. `mako_admin checkpoint ADDRESS OWNER` materializes
+and checkpoints the current cut, then retires its covered log prefix.
 
-Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
-independently. They check private writes, ordered scans, absence and predicate
-validation, write skew after the global lock barrier, retained prepares, and
-tombstone replay. They are tests of the storage contract, not a proof of either
-backend. The upper gate runs only the model; native tests remain separate.
+Shared conformance scenarios exercise a model, Masstree and RocksDB separately.
+They check private writes, ordered scans, absence and predicate validation,
+write skew after the global lock barrier, retained prepares and tombstone replay.
+The upper gate uses only the model and verified policy. Native atomicity,
+serialization, filesystem persistence and restored physical protection remain
+trusted adapter obligations tested by separate integration suites.
 
-Masstree nodes now keep committed user data only in Masstree. Both persistent
-log modes recover a volatile protocol index and rows from a bootstrap checkpoint
-plus committed log entries. Later checkpoints include tombstones, timestamps,
-unresolved prepares, decisions, receipts and replay identities. There is no
-RocksDB user-row database on this node path. The old `DurableRows` reader remains
-for explicit offline conversion and compatibility qualification. Production node
-startup never selects it as a data engine.
-
-Checkpoint export pauses committed publication, while prepared transactions may
-keep their locks. If Complete has been saved but its affine worker has not yet
-installed, the exporter overlays that exact committed effect on the physical
-snapshot. It never overlays an undecided Prepare. Checksummed files and a durable
-manifest precede publication of the log's snapshot reference and prefix trimming.
-Recovery starts at the checkpoint actually restored, never at a previous RAM
-watermark. Failed or corrupt publication fences admission.
-
-Run `mako_admin checkpoint ADDRESS OWNER` against a local-log node or the current
-Raft leader to publish a checkpoint. The reply reports its log index and term.
-An interrupted attempt retains the old recovery authority; another attempt uses
-a fresh generation name. Performance tests remain separate from this operation.
-
-The [pluggable engine plan](../plans/pluggable-distributed-engines.md) is complete.
-Its [qualification record](../testing/pluggable-engines-2026-11-25/README.md) covers
-the engine/log matrix, migration crashes, conversion, release and sanitizers. Existing row-mirror directories require
-`mako_convert`; ordinary startup preserves them and refuses implicit conversion.
+The [optional Masstree plan](../plans/rocksdb-optional-masstree.md) supersedes the
+previous independent durable engines. The old `DurableRows` and file-only
+checkpoint readers remain for explicit offline imports. Production startup
+never silently opens those formats. `mako_convert` always emits the common
+RocksDB data format; see the [offline procedure](../mako-book.md#offline-engine-conversion).
 
 ## 1. Introduction
 

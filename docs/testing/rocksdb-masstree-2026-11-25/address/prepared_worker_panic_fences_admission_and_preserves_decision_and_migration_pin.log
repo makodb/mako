@@ -1,0 +1,23 @@
+
+running 1 test
+test prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 5.13s
+
+D [<unknown>:0] 2026-11-25 21:00:10.643 | [PollThread] starting its Lion runtime
+D [<unknown>:0] 2026-11-25 21:00:10.643 | Server: generated instance_id=3524770620806386651
+D [<unknown>:0] 2026-11-25 21:00:10.643 | create a fiber scheduler
+D [<unknown>:0] 2026-11-25 21:00:15.658 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:15.760 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:15.763 | [PollThread::shutdown] Called from TID=2142
+D [<unknown>:0] 2026-11-25 21:00:15.763 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-11-25 21:00:15.763 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-11-25 21:00:15.763 | [PollThread::shutdown] Called from poll thread, skipping join
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread::~PollThread] Destructor called from TID=2142
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread::shutdown] Called from TID=2142
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread::shutdown] Already called, returning
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread::~PollThread] Destructor complete
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread] driver stopped, tearing down
+D [<unknown>:0] 2026-11-25 21:00:15.764 | [PollThread] poll thread exiting
+D [<unknown>:0] 2026-11-25 21:00:15.765 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-11-25 21:00:15.765 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables

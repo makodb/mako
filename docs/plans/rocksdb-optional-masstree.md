@@ -1,6 +1,6 @@
 # RocksDB with optional Masstree transaction acceleration
 
-Status: implementation in progress on `rocksdb-with-optional-masstree`.
+Status: complete and qualified locally on `rocksdb-with-optional-masstree`.
 Baseline: `d3981a858`. This adjustment supersedes the independent durable data
 engines in the previous pluggable-engine plan. The user selected batched RocksDB
 materialization for the Masstree path on 2026-11-25. Implement and qualify each
@@ -36,7 +36,7 @@ rows in Masstree, and batches those same ordered effects into RocksDB. It never
 reruns validation after Commit and never materializes Prepare as visible rows.
 
 Track three positions: the committed log prefix C, the application prefix A,
-and the RocksDB materialized prefix D. At observable application boundaries,
+and the RocksDB materialized prefix D. At healthy application boundaries,
 D <= A <= C. Direct application keeps D = A; Masstree may have D < A. RocksDB
 always represents one exact prefix, including transaction state and receipts.
 Its batch updates rows, metadata, all covered replay fingerprints and D in one
@@ -111,3 +111,29 @@ obligations exercised separately from the Verus policy proofs.
 - Existing file-only Masstree directories have a qualified offline upgrade path.
 - The book, examples, upper verification and separate native/build gates describe
   and qualify the actual final implementation.
+
+## Progress
+
+- Stage 1 is committed as `3c85da4a5`. Atomic native batches and shared adapter
+  conformance passed. The isolated upper gate passed in 154.561 seconds on 32 CPUs.
+- Stages 2 and 3 are implemented in `071a538e3`. Masstree batches into the common RocksDB
+  image, recovery uses its exact prefix, checkpoints flush first, and the node
+  flag changes only the transaction adapter. Offline conversion always emits
+  RocksDB and imports the previous file-only Masstree format.
+- Stage 4 focused qualification passed 30 fresh-process cases, including
+  configuration-only toggles, local/Raft crashes with unmaterialized suffixes,
+  saved Commit recovery, before/after-batch failures, bounds/timer/shutdown,
+  old-format upgrades and mixed-replica receipt/prepare/snapshot/failover cases.
+- Stage 5 is complete. The full debug suite passed 102 cases and the optimized
+  suite passed 97. Final bounded-bootstrap checks passed 23 debug and 21
+  optimized cases; the corrected SIGKILL fixture passed 11 debug and nine
+  optimized cases. ASan and TSan each passed the final 25-case selection.
+  The upper gate passed in 174.974 seconds on 32 CPUs with 29 negative controls.
+  RocksDB-only qualification passed 23 cases and seven executable audits.
+  Native audits passed 16 storage sources, 13 production links and 48 Rust
+  archives. Strict Clippy and compile-fail documentation checks passed.
+
+The [qualification record](../testing/rocksdb-masstree-2026-11-25/README.md)
+retains raw reports, the fixed exit-fixture TSan finding, final source hashes and
+scope limits. All completion criteria are met. No performance campaign or push
+was part of this adjustment.

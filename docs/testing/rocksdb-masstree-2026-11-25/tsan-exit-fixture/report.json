@@ -1,0 +1,142 @@
+[
+  {
+    "test": "a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "global_lock_barrier_rejects_point_absence_and_scan_write_skew",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "persistent_log_rejects_a_proposal_from_another_admission_term",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "rocks_local_checkpoint_reopens_atomic_data_and_metadata",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "checkpoint_covers_saved_complete_before_affine_install",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "corrupt_engine_checkpoint_is_rejected_before_admission",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "local_checkpoint_replays_suffix_and_tombstones_from_rocks_base",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "migration_copies_between_rocksdb_engines",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "migration_copies_masstree_into_rocksdb",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "migration_copies_rocksdb_into_masstree",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_restart",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "contract::elected_replica_restores_prepared_intent_and_obeys_the_saved_decision",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "byte_and_row_limits_flush_large_single_effects",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "local_crash_recovers_log_gap_and_switches_to_direct_rocks",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "maximum_size_bootstrap_rows_materialize_in_bounded_pages",
+    "passed": true,
+    "exit_code": 0,
+    "startup_retries": [],
+    "listing_retries": []
+  },
+  {
+    "test": "raft_crash_recovers_log_gap_in_masstree",
+    "passed": false,
+    "exit_code": 101,
+    "startup_retries": [],
+    "listing_retries": []
+  }
+]

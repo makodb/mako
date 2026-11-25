@@ -1,0 +1,25 @@
+
+running 1 test
+test migration_copies_between_rocksdb_engines ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.42s
+
+D [<unknown>:0] 2026-11-25 21:00:09.483 | [PollThread] starting its Lion runtime
+D [<unknown>:0] 2026-11-25 21:00:09.484 | create a fiber scheduler
+D [<unknown>:0] 2026-11-25 21:00:09.484 | Server: generated instance_id=3968166414802086504
+D [<unknown>:0] 2026-11-25 21:00:09.485 | Server: generated instance_id=5277974732105974249
+D [<unknown>:0] 2026-11-25 21:00:09.630 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:09.630 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] Called from TID=2602
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-11-25 21:00:09.836 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-11-25 21:00:09.838 | [PollThread] driver stopped, tearing down
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [PollThread] poll thread exiting
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-11-25 21:00:09.839 | [PollThread::shutdown] Complete

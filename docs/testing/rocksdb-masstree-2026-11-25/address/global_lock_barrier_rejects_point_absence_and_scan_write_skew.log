@@ -1,0 +1,63 @@
+
+running 1 test
+test global_lock_barrier_rejects_point_absence_and_scan_write_skew ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.93s
+
+D [<unknown>:0] 2026-11-25 21:00:16.138 | [PollThread] starting its Lion runtime
+D [<unknown>:0] 2026-11-25 21:00:16.138 | Server: generated instance_id=2643750039949001317
+D [<unknown>:0] 2026-11-25 21:00:16.139 | create a fiber scheduler
+D [<unknown>:0] 2026-11-25 21:00:16.139 | Server: generated instance_id=3992236770502627756
+D [<unknown>:0] 2026-11-25 21:00:16.276 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:16.276 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] Called from TID=2163
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-11-25 21:00:16.478 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-11-25 21:00:16.479 | [PollThread] driver stopped, tearing down
+D [<unknown>:0] 2026-11-25 21:00:16.479 | [PollThread] poll thread exiting
+D [<unknown>:0] 2026-11-25 21:00:16.479 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-11-25 21:00:16.479 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-11-25 21:00:16.480 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-11-25 21:00:16.480 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-11-25 21:00:16.481 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-11-25 21:00:16.491 | Server: generated instance_id=4497955218071994295
+D [<unknown>:0] 2026-11-25 21:00:16.491 | [PollThread] starting its Lion runtime
+D [<unknown>:0] 2026-11-25 21:00:16.491 | create a fiber scheduler
+D [<unknown>:0] 2026-11-25 21:00:16.491 | Server: generated instance_id=8946874885851579063
+D [<unknown>:0] 2026-11-25 21:00:16.541 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:16.541 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] Called from TID=2163
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-11-25 21:00:16.744 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-11-25 21:00:16.746 | [PollThread] driver stopped, tearing down
+D [<unknown>:0] 2026-11-25 21:00:16.746 | [PollThread] poll thread exiting
+D [<unknown>:0] 2026-11-25 21:00:16.746 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-11-25 21:00:16.746 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-11-25 21:00:16.748 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-11-25 21:00:16.748 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-11-25 21:00:16.748 | [PollThread::shutdown] Complete
+D [<unknown>:0] 2026-11-25 21:00:16.770 | [PollThread] starting its Lion runtime
+D [<unknown>:0] 2026-11-25 21:00:16.770 | Server: generated instance_id=952271899951444238
+D [<unknown>:0] 2026-11-25 21:00:16.770 | create a fiber scheduler
+D [<unknown>:0] 2026-11-25 21:00:16.770 | Server: generated instance_id=3442315499703546485
+D [<unknown>:0] 2026-11-25 21:00:16.848 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:16.848 | server@127.0.0.1:0 close ServerConnection
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] Called from TID=2163
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] Sending CmdShutdown
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] CmdShutdown sent
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] Acquiring join_handle lock...
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] join_handle lock acquired
+D [<unknown>:0] 2026-11-25 21:00:17.049 | [PollThread::shutdown] Calling thread.join()...
+D [<unknown>:0] 2026-11-25 21:00:17.050 | [PollThread] driver stopped, tearing down
+D [<unknown>:0] 2026-11-25 21:00:17.050 | [PollThread] poll thread exiting
+D [<unknown>:0] 2026-11-25 21:00:17.050 | [Reactor::~Reactor] Starting destruction, all_events_.len()=0, fibers_.size()=0
+D [<unknown>:0] 2026-11-25 21:00:17.050 | [Reactor::~Reactor] Destructor body complete, about to destroy member variables
+D [<unknown>:0] 2026-11-25 21:00:17.051 | [PollThread::shutdown] thread.join() completed!
+D [<unknown>:0] 2026-11-25 21:00:17.051 | [PollThread::shutdown] Released join_handle lock
+D [<unknown>:0] 2026-11-25 21:00:17.051 | [PollThread::shutdown] Complete
