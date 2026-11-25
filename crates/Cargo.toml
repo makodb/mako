@@ -23,6 +23,8 @@ members = [
     "mako-runtime",
     "mako-protocol",
     "mako-protocol-core",
+    "mako-storage-api",
+    "mako-storage-masstree",
     "masstree",
     "mrx",
     "mrx-ffi",

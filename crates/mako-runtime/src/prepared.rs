@@ -10,11 +10,11 @@ use mako_protocol::{
     participant::Lane,
 };
 use mako_protocol_core::two_phase::{self as core, Phase};
+use mako_storage_api as sto;
 use std::{
     sync::{atomic::Ordering, Arc, Weak},
     time::{Duration, Instant},
 };
-use sto_tpcc_ffi::native as sto;
 
 pub(crate) struct NativeEngine {
     worker: sto::Worker,
@@ -152,22 +152,9 @@ impl NativeEngine {
             let mut participant = self.worker.resume_participant().map_err(engine)?;
             let result = (|| {
                 participant.validate().map_err(engine)?;
-                let bytes = participant
-                    .prepared_redo(transaction.time_term / 10)
-                    .map_err(engine)?;
-                if bytes.is_empty() {
-                    Ok(Vec::new())
-                } else {
-                    mako_protocol::redo::decode_legacy_bounded(
-                        &bytes,
-                        transaction.time_term,
-                        if transaction.durable {
-                            MAX_BYTES
-                        } else {
-                            mako_protocol::journal::MAX_VOLATILE_PREPARE_BYTES
-                        },
-                    )
-                }
+                participant
+                    .prepared_rows(transaction.time_term)
+                    .map_err(engine)
             })();
             // Retain even if append or validation later refuses. Only a saved
             // Abort may release a participant after its prepare might be saved.
@@ -357,14 +344,9 @@ impl NativeEngine {
             }
             participant.lock().map_err(engine)?;
             participant.validate().map_err(engine)?;
-            let bytes = participant
-                .prepared_redo(transaction.time_term / 10)
+            let restored = participant
+                .prepared_rows(transaction.time_term)
                 .map_err(engine)?;
-            let restored = if bytes.is_empty() {
-                Vec::new()
-            } else {
-                mako_protocol::redo::decode_legacy(&bytes, transaction.time_term)?
-            };
             if restored != rows {
                 return Err(Error::new(
                     ErrorCode::Unknown,

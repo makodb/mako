@@ -160,7 +160,7 @@ struct Worker<'a> {
     host: &'a Handle,
     config: &'a Config,
     client: Client,
-    worker: sto_tpcc_ffi::native::Worker,
+    worker: mako_storage_api::Worker,
 }
 struct TransactionRows<'a, 'client, 'worker> {
     transaction: &'a mut crate::client::Transaction<'client, 'worker>,

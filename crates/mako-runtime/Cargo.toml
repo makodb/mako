@@ -7,11 +7,13 @@ publish.workspace = true
 
 [features]
 default = []
-native-storage = ["dep:sto-tpcc-ffi", "dep:serde-saphyr"]
+native-storage = ["dep:sto-tpcc-ffi", "dep:mako-storage-masstree", "dep:serde-saphyr"]
 durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
 replication = ["native-storage", "durable-storage", "dep:raft-host"]
 
 [dependencies]
+mako-storage-api = { path = "../mako-storage-api" }
+mako-storage-masstree = { path = "../mako-storage-masstree", optional = true }
 mako-protocol = { path = "../mako-protocol" }
 mako-protocol-core = { path = "../mako-protocol-core" }
 sto-tpcc-ffi = { path = "../sto-tpcc-ffi", optional = true }

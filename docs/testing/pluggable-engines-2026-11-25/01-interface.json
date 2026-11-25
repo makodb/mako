@@ -1,0 +1,17 @@
+{
+  "baseline": "2b0387b91",
+  "stage": "shared interface and Masstree extraction",
+  "native_runtime_fresh_process_cases": 55,
+  "storage_conformance": [
+    "model",
+    "Masstree"
+  ],
+  "affine_worker_compile_fail": true,
+  "upper_seconds": 141.61,
+  "upper_tests": 59,
+  "strict_clippy": true,
+  "notes": [
+    "Upper report precedes moving test modules to the end of their files for Clippy; no semantic change.",
+    "No new checkpoint/recovery, RocksDB distributed, migration or performance qualification claimed."
+  ]
+}

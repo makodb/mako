@@ -3,8 +3,8 @@ use crate::{
     client::Client,
     storage::{engine, Store},
 };
+use mako_storage_api::Worker;
 use std::{ops::Range, sync::Arc};
-use sto_tpcc_ffi::native::Worker;
 
 const LOAD_KEY: &[u8] = b"tpcc/v1";
 const MICRO_LOAD_KEY: &[u8] = b"micro/v1";

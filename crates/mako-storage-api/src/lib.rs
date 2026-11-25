@@ -1,0 +1,278 @@
+//! Storage boundary for the distributed STO protocol.
+//!
+//! Implementations own concurrency control and private transaction state. The
+//! caller locks every participant before validation, durably saves prepared
+//! intent, then installs only the authoritative decision. Log commitment is
+//! not permission to expose a Prepare's rows. A worker and every borrowed
+//! participant stay on their creating thread.
+#![forbid(unsafe_code)]
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod conformance;
+#[cfg(any(test, feature = "test-support"))]
+pub mod model;
+
+use std::{
+    any::Any,
+    marker::PhantomData,
+    ops::{Bound, Deref, DerefMut},
+    rc::Rc,
+    sync::Arc,
+};
+
+pub use mako_protocol::redo::Row as RedoRow;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorKind {
+    Conflict,
+    Capacity,
+    UnknownOutcome,
+    CommittedFailure,
+    InvalidUse,
+    Fatal,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+impl Error {
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::InvalidUse,
+            message: message.into(),
+        }
+    }
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}: {}", self.kind, self.message)
+    }
+}
+impl std::error::Error for Error {}
+pub type Result<T> = std::result::Result<T, Error>;
+pub type Row = (Vec<u8>, Vec<u8>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineKind {
+    Model,
+    Masstree,
+    RocksDb,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Mutation {
+    Put,
+    Insert,
+    Remove,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VersionedValue {
+    pub value: Option<Vec<u8>>,
+    pub time_term: u32,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VersionedRow {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub time_term: u32,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VersionedScan {
+    pub rows: Vec<VersionedRow>,
+    pub read_dependency: u32,
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParticipantReport {
+    pub disposition: u32,
+    pub phase: u32,
+    pub time_term: u32,
+    pub read_dependency: u32,
+    pub empty: bool,
+}
+#[derive(Clone, Copy, Default)]
+pub struct TableConfig;
+
+/// Shared engine factory. `worker` constructs affine state on the calling thread.
+pub trait Backend: Any + Send + Sync {
+    fn kind(&self) -> EngineKind;
+    fn as_any(&self) -> &dyn Any;
+    fn worker(&self) -> Result<Box<dyn WorkerBackend>>;
+}
+pub trait TableBackend: Any + Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn len(&self) -> u64;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+/// A backend must reject foreign tables, even if their numeric IDs coincide.
+/// Replay is for decided effects under the caller's publication gate; it must
+/// preserve logical timestamps and tombstones and never revalidate a decision.
+pub trait WorkerBackend {
+    fn create_table(&mut self) -> Result<Arc<dyn TableBackend>>;
+    fn begin(&mut self) -> Result<Box<dyn LocalTransaction + '_>>;
+    fn begin_participant(&mut self, term: u32) -> Result<Box<dyn ParticipantBackend + '_>>;
+    fn resume_participant(&mut self) -> Result<Box<dyn ParticipantBackend + '_>>;
+    fn replay(
+        &mut self,
+        table: &Table,
+        key: &[u8],
+        value: Option<&[u8]>,
+        time_term: u32,
+    ) -> Result<()>;
+    fn abort(&mut self) -> Result<()>;
+}
+/// Loading/component transactions. Distributed applications use Participant.
+/// Persistent loading must be covered by a checkpoint or the authoritative log.
+pub trait LocalTransaction {
+    fn get(&mut self, table: &Table, key: &[u8]) -> Result<Option<Vec<u8>>>;
+    fn put(&mut self, table: &Table, key: &[u8], value: &[u8]) -> Result<()>;
+    fn insert(&mut self, table: &Table, key: &[u8], value: &[u8]) -> Result<bool>;
+    fn remove(&mut self, table: &Table, key: &[u8]) -> Result<bool>;
+    fn scan(
+        &mut self,
+        table: &Table,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+        reverse: bool,
+        limit: usize,
+    ) -> Result<Vec<Row>>;
+    fn commit(self: Box<Self>) -> Result<()>;
+    fn abort(self: Box<Self>) -> Result<()>;
+}
+/// Owned borrowed guard; retain releases the borrow, not locks or private writes.
+/// Drop before installation aborts. An uncertain/installed outcome must fence
+/// instead of rolling back. After validate, writes and returned intent are frozen.
+pub trait ParticipantBackend {
+    fn get(&mut self, table: &Table, key: &[u8]) -> Result<VersionedValue>;
+    #[allow(clippy::too_many_arguments)]
+    fn mutate(
+        &mut self,
+        table: &Table,
+        table_id: u16,
+        mutation: Mutation,
+        key: &[u8],
+        value: &[u8],
+        lock_now: bool,
+    ) -> Result<bool>;
+    /// Dependencies include traversed tombstones and omitted rows, not just output.
+    fn scan(
+        &mut self,
+        table: &Table,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+        reverse: bool,
+        limit: usize,
+    ) -> Result<VersionedScan>;
+    fn lock(&mut self) -> Result<()>;
+    fn timestamp(&mut self) -> Result<u32>;
+    fn validate(&mut self) -> Result<()>;
+    fn prepared_rows(&mut self, time_term: u32) -> Result<Vec<RedoRow>>;
+    fn install(&mut self, timestamp: u32) -> Result<()>;
+    fn finish(self: Box<Self>, committed: bool) -> Result<ParticipantReport>;
+    fn retain(self: Box<Self>);
+}
+
+#[derive(Clone)]
+pub struct Database(Arc<dyn Backend>);
+impl Database {
+    pub fn new(backend: impl Backend) -> Self {
+        Self(Arc::new(backend))
+    }
+    pub fn kind(&self) -> EngineKind {
+        self.0.kind()
+    }
+    pub fn as_any(&self) -> &dyn Any {
+        self.0.as_any()
+    }
+    pub fn worker(&self) -> Result<Worker> {
+        Ok(Worker {
+            inner: self.0.worker()?,
+            database: self.clone(),
+            affine: PhantomData,
+        })
+    }
+}
+#[derive(Clone)]
+pub struct Table {
+    inner: Arc<dyn TableBackend>,
+    database: Database,
+}
+impl Table {
+    pub fn as_any(&self) -> &dyn Any {
+        self.inner.as_any()
+    }
+    pub fn len(&self) -> u64 {
+        self.inner.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+    pub fn belongs_to(&self, database: &Database) -> bool {
+        Arc::ptr_eq(&self.database.0, &database.0)
+    }
+}
+/// ```compile_fail
+/// fn send<T: Send>() {}
+/// send::<mako_storage_api::Worker>();
+/// ```
+pub struct Worker {
+    inner: Box<dyn WorkerBackend>,
+    database: Database,
+    affine: PhantomData<Rc<()>>,
+}
+impl Worker {
+    pub fn belongs_to(&self, database: &Database) -> bool {
+        Arc::ptr_eq(&self.database.0, &database.0)
+    }
+    pub fn create_table(&mut self, _: TableConfig) -> Result<Table> {
+        Ok(Table {
+            inner: self.inner.create_table()?,
+            database: self.database.clone(),
+        })
+    }
+    pub fn begin(&mut self) -> Result<Box<dyn LocalTransaction + '_>> {
+        self.inner.begin()
+    }
+    pub fn begin_participant(&mut self, term: u32) -> Result<Participant<'_>> {
+        self.inner.begin_participant(term).map(Participant)
+    }
+    pub fn resume_participant(&mut self) -> Result<Participant<'_>> {
+        self.inner.resume_participant().map(Participant)
+    }
+    pub fn replay(
+        &mut self,
+        table: &Table,
+        key: &[u8],
+        value: Option<&[u8]>,
+        time_term: u32,
+    ) -> Result<()> {
+        if !table.belongs_to(&self.database) {
+            return Err(Error::invalid("table belongs to another engine"));
+        }
+        self.inner.replay(table, key, value, time_term)
+    }
+    pub fn abort(&mut self) -> Result<()> {
+        self.inner.abort()
+    }
+}
+pub struct Participant<'worker>(Box<dyn ParticipantBackend + 'worker>);
+impl<'worker> Deref for Participant<'worker> {
+    type Target = dyn ParticipantBackend + 'worker;
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+impl DerefMut for Participant<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.0
+    }
+}
+impl Participant<'_> {
+    pub fn retain(self) {
+        self.0.retain()
+    }
+    pub fn finish(self, committed: bool) -> Result<ParticipantReport> {
+        self.0.finish(committed)
+    }
+}

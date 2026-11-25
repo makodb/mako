@@ -8,6 +8,7 @@ use crate::{
     storage::engine,
     wire::*,
 };
+use mako_storage_api::Worker;
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{
@@ -16,7 +17,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sto_tpcc_ffi::native::Worker;
 
 pub fn tables() -> Vec<TableSpec> {
     vec![TableSpec {

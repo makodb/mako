@@ -342,7 +342,12 @@ impl State {
             None
         };
         self.registry
-            .register(key.table, warehouse, &table.tree, log_id)
+            .register(
+                key.table,
+                warehouse,
+                mako_storage_masstree::native_table(&table.tree).map_err(engine)?,
+                log_id,
+            )
             .map_err(|code| shard_error(wire::status(code)))?;
         Ok(table)
     }
@@ -380,8 +385,11 @@ impl RunningMigration {
                 "migration host requires routed store",
             ));
         }
-        let registry = Registry::new(store.database.clone(), store.owner)
-            .map_err(|code| shard_error(wire::status(code)))?;
+        let registry = Registry::new(
+            mako_storage_masstree::native_database(&store.database).map_err(engine)?,
+            store.owner,
+        )
+        .map_err(|code| shard_error(wire::status(code)))?;
         let factory = Factory::new(store.clone())?;
         let state = Arc::new(State {
             store,

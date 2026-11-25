@@ -492,6 +492,8 @@ dependencies = [
  "mako-protocol",
  "mako-protocol-core",
  "mako-sharding",
+ "mako-storage-api",
+ "mako-storage-masstree",
  "parking_lot",
  "raft-host",
  "serde",
@@ -510,6 +512,22 @@ version = "0.1.0"
 dependencies = [
  "parking_lot",
  "vstd",
+]
+
+[[package]]
+name = "mako-storage-api"
+version = "0.1.0"
+dependencies = [
+ "mako-protocol",
+]
+
+[[package]]
+name = "mako-storage-masstree"
+version = "0.1.0"
+dependencies = [
+ "mako-protocol",
+ "mako-storage-api",
+ "sto-tpcc-ffi",
 ]
 
 [[package]]

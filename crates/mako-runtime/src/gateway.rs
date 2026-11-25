@@ -8,6 +8,7 @@ use crate::{
     wire::*,
 };
 use mako_sharding::{gateway as core, types::NO_SNAPSHOT};
+use mako_storage_api as sto;
 use parking_lot::Mutex;
 use std::{
     collections::BTreeMap,
@@ -19,7 +20,6 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
-use sto_tpcc_ffi::native as sto;
 
 pub struct Config {
     pub schema: Arc<Schema>,

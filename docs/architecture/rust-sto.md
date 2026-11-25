@@ -105,6 +105,32 @@ build was within ±3% of C++ at 29 of 32 worker counts. This is historical,
 workload-bounded evidence, not performance qualification of the migrated source
 or production-default acceptance.
 
+## Distributed storage adapters
+
+The distributed runtime's client, participant service and scan path now use
+`mako-storage-api`. Its `Database` creates thread-affine workers; participant
+guards may release their Rust borrow while retaining the underlying STO frame
+between protocol messages. Lock, validation, immutable logical intent and
+installation are separate operations. This boundary contains no native storage,
+RPC or Raft dependency.
+
+`mako-storage-masstree` implements the interface with the existing Rust STO
+Masstree adapter. The conversion from its local redo framing to owned logical
+rows is inside that adapter. `Store::with_engine` accepts an explicit engine;
+the existing default constructor selects Masstree. The migration host still
+uses a checked Masstree bridge during the ongoing extraction.
+
+Shared conformance scenarios exercise an in-memory model and Masstree
+independently. They check private writes, ordered scans, absence and predicate
+validation, write skew after the global lock barrier, retained prepares, and
+tombstone replay. They are tests of the storage contract, not a proof of either
+backend. The upper gate runs only the model; native tests remain separate.
+
+The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks
+the remaining direct RocksDB adapter, independent Masstree checkpoint/log
+recovery, durable migration and build qualification. The interface extraction
+alone does not remove the current RocksDB row mirror or make these modes ready.
+
 ## 1. Introduction
 
 **[STO]** The central cost of a word-based STM is not merely copying data. It

@@ -9,12 +9,12 @@ use mako_sharding::{
     runtime::runtime,
     types::{Grant, RoutedGrant, Status},
 };
+use mako_storage_api as sto;
 use parking_lot::RwLock;
 use std::{
     collections::BTreeMap,
     sync::{atomic::AtomicU32, Arc, OnceLock},
 };
-use sto_tpcc_ffi::native as sto;
 
 pub fn engine(error: sto::Error) -> Error {
     let code = match error.kind {
@@ -95,8 +95,21 @@ pub struct Store {
 type Materializer = dyn Fn(TableKey) -> Result<Table> + Send + Sync;
 impl Store {
     pub fn new(owner: u32, migration: bool, log: Arc<dyn CommitLog>) -> Result<Arc<Self>> {
+        Self::with_engine(
+            owner,
+            migration,
+            log,
+            mako_storage_masstree::database().map_err(engine)?,
+        )
+    }
+    pub fn with_engine(
+        owner: u32,
+        migration: bool,
+        log: Arc<dyn CommitLog>,
+        database: sto::Database,
+    ) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
-            database: sto::Database::new(sto::DatabaseConfig::default()).map_err(engine)?,
+            database,
             owner,
             migration,
             epochs: Arc::new(EpochDomain::default()),
@@ -132,9 +145,7 @@ impl Store {
             ));
         }
         let table = Table {
-            tree: worker
-                .create_table(sto::TableConfig::default())
-                .map_err(engine)?,
+            tree: worker.create_table(sto::TableConfig).map_err(engine)?,
             log_id,
         };
         tables.insert(key, table.clone());

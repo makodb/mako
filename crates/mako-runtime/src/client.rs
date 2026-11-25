@@ -9,8 +9,8 @@ use mako_protocol::{
     journal::{self, Outcome, Record},
     remote::Remotes,
 };
+use mako_storage_api as sto;
 use std::{collections::BTreeMap, io::Read, sync::Arc, time::Duration};
-use sto_tpcc_ffi::native as sto;
 
 pub use crate::wire::Target;
 

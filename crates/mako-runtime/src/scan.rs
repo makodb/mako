@@ -9,7 +9,7 @@ use mako_sharding::{
     full_scan_core::{self as core, BoundRequest, FullScan, Page, ScanIdentity},
     types::{Grant, TxnId, NO_SNAPSHOT},
 };
-use sto_tpcc_ffi::native as sto;
+use mako_storage_api as sto;
 
 /// Normalize bounds only. Continuation cursors always retain the exact last
 /// binary key and exclude it; appending a byte to a cursor would skip keys.

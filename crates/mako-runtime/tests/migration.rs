@@ -307,7 +307,11 @@ fn failed_cold_start_leaves_only_owned_weak_callback_anchors() {
             .code,
         ErrorCode::Closed
     );
-    assert!(sto_tpcc_ffi::native::migration::Registry::new(store.database.clone(), 0).is_ok());
+    assert!(sto_tpcc_ffi::native::migration::Registry::new(
+        mako_storage_masstree::native_database(&store.database).unwrap(),
+        0
+    )
+    .is_ok());
 }
 
 #[test]
