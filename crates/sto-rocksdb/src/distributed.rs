@@ -31,6 +31,20 @@ pub struct Prefix {
     pub fingerprint: [u8; 32],
 }
 pub type Metadata = Vec<(Vec<u8>, Vec<u8>)>;
+/// Consecutive, already decided log effects. One native batch publishes every
+/// effect and its replay identity, ending at the final position. The caller
+/// excludes application readers while publication is in progress.
+pub struct Batch<'a> {
+    pub prefix: &'a Prefix,
+    pub rows: &'a [Row],
+    pub metadata: &'a Metadata,
+}
+struct Input<'a> {
+    prefix: Option<&'a Prefix>,
+    rows: &'a [Row],
+    metadata: &'a Metadata,
+}
+
 pub(crate) fn time_key(table: u64, key: &[u8]) -> Vec<u8> {
     let mut result = vec![0, 9];
     result.extend_from_slice(&table.to_be_bytes());
@@ -132,105 +146,188 @@ impl Database {
     ) -> Result<()> {
         let _gate = mutex(&self.apply_gate);
         self.ensure_distributed()?;
-        let result = self.apply_distributed_locked(prefix, rows, metadata);
+        let result = self.apply_distributed_locked(&[Input {
+            prefix,
+            rows,
+            metadata,
+        }]);
         if result.is_err() {
             self.fence();
         }
         result
     }
-    fn apply_distributed_locked(
-        &self,
-        prefix: Option<&Prefix>,
-        rows: &[Row],
-        metadata: &Metadata,
-    ) -> Result<()> {
-        if rows.len() > MAX_OPERATIONS {
+    pub fn apply_distributed_batch(&self, batches: &[Batch<'_>]) -> Result<()> {
+        let _gate = mutex(&self.apply_gate);
+        self.ensure_distributed()?;
+        let inputs = batches
+            .iter()
+            .map(|b| Input {
+                prefix: Some(b.prefix),
+                rows: b.rows,
+                metadata: b.metadata,
+            })
+            .collect::<Vec<_>>();
+        let result = self.apply_distributed_locked(&inputs);
+        if result.is_err() {
+            self.fence();
+        }
+        result
+    }
+    fn apply_distributed_locked(&self, inputs: &[Input<'_>]) -> Result<()> {
+        if inputs.is_empty() || inputs.len() > 4096 {
+            return Err(Error::InvalidCommand(
+                "empty or oversized application batch",
+            ));
+        }
+        let total_rows = inputs
+            .iter()
+            .try_fold(0usize, |n, input| n.checked_add(input.rows.len()))
+            .ok_or(Error::TooLarge)?;
+        if total_rows > MAX_OPERATIONS {
             return Err(Error::TooLarge);
         }
         let rocks = self.rocks();
         let mut batch = Vec::<(Vec<u8>, Option<Vec<u8>>)>::new();
-        if let Some(prefix) = prefix {
-            let old = read_position(&rocks)?;
+        let old = read_position(&rocks)?;
+        let mut previous: Option<Position> = None;
+        let mut duplicate = None;
+        for input in inputs {
+            let Some(prefix) = input.prefix else {
+                if inputs.len() != 1 {
+                    return Err(Error::InvalidCommand(
+                        "bootstrap mixed with positioned effects",
+                    ));
+                }
+                continue;
+            };
             let position = prefix.position;
             if position.index == 0 || position.term == 0 {
                 return Err(Error::InvalidCommand("zero log position"));
             }
+            if let Some(previous) = previous {
+                if previous.index.checked_add(1) != Some(position.index)
+                    || position.term < previous.term
+                {
+                    return Err(Error::Corruption("noncontiguous application batch".into()));
+                }
+            }
+            let replay = position.index <= old.index;
+            if duplicate.is_some_and(|prior| prior != replay) {
+                return Err(Error::Corruption(
+                    "partially overlapping application batch".into(),
+                ));
+            }
+            duplicate = Some(replay);
             let mut receipt = position.term.to_be_bytes().to_vec();
             receipt.extend_from_slice(&prefix.fingerprint);
-            if position.index <= old.index {
+            if replay {
                 if rocks.get(&entry_key(position.index))?.as_deref() != Some(receipt.as_slice()) {
                     return Err(Error::Corruption("conflicting external log prefix".into()));
                 }
-                return Ok(());
+            } else {
+                let prior = previous.unwrap_or(old);
+                let expected = prior.index.checked_add(1).ok_or(Error::VersionExhausted)?;
+                if position.index != expected {
+                    return Err(Error::AppliedGap {
+                        expected,
+                        received: position.index,
+                    });
+                }
+                if position.term < prior.term {
+                    return Err(Error::Corruption("regressing external log term".into()));
+                }
+                batch.push((entry_key(position.index), Some(receipt)));
             }
-            let expected = old.index.checked_add(1).ok_or(Error::VersionExhausted)?;
-            if position.index != expected {
-                return Err(Error::AppliedGap {
-                    expected,
-                    received: position.index,
-                });
-            }
-            if position.term < old.term {
-                return Err(Error::Corruption("regressing external log term".into()));
-            }
-            batch.push((entry_key(position.index), Some(receipt)));
+            previous = Some(position);
+        }
+        if duplicate == Some(true) {
+            return Ok(());
+        }
+        if let Some(position) = previous {
             batch.push((APPLIED.to_vec(), Some(position_bytes(position))));
         }
-        let mut seen = BTreeSet::new();
+        // Rows may recur in successive commands. Validate against the preceding
+        // command's result, not a stale read of the pre-batch database.
+        let mut shadow = BTreeMap::<(u64, Vec<u8>), (Option<Vec<u8>>, u32, u64)>::new();
         let mut counts = BTreeMap::new();
         let mut published = Vec::new();
         let mut clock = decode_time(rocks.get(CLOCK)?)?;
         let mut bytes = 0usize;
-        for row in rows {
-            bytes = bytes
-                .saturating_add(row.key.len())
-                .saturating_add(row.value.as_ref().map_or(0, Vec::len));
-            if row.key.len() > MAX_KEY_BYTES || bytes > MAX_COMMAND_BYTES {
-                return Err(Error::TooLarge);
-            }
-            if !seen.insert((row.table, &row.key)) {
-                return Err(Error::InvalidCommand("duplicate external row"));
-            }
-            if rocks.get(&table_key(row.table))?.is_none() {
-                return Err(Error::UnknownTable(row.table));
-            }
-            let old_time = decode_time(rocks.get(&time_key(row.table, &row.key))?)?;
-            let key = data_key(row.table, &row.key);
-            let old_value = rocks.get(&key)?;
-            let old_version = optional_u64(
-                rocks.get(&version_key(row.table, &row.key))?,
-                "key generation",
-            )?;
-            if old_version != 0 && row.time_term <= old_time {
-                if row.time_term == old_time && row.value != old_value {
-                    return Err(Error::Corruption(
-                        "equal logical time with different payload".into(),
-                    ));
+        for input in inputs {
+            let mut seen = BTreeSet::new();
+            for row in input.rows {
+                bytes = bytes
+                    .saturating_add(row.key.len())
+                    .saturating_add(row.value.as_ref().map_or(0, Vec::len));
+                if row.key.len() > MAX_KEY_BYTES || bytes > MAX_COMMAND_BYTES {
+                    return Err(Error::TooLarge);
                 }
-                continue;
+                if !seen.insert((row.table, &row.key)) {
+                    return Err(Error::InvalidCommand("duplicate external row"));
+                }
+                if rocks.get(&table_key(row.table))?.is_none() {
+                    return Err(Error::UnknownTable(row.table));
+                }
+                let key = data_key(row.table, &row.key);
+                let identity = (row.table, row.key.clone());
+                let (old_value, old_time, old_version) = match shadow.get(&identity) {
+                    Some(prior) => prior.clone(),
+                    None => (
+                        rocks.get(&key)?,
+                        decode_time(rocks.get(&time_key(row.table, &row.key))?)?,
+                        optional_u64(
+                            rocks.get(&version_key(row.table, &row.key))?,
+                            "key generation",
+                        )?,
+                    ),
+                };
+                if old_version != 0 && row.time_term <= old_time {
+                    if row.time_term == old_time && row.value != old_value {
+                        return Err(Error::Corruption(
+                            "equal logical time with different payload".into(),
+                        ));
+                    }
+                    continue;
+                }
+                let generation = old_version.checked_add(1).ok_or(Error::VersionExhausted)?;
+                let count = match counts.entry(row.table) {
+                    std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(e) => e.insert(required_u64(
+                        rocks.get(&count_key(row.table))?,
+                        "table count",
+                    )?),
+                };
+                *count = count
+                    .checked_add_signed(
+                        i64::from(row.value.is_some()) - i64::from(old_value.is_some()),
+                    )
+                    .ok_or_else(|| Error::Corruption("table count overflow".into()))?;
+                batch.push((key, row.value.clone()));
+                batch.push((
+                    time_key(row.table, &row.key),
+                    Some(row.time_term.to_be_bytes().to_vec()),
+                ));
+                batch.push((
+                    version_key(row.table, &row.key),
+                    Some(generation.to_be_bytes().to_vec()),
+                ));
+                shadow.insert(identity, (row.value.clone(), row.time_term, generation));
+                published.push((Key::Row(row.table, row.key.clone()), generation));
+                clock = clock.max(row.time_term / 10);
             }
-            let generation = old_version.checked_add(1).ok_or(Error::VersionExhausted)?;
-            let count = match counts.entry(row.table) {
-                std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
-                std::collections::btree_map::Entry::Vacant(e) => e.insert(required_u64(
-                    rocks.get(&count_key(row.table))?,
-                    "table count",
-                )?),
-            };
-            *count = count
-                .checked_add_signed(i64::from(row.value.is_some()) - i64::from(old_value.is_some()))
-                .ok_or_else(|| Error::Corruption("table count overflow".into()))?;
-            batch.push((key, row.value.clone()));
-            batch.push((
-                time_key(row.table, &row.key),
-                Some(row.time_term.to_be_bytes().to_vec()),
-            ));
-            batch.push((
-                version_key(row.table, &row.key),
-                Some(generation.to_be_bytes().to_vec()),
-            ));
-            published.push((Key::Row(row.table, row.key.clone()), generation));
-            clock = clock.max(row.time_term / 10);
+            let mut keys = BTreeSet::new();
+            for (key, value) in input.metadata {
+                bytes = bytes.saturating_add(key.len()).saturating_add(value.len());
+                if bytes > MAX_COMMAND_BYTES {
+                    return Err(Error::TooLarge);
+                }
+                if !keys.insert(key) {
+                    return Err(Error::InvalidCommand("duplicate protocol metadata"));
+                }
+                let mut physical = METADATA.to_vec();
+                physical.extend_from_slice(key);
+                batch.push((physical, Some(value.clone())));
+            }
         }
         let data_generation = if published.is_empty() {
             None
@@ -244,15 +341,6 @@ impl Database {
         };
         for (table, count) in counts {
             batch.push((count_key(table), Some(count.to_be_bytes().to_vec())));
-        }
-        let mut keys = BTreeSet::new();
-        for (key, value) in metadata {
-            if !keys.insert(key) {
-                return Err(Error::InvalidCommand("duplicate protocol metadata"));
-            }
-            let mut physical = METADATA.to_vec();
-            physical.extend_from_slice(key);
-            batch.push((physical, Some(value.clone())));
         }
         let ops: Vec<_> = batch
             .iter()

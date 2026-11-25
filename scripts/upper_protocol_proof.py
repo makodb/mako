@@ -90,6 +90,10 @@ def audit():
 
 # name, source, unique executable mutation, replacement, module, function.
 CONTROLS = [
+    ('materialization skips a log position', 'recovery.rs', '    materialized < u64::MAX && first == materialized + 1\n        && first <= last && last <= applied\n}', '    materialized < u64::MAX\n        && first <= last && last <= applied\n}', 'recovery', 'materialization_batch'),
+    ('materialization publishes unapplied effects', 'recovery.rs', '    materialized < u64::MAX && first == materialized + 1\n        && first <= last && last <= applied\n}', '    materialized < u64::MAX && first == materialized + 1\n        && first <= last\n}', 'recovery', 'materialization_batch'),
+    ('checkpoint accepts a lagging RocksDB image', 'recovery.rs', '    validated && materialized == applied\n}', '    validated && materialized <= applied\n}', 'recovery', 'materialized_checkpoint'),
+    ('recovery accepts materialization beyond commitment', 'recovery.rs', '    if materialized <= committed { Some(materialized) } else { None }\n}', '    Some(materialized)\n}', 'recovery', 'materialized_replay'),
     ('checkpoint ignores row cut', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    paused && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', 'recovery', 'checkpoint_ready'),
     ('checkpoint forgets prepared obligations', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    paused && row_cut == applied && metadata_cut == applied\n}', 'recovery', 'checkpoint_ready'),
     ('checkpoint runs across publication', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', 'recovery', 'checkpoint_ready'),

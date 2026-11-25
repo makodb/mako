@@ -1,0 +1,763 @@
+   Compiling mrx-rocks v0.1.0 (/var/tmp/mako-shard-rust/crates/mrx-rocks)
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sto-core` (lib) generated 1 warning
+   Compiling mako-protocol-core v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol-core)
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:6:22
+  |
+6 | use crate::storage::{self,Image};
+  |                      ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `DurableKv`, `Namespace`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:7:25
+  |
+7 | use crate::durable_kv::{self,DurableKv,Namespace};
+  |                         ^^^^ ^^^^^^^^^ ^^^^^^^^^
+
+warning: unused imports: `Operation` and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^ ^^^^^^^^^
+
+warning: unused imports: `ActorHistory`, `NativeStep`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:9:28
+  |
+9 | use super::replay_proofs::{self,ActorHistory,NativeStep};
+  |                            ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `crate::leases`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:7:5
+  |
+7 | use crate::leases;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^
+
+warning: unused variable: `n`
+   --> /var/tmp/mako-shard-rust/src/cluster/directory.rs:153:22
+    |
+153 |         let (mut out,n) = self.copy_prefix(lo);
+    |                      ^ help: if this is intentional, prefix it with an underscore: `_n`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `hi`
+   --> /var/tmp/mako-shard-rust/src/cluster/participant_metadata.rs:558:21
+    |
+558 |         if let Some(hi) = &range.hi {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_hi`
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:256:34
+    |
+256 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+318 |             after = Some(row);
+    |             ----- `after` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:345:34
+    |
+345 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+367 |         after = Some(row);
+    |         ----- `after` is overwritten here before the previous value is read
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:22
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:43
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                                           ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:25
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:46
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `cleanup`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:67
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cleanup`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:277:13
+    |
+277 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:329:13
+    |
+329 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `value`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:251:17
+    |
+251 |             let value = match read_blob(&mut reader) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:951:21
+    |
+951 |                 let status = self.request.bounds.advance(last);
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:955:13
+    |
+955 |         let status = self.completion.complete(page.count,page.eof,page.stopped);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1016:13
+     |
+1016 |         let a = bytes.write_u32(PAGE_TAG);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1017:13
+     |
+1017 |         let b = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1018:13
+     |
+1018 |         let c = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1019:13
+     |
+1019 |         let d = bytes.write_u64(request.identity.snapshot_version);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1058:13
+     |
+1058 |         let a = self.bytes.write_bytes(key);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1059:13
+     |
+1059 |         let b = self.bytes.write_bytes(value);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `payload`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_kv.rs:413:17
+    |
+413 |             let payload = match decode_record(&bytes) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `node_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:136:9
+    |
+136 |     let node_count = nodes.len();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_count`
+
+warning: unused variable: `table_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:137:9
+    |
+137 |     let table_count = tables.len();
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_table_count`
+
+warning: unused variable: `response`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:174:9
+    |
+174 |     let response = match apply(actor,op) { Ok(r) => r, Err(e) => return Err(e) };
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:222:9
+    |
+222 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:256:9
+    |
+256 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: variable `status` is assigned to, but never used
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1062:13
+     |
+1062 |         let mut status=Status::Ok;
+     |             ^^^^^^^^^^
+     |
+     = note: consider using `_status` instead
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1073:17
+     |
+1073 |                 status=self.actor.deliver(&plan,command).status;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1075:48
+     |
+1075 |             Operation::Begin{id,incarnation}=>{status=self.begin_origin(id,incarnation);}
+     |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1076:38
+     |
+1076 |             Operation::Resolve(id)=>{status=self.actor.resolve(id);}
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1077:37
+     |
+1077 |             Operation::Finish(id)=>{status=self.actor.finish(id);}
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1079:17
+     |
+1079 | / ...   status=if point{
+1080 | | ...       if range.hi.is_some(){return false;}self.actor.acquire(id,range.table,&range.lo,grant)
+1081 | | ...   }else{self.actor.acquire_range(id,range.table,&range.lo,match &range.hi{Some(h)=>Some(h.as_slice()),None=>None},grant)};
+     | |_____________________________________________________________________________________________________________________________^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1083:55
+     |
+1083 |             Operation::Release{id,table,coordinate}=>{status=self.actor.release(id,table,&coordinate);}
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1114:63
+     |
+1114 |                 if result.certificate.is_none(){return false;}status=result.status;
+     |                                                               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: method `background_source` is never used
+   --> /var/tmp/mako-shard-rust/src/cluster/participant.rs:946:19
+    |
+ 83 | impl Participant {
+    | ---------------- method in this implementation
+...
+946 |     pub(crate) fn background_source(&self, plan:&MigrationPlan) -> (yes:bool)
+    |                   ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `query`, `expected`, and `taken` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:800:5
+    |
+793 | pub struct PageCursor<'a> {
+    |            ---------- fields in this struct
+...
+800 |     query: Ghost<Request>,
+    |     ^^^^^
+801 |     snapshot_version: u64,
+802 |     expected: Ghost<Seq<WireRow>>,
+    |     ^^^^^^^^
+803 |     taken: Ghost<Seq<WireRow>>,
+    |     ^^^^^
+
+warning: field `rows` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:979:5
+    |
+971 | pub struct Page {
+    |            ---- field in this struct
+...
+979 |     rows: Ghost<Seq<WireRow>>,
+    |     ^^^^
+
+warning: fields `window` and `initial` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:161:5
+    |
+158 | pub struct DurableRows<'a,E:DurableEngine>{
+    |            ----------- fields in this struct
+...
+161 |     window:Ghost<KeyRange>,
+    |     ^^^^^^
+162 |     initial:Ghost<E>,
+    |     ^^^^^^^
+
+warning: fields `index`, `records`, and `fact` are never read
+  --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:84:5
+   |
+80 | pub(crate) struct ReplayCompletion<'a> {
+   |                   ---------------- fields in this struct
+...
+84 |     index:u64,
+   |     ^^^^^
+85 |     records:Ghost<Seq<Seq<u8>>>,
+   |     ^^^^^^^
+86 |     fact:Ghost<CompletionFact>,
+   |     ^^^^
+
+warning: `mako-sharding` (lib) generated 45 warnings (run `cargo fix --lib -p mako-sharding` to apply 30 suggestions)
+   Compiling sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+   Compiling mako-protocol v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol)
+   Compiling mako-storage-api v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-api)
+   Compiling mako-storage-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-rocksdb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.38s
+     Running unittests src/lib.rs (build_docker/rocks-only-target/debug/deps/mako_storage_rocksdb-7dccfae3320d9689)
+
+running 1 test
+test tests::shared_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (build_docker/rocks-only-target/debug/deps/sto_rocksdb-6d045a3ad9d029b8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (build_docker/rocks-only-target/debug/deps/behavior-08b216712e5eec83)
+
+running 13 tests
+test delayed_owner_completion_cannot_regress_newer_replica_publication ... ok
+test unknown_is_not_rollback_and_only_definite_discard_releases_reservation ... ok
+test independent_prepared_writers_pipeline_but_pending_writer_blocks_scan ... ok
+test real_rows_intents_rollback_and_multiple_tables ... ok
+test scans_merge_sealed_intents_forward_reverse_and_detect_phantoms ... ok
+test snapshot_repeatable_reads_and_absence_aba_conflict ... ok
+test durable_tombstone_generation_exhaustion_is_checked_not_wrapped ... ok
+test decided_replay_dedup_outcomes_and_applied_noops_survive_reopen ... ok
+test install_recovers_staging_and_durable_selector_cutpoints ... ok
+test ambiguous_real_atomic_batch_fences_then_recovers_without_double_effects ... ok
+test checkpoint_staging_is_not_publication_and_old_snapshots_are_fenced ... ok
+test durability_identity_survives_reopen_and_checkpoint_install ... ok
+test native_checkpoint_larger_than_sixty_four_mebibytes_installs ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.45s
+
+     Running tests/codec.rs (build_docker/rocks-only-target/debug/deps/codec-b05c7fca9f4952c3)
+
+running 3 tests
+test noncanonical_operations_and_inconsistent_counts_cannot_be_decided ... ok
+test logical_codec_preserves_full_width_identity_and_empty_binary_keys ... ok
+test encoded_limits_are_checked_without_truncating_the_request ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/distributed.rs (build_docker/rocks-only-target/debug/deps/distributed-3c1d8f4094f8bc25)
+
+running 5 tests
+test private_import_publishes_exact_prefix_and_refuses_reuse_or_a_gap ... ok
+test ambiguous_external_batch_keeps_rows_and_metadata_together ... ok
+test materialization_rejects_gaps_overlap_and_hidden_intermediate_conflicts ... ok
+test multiple_log_positions_materialize_as_one_atomic_prefix ... ok
+test external_batch_recovery_checkpoint_and_profile ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+   Doc-tests mako_storage_rocksdb
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sto_rocksdb
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking serde_core v1.0.229
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sto-core` (lib) generated 1 warning
+    Checking mako-protocol-core v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol-core)
+    Checking mako-sharding v0.1.0 (/var/tmp/mako-shard-rust/src/cluster)
+    Checking sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+    Checking serde v1.0.229
+    Checking bincode v1.3.3
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:6:22
+  |
+6 | use crate::storage::{self,Image};
+  |                      ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `DurableKv`, `Namespace`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:7:25
+  |
+7 | use crate::durable_kv::{self,DurableKv,Namespace};
+  |                         ^^^^ ^^^^^^^^^ ^^^^^^^^^
+
+warning: unused imports: `Operation` and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^ ^^^^^^^^^
+
+warning: unused imports: `ActorHistory`, `NativeStep`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:9:28
+  |
+9 | use super::replay_proofs::{self,ActorHistory,NativeStep};
+  |                            ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `crate::leases`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:7:5
+  |
+7 | use crate::leases;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^
+
+warning: unused variable: `n`
+   --> /var/tmp/mako-shard-rust/src/cluster/directory.rs:153:22
+    |
+153 |         let (mut out,n) = self.copy_prefix(lo);
+    |                      ^ help: if this is intentional, prefix it with an underscore: `_n`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `hi`
+   --> /var/tmp/mako-shard-rust/src/cluster/participant_metadata.rs:558:21
+    |
+558 |         if let Some(hi) = &range.hi {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_hi`
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:256:34
+    |
+256 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+318 |             after = Some(row);
+    |             ----- `after` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:345:34
+    |
+345 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+367 |         after = Some(row);
+    |         ----- `after` is overwritten here before the previous value is read
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:22
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:43
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                                           ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:25
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:46
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `cleanup`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:67
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cleanup`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:277:13
+    |
+277 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:329:13
+    |
+329 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `value`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:251:17
+    |
+251 |             let value = match read_blob(&mut reader) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:951:21
+    |
+951 |                 let status = self.request.bounds.advance(last);
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:955:13
+    |
+955 |         let status = self.completion.complete(page.count,page.eof,page.stopped);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1016:13
+     |
+1016 |         let a = bytes.write_u32(PAGE_TAG);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1017:13
+     |
+1017 |         let b = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1018:13
+     |
+1018 |         let c = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1019:13
+     |
+1019 |         let d = bytes.write_u64(request.identity.snapshot_version);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1058:13
+     |
+1058 |         let a = self.bytes.write_bytes(key);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1059:13
+     |
+1059 |         let b = self.bytes.write_bytes(value);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `payload`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_kv.rs:413:17
+    |
+413 |             let payload = match decode_record(&bytes) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `node_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:136:9
+    |
+136 |     let node_count = nodes.len();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_count`
+
+warning: unused variable: `table_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:137:9
+    |
+137 |     let table_count = tables.len();
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_table_count`
+
+warning: unused variable: `response`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:174:9
+    |
+174 |     let response = match apply(actor,op) { Ok(r) => r, Err(e) => return Err(e) };
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:222:9
+    |
+222 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:256:9
+    |
+256 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: variable `status` is assigned to, but never used
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1062:13
+     |
+1062 |         let mut status=Status::Ok;
+     |             ^^^^^^^^^^
+     |
+     = note: consider using `_status` instead
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1073:17
+     |
+1073 |                 status=self.actor.deliver(&plan,command).status;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1075:48
+     |
+1075 |             Operation::Begin{id,incarnation}=>{status=self.begin_origin(id,incarnation);}
+     |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1076:38
+     |
+1076 |             Operation::Resolve(id)=>{status=self.actor.resolve(id);}
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1077:37
+     |
+1077 |             Operation::Finish(id)=>{status=self.actor.finish(id);}
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1079:17
+     |
+1079 | / ...   status=if point{
+1080 | | ...       if range.hi.is_some(){return false;}self.actor.acquire(id,range.table,&range.lo,grant)
+1081 | | ...   }else{self.actor.acquire_range(id,range.table,&range.lo,match &range.hi{Some(h)=>Some(h.as_slice()),None=>None},grant)};
+     | |_____________________________________________________________________________________________________________________________^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1083:55
+     |
+1083 |             Operation::Release{id,table,coordinate}=>{status=self.actor.release(id,table,&coordinate);}
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1114:63
+     |
+1114 |                 if result.certificate.is_none(){return false;}status=result.status;
+     |                                                               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: method `background_source` is never used
+   --> /var/tmp/mako-shard-rust/src/cluster/participant.rs:946:19
+    |
+ 83 | impl Participant {
+    | ---------------- method in this implementation
+...
+946 |     pub(crate) fn background_source(&self, plan:&MigrationPlan) -> (yes:bool)
+    |                   ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `query`, `expected`, and `taken` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:800:5
+    |
+793 | pub struct PageCursor<'a> {
+    |            ---------- fields in this struct
+...
+800 |     query: Ghost<Request>,
+    |     ^^^^^
+801 |     snapshot_version: u64,
+802 |     expected: Ghost<Seq<WireRow>>,
+    |     ^^^^^^^^
+803 |     taken: Ghost<Seq<WireRow>>,
+    |     ^^^^^
+
+warning: field `rows` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:979:5
+    |
+971 | pub struct Page {
+    |            ---- field in this struct
+...
+979 |     rows: Ghost<Seq<WireRow>>,
+    |     ^^^^
+
+warning: fields `window` and `initial` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:161:5
+    |
+158 | pub struct DurableRows<'a,E:DurableEngine>{
+    |            ----------- fields in this struct
+...
+161 |     window:Ghost<KeyRange>,
+    |     ^^^^^^
+162 |     initial:Ghost<E>,
+    |     ^^^^^^^
+
+warning: fields `index`, `records`, and `fact` are never read
+  --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:84:5
+   |
+80 | pub(crate) struct ReplayCompletion<'a> {
+   |                   ---------------- fields in this struct
+...
+84 |     index:u64,
+   |     ^^^^^
+85 |     records:Ghost<Seq<Seq<u8>>>,
+   |     ^^^^^^^
+86 |     fact:Ghost<CompletionFact>,
+   |     ^^^^
+
+warning: `mako-sharding` (lib) generated 45 warnings (run `cargo clippy --fix --lib -p mako-sharding -- --no-deps -D warnings` to apply 30 suggestions)
+    Checking mako-protocol v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol)
+    Checking mako-storage-api v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-api)
+    Checking mako-storage-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-rocksdb)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.45s

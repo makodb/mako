@@ -31,4 +31,35 @@ pub fn replay_start(previous_ram: u64, checkpoint: u64) -> (start: u64)
     checkpoint
 }
 
+/// An accelerator can lead the durable image only while the committed log
+/// covers the gap. These facts refer to externally observable application cuts.
+pub fn materialization_order(materialized: u64, applied: u64, committed: u64) -> (valid: bool)
+    ensures valid <==> materialized <= applied && applied <= committed,
+{
+    materialized <= applied && applied <= committed
+}
+
+/// Atomic materialization must begin at the next durable position and end no
+/// later than the applied committed image. The adapter checks every intervening
+/// position and its exact term/fingerprint before publishing the native batch.
+pub fn materialization_batch(materialized: u64, first: u64, last: u64, applied: u64) -> (valid: bool)
+    ensures valid <==> materialized < u64::MAX && first == materialized + 1
+        && first <= last && last <= applied,
+{
+    materialized < u64::MAX && first == materialized + 1
+        && first <= last && last <= applied
+}
+
+pub fn materialized_checkpoint(applied: u64, materialized: u64, validated: bool) -> (ready: bool)
+    ensures ready <==> validated && materialized == applied,
+{
+    validated && materialized == applied
+}
+
+pub fn materialized_replay(materialized: u64, committed: u64) -> (start: Option<u64>)
+    ensures start == if materialized <= committed { Some(materialized) } else { None },
+{
+    if materialized <= committed { Some(materialized) } else { None }
+}
+
 }

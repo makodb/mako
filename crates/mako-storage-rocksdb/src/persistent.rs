@@ -28,6 +28,70 @@ impl api::PersistentApplication for Application {
             .map(|tables| tables.into_iter().map(|t| t.id).collect())
             .map_err(error)
     }
+    fn ensure_tables(&self, ids: &[u16]) -> api::Result<()> {
+        for id in ids {
+            self.0.distributed_table(u64::from(*id)).map_err(error)?;
+        }
+        Ok(())
+    }
+    fn page(
+        &self,
+        table: u16,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> api::Result<api::CheckpointPage> {
+        let (rows, end) = self
+            .0
+            .distributed_page(table.into(), after, limit)
+            .map_err(error)?;
+        Ok(api::CheckpointPage {
+            rows: rows
+                .into_iter()
+                .map(|r| api::CheckpointRow {
+                    key: r.key,
+                    value: r.value,
+                    time_term: r.time_term,
+                })
+                .collect(),
+            end,
+        })
+    }
+    fn bootstrap(&self, rows: &[api::RedoRow]) -> api::Result<()> {
+        if self.position()?.index != 0 {
+            return Err(api::Error::invalid("bootstrap after log application"));
+        }
+        self.ensure_tables(&rows.iter().map(|r| r.table).collect::<Vec<_>>())?;
+        self.0
+            .apply_distributed(
+                None,
+                &rows.iter().map(native_row).collect::<Vec<_>>(),
+                &Vec::new(),
+            )
+            .map_err(error)
+    }
+    fn apply_batches(&self, batches: &[api::ApplicationBatch]) -> api::Result<()> {
+        let prefixes = batches
+            .iter()
+            .map(|b| sto::distributed::Prefix {
+                position: position(b.position),
+                fingerprint: b.fingerprint,
+            })
+            .collect::<Vec<_>>();
+        let rows = batches
+            .iter()
+            .map(|b| b.rows.iter().map(native_row).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let effects = batches
+            .iter()
+            .enumerate()
+            .map(|(i, b)| sto::distributed::Batch {
+                prefix: &prefixes[i],
+                rows: &rows[i],
+                metadata: &b.metadata,
+            })
+            .collect::<Vec<_>>();
+        self.0.apply_distributed_batch(&effects).map_err(error)
+    }
     fn metadata(&self) -> api::Result<api::Metadata> {
         self.0.distributed_metadata().map_err(error)
     }
@@ -74,5 +138,14 @@ impl api::PersistentApplication for Application {
     }
     fn publish_checkpoint(&self, path: &Path, p: api::LogPosition) -> api::Result<()> {
         self.0.publish_checkpoint(path, position(p)).map_err(error)
+    }
+}
+
+fn native_row(row: &api::RedoRow) -> sto::distributed::Row {
+    sto::distributed::Row {
+        table: row.table.into(),
+        key: row.key.clone(),
+        value: row.value.clone(),
+        time_term: row.time_term,
     }
 }

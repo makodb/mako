@@ -117,14 +117,41 @@ pub trait Backend: Any + Send + Sync {
         None
     }
 }
-/// Optional capability of an engine that persists data directly. A single
-/// application batch must recover rows and protocol metadata at the same prefix.
+/// Common durable application image. It may back a direct transaction adapter
+/// or a volatile accelerator. Application batches recover rows and protocol
+/// metadata at the same exact prefix.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LogPosition {
     pub index: u64,
     pub term: u64,
 }
 pub type Metadata = Vec<(Vec<u8>, Vec<u8>)>;
+/// One already decided application effect. Several consecutive effects may be
+/// materialized atomically. Prepare changes protocol metadata only.
+#[derive(Clone, Debug)]
+pub struct ApplicationBatch {
+    pub position: LogPosition,
+    pub fingerprint: [u8; 32],
+    pub rows: Vec<RedoRow>,
+    pub metadata: Metadata,
+}
+impl ApplicationBatch {
+    pub fn bytes(&self) -> usize {
+        self.rows
+            .iter()
+            .fold(64usize, |n, row| {
+                n.saturating_add(row.key.len())
+                    .saturating_add(row.value.as_ref().map_or(0, Vec::len))
+                    .saturating_add(16)
+            })
+            .saturating_add(self.metadata.iter().fold(0usize, |n, (key, value)| {
+                n.saturating_add(key.len())
+                    .saturating_add(value.len())
+                    .saturating_add(16)
+            }))
+    }
+}
+
 pub trait PersistentApplication: Send + Sync {
     fn durable(&self) -> bool;
     fn bind_identity(&self, identity: &[u8]) -> Result<()>;
@@ -132,6 +159,16 @@ pub trait PersistentApplication: Send + Sync {
     fn metadata(&self) -> Result<Metadata>;
     /// Stable physical IDs in the currently published durable generation.
     fn table_ids(&self) -> Result<Vec<u64>>;
+    fn ensure_tables(&self, ids: &[u16]) -> Result<()>;
+    /// Caller holds publication stable across all pages. Tombstones are included.
+    fn page(&self, table: u16, after: Option<&[u8]>, limit: usize) -> Result<CheckpointPage>;
+    /// Initial image only, before any authoritative log position is applied.
+    fn bootstrap(&self, rows: &[RedoRow]) -> Result<()>;
+    /// Atomic contiguous-prefix materialization. After a successful batch, every
+    /// row, metadata item, replay identity and the final position recover together.
+    /// An ambiguous failure must fence until recovery; it permits no log trimming.
+    fn apply_batches(&self, batches: &[ApplicationBatch]) -> Result<()>;
+
     fn apply(
         &self,
         position: LogPosition,

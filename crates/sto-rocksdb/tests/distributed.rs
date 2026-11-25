@@ -170,3 +170,136 @@ fn private_import_publishes_exact_prefix_and_refuses_reuse_or_a_gap() {
         "invalid prefix was never published"
     );
 }
+
+fn prefix(index: u64) -> Prefix {
+    Prefix {
+        position: Position {
+            index,
+            term: index.div_ceil(2),
+        },
+        fingerprint: [index as u8; 32],
+    }
+}
+#[cfg(feature = "test-hooks")]
+#[test]
+fn multiple_log_positions_materialize_as_one_atomic_prefix() {
+    use sto_rocksdb::distributed::Batch;
+    for (fault, applied) in [
+        (Some(sto_rocksdb::ApplyFault::BeforeBatch), false),
+        (Some(sto_rocksdb::ApplyFault::AfterBatch), true),
+        (None, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open_distributed(dir.path(), 7, true).unwrap();
+        db.distributed_table(1).unwrap();
+        let prefixes = [prefix(1), prefix(2), prefix(3)];
+        let rows = [
+            vec![row(Some(b"first"), 20)],
+            vec![row(None, 30)],
+            vec![row(Some(b"last"), 40)],
+        ];
+        let metadata = [
+            vec![(b"state".to_vec(), b"begin".to_vec())],
+            vec![(b"state".to_vec(), b"prepared".to_vec())],
+            vec![(b"state".to_vec(), b"complete".to_vec())],
+        ];
+        let batches = (0..3)
+            .map(|i| Batch {
+                prefix: &prefixes[i],
+                rows: &rows[i],
+                metadata: &metadata[i],
+            })
+            .collect::<Vec<_>>();
+        if let Some(fault) = fault {
+            db.inject_apply_fault(fault);
+        }
+        assert_eq!(
+            db.apply_distributed_batch(&batches).is_ok(),
+            fault.is_none()
+        );
+        drop(db);
+        let db = Database::open_distributed(dir.path(), 7, true).unwrap();
+        assert_eq!(db.applied().unwrap().index, if applied { 3 } else { 0 });
+        assert_eq!(db.count(1).unwrap(), u64::from(applied));
+        assert_eq!(
+            db.entry_history().unwrap().len(),
+            if applied { 3 } else { 0 }
+        );
+        assert_eq!(
+            db.distributed_metadata().unwrap(),
+            if applied {
+                metadata[2].clone()
+            } else {
+                Vec::new()
+            }
+        );
+        db.apply_distributed_batch(&batches).unwrap();
+        assert_eq!(
+            db.distributed_page(1, None, 16).unwrap().0,
+            vec![row(Some(b"last"), 40)]
+        );
+        assert_eq!(db.count(1).unwrap(), 1);
+        db.apply_distributed_batch(&batches).unwrap();
+        let changed = Prefix {
+            position: prefixes[1].position,
+            fingerprint: [99; 32],
+        };
+        let altered = [
+            Batch {
+                prefix: &prefixes[0],
+                rows: &rows[0],
+                metadata: &metadata[0],
+            },
+            Batch {
+                prefix: &changed,
+                rows: &rows[1],
+                metadata: &metadata[1],
+            },
+            Batch {
+                prefix: &prefixes[2],
+                rows: &rows[2],
+                metadata: &metadata[2],
+            },
+        ];
+        assert!(db.apply_distributed_batch(&altered).is_err());
+    }
+}
+#[test]
+fn materialization_rejects_gaps_overlap_and_hidden_intermediate_conflicts() {
+    use sto_rocksdb::distributed::Batch;
+    for mode in 0..3 {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open_distributed(dir.path(), 7, true).unwrap();
+        db.distributed_table(1).unwrap();
+        let prefixes = [prefix(1), prefix(2), prefix(3)];
+        let rows = [
+            vec![row(Some(b"first"), 20)],
+            vec![row(Some(b"changed"), 20)],
+            vec![row(Some(b"later"), 30)],
+        ];
+        let meta = Vec::new();
+        let ids: &[usize] = match mode {
+            0 => &[0, 2],
+            1 => {
+                db.apply_distributed(Some(&prefixes[0]), &rows[0], &meta)
+                    .unwrap();
+                &[0, 1]
+            }
+            _ => &[0, 1, 2],
+        };
+        let batches = ids
+            .iter()
+            .map(|i| Batch {
+                prefix: &prefixes[*i],
+                rows: &rows[*i],
+                metadata: &meta,
+            })
+            .collect::<Vec<_>>();
+        assert!(db.apply_distributed_batch(&batches).is_err());
+        let expected = u64::from(mode == 1);
+        drop(db);
+        let db = Database::open_distributed(dir.path(), 7, true).unwrap();
+        assert_eq!(db.applied().unwrap().index, expected);
+        assert_eq!(db.count(1).unwrap(), expected);
+    }
+}

@@ -77,6 +77,17 @@ pub fn database(path: impl AsRef<Path>, owner: u64, durable: bool) -> api::Resul
         next_table: AtomicU64::new(next_table),
     }))))
 }
+/// Open the common durable image without constructing RocksDB transaction
+/// workers. A Masstree adapter can use this image as its batched backing store.
+pub fn backing(
+    path: impl AsRef<Path>,
+    owner: u64,
+    durable: bool,
+) -> api::Result<Arc<dyn api::PersistentApplication>> {
+    Ok(Arc::new(persistent::Application(
+        sto::Database::open_distributed(path, owner, durable).map_err(error)?,
+    )))
+}
 /// The native handle also owns atomic protocol metadata/checkpoint operations.
 pub fn native_database(database: &api::Database) -> api::Result<Arc<sto::Database>> {
     database
