@@ -401,10 +401,11 @@ impl RunningNode {
         self.migration.as_ref().is_none_or(RunningMigration::ready)
     }
     pub fn health(&self) -> Result<()> {
-        self.store.log.health()
+        self.store.health()
     }
     pub fn shutdown(&mut self) {
         self.server.take();
+        self.store.shutdown();
         self.migration.take();
         #[cfg(feature = "replication")]
         if let Some(replication) = self.replication.take() {

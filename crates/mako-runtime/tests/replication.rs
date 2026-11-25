@@ -291,7 +291,7 @@ fn native_replicas_fail_over_and_install_a_checkpoint_for_a_missing_peer() {
 }
 
 #[test]
-fn lost_quorum_after_install_is_unknown_and_fences_every_new_transaction() {
+fn lost_quorum_before_prepare_never_installs_and_rejects_new_admission() {
     let root = tempfile::tempdir().unwrap();
     let peers = peers(3);
     let mut replicas: Vec<_> = (1..=3)
@@ -339,9 +339,14 @@ fn lost_quorum_after_install_is_unknown_and_fences_every_new_transaction() {
             drop(replica.take());
         }
     }
-    assert_eq!(tx.commit().unwrap_err().code, ErrorCode::Unknown);
-    assert!(log.health().is_err());
-    assert!(matches!(store.protect(), Err(error) if error.code == ErrorCode::Unknown));
+    assert!(matches!(
+        tx.commit().unwrap_err().code,
+        ErrorCode::RouteChanged | ErrorCode::Unknown
+    ));
+    assert!(store.protect().is_err());
+    // Quorum loss before prepare needs no post-install fault: no Commit was
+    // proposed, and the retained leadership permit now refuses admission.
+    assert!(!log.host().unwrap().status().is_leader || log.health().is_ok());
     assert!(client.begin(store.clone(), &mut worker).is_err());
     drop(worker);
 }
@@ -349,7 +354,7 @@ fn lost_quorum_after_install_is_unknown_and_fences_every_new_transaction() {
 #[test]
 fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     use mako_runtime::{
-        gateway, gateway_client::GatewayClient, receiver::RunningShard, storage::VolatileLog,
+        gateway, gateway_client::GatewayClient, receiver::RunningShard, replication::LocalLog,
     };
     let root = tempfile::tempdir().unwrap();
     let peers = peers(3);
@@ -426,14 +431,17 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     };
     let mut original = sdk();
     assert!(resolve_gateway(|| original.insert(
-        target(), b"receipt", b"original"
+        target(),
+        b"receipt",
+        b"original"
     )));
     let first = leader(&replicas).unwrap();
     replicas[first]
         .as_ref()
         .unwrap()
         .put(b"receipt", b"new value");
-    let local = Store::new(1, false, Arc::new(VolatileLog)).unwrap();
+    let local_log = LocalLog::new();
+    let local = Store::new(1, false, local_log.clone()).unwrap();
     let mut worker = local.database.worker().unwrap();
     local.open(&mut worker, target().access.table, 1).unwrap();
     let local_target = Target {
@@ -452,6 +460,19 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         0,
     )
     .unwrap();
+    local_log
+        .start(
+            &local,
+            proxy_schema.clone(),
+            DurableRows::open(
+                &root.path().join("coordinator-rows"),
+                1,
+                true,
+                b"coordinator",
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let proxy = RunningShard::start_with_gateway(
         local.clone(),
         network.clone(),
@@ -521,7 +542,9 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     // Retry the original identity after losing its response/connection. A
     // newly elected gateway returns the old INSERT result without repeating it.
     assert!(resolve_gateway(|| resumed.insert(
-        target(), b"receipt", b"original"
+        target(),
+        b"receipt",
+        b"original"
     )));
     assert_eq!(
         resolve_gateway(|| resumed.get(target(), b"receipt")).as_deref(),
@@ -546,4 +569,204 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     drop(worker);
     drop(proxy);
     drop(servers);
+}
+
+#[test]
+fn elected_replica_restores_prepared_intent_and_obeys_the_saved_decision() {
+    use mako_protocol::journal::{self, Member, Outcome, Record, Transaction, TransactionId};
+    use mako_runtime::receiver::RunningShard;
+    for saved in [Some(Outcome::Commit), None] {
+        let root = tempfile::tempdir().unwrap();
+        let peers = peers(3);
+        let mut replicas: Vec<_> = (1..=3)
+            .map(|id| {
+                Some(Replica::start(
+                    &root.path().join(format!("rows-{id}")),
+                    config(root.path(), id, &peers, true),
+                ))
+            })
+            .collect();
+        let network = Arc::new(Network::default());
+        let mut servers: Vec<_> = replicas
+            .iter()
+            .map(|replica| {
+                Some(
+                    RunningShard::start(
+                        replica.as_ref().unwrap().store.clone(),
+                        network.clone(),
+                        "127.0.0.1:0",
+                        1,
+                        1,
+                        16,
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        let leader = |replicas: &[Option<Replica>]| {
+            replicas.iter().position(|replica| {
+                replica
+                    .as_ref()
+                    .is_some_and(|replica| replica.log.host().unwrap().status().is_leader)
+            })
+        };
+        wait(|| leader(&replicas).is_some());
+        let first = leader(&replicas).unwrap();
+        let endpoint = servers[first].as_ref().unwrap().address();
+        let Reply::OpenStream(Ok(lease)) = network
+            .call(
+                endpoint,
+                Message::OpenStream {
+                    stream: Stream { node: 0, worker: 0 },
+                    nonce: 892,
+                },
+                Duration::from_secs(5),
+            )
+            .unwrap()
+        else {
+            panic!("lease");
+        };
+        let id = TransactionId {
+            coordinator: 0,
+            worker: 0,
+            incarnation: 892,
+            attempt: 1,
+        };
+        let Reply::Participant(response) = network
+            .call(
+                endpoint,
+                Message::Participant(Request {
+                    stream: Stream { node: 0, worker: 0 },
+                    identity: Identity {
+                        incarnation: lease,
+                        attempt: 1,
+                        sequence: 1,
+                        term: 0,
+                    },
+                    action: Action::Stage {
+                        writes: vec![Write {
+                            access: target().access,
+                            mutation: Mutation::Put,
+                            key: b"in-doubt".to_vec(),
+                            value: b"prepared data".to_vec(),
+                        }],
+                    },
+                }),
+                Duration::from_secs(5),
+            )
+            .unwrap()
+        else {
+            panic!("stage");
+        };
+        response.result.unwrap();
+        let control = |endpoint: &str, action| {
+            let reply = network
+                .call(
+                    endpoint,
+                    Message::Transaction(TransactionRequest {
+                        id,
+                        lease,
+                        term: 0,
+                        action,
+                    }),
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+            let Reply::Transaction(response) = reply else {
+                panic!("control: {reply:?}");
+            };
+            response.result.unwrap()
+        };
+        let TransactionValue::Locked {
+            timestamp,
+            durable: true,
+        } = control(endpoint, TransactionAction::Lock)
+        else {
+            panic!("lock");
+        };
+        let transaction = Transaction {
+            version: journal::VERSION,
+            id,
+            time_term: timestamp * 10,
+            durable: true,
+            members: vec![Member {
+                owner: 0,
+                lease,
+                endpoints: servers
+                    .iter()
+                    .map(|server| server.as_ref().unwrap().address().to_owned())
+                    .collect(),
+            }],
+        };
+        let original = replicas[first].as_ref().unwrap();
+        original
+            .store
+            .journal
+            .apply(&Record::Begin(transaction.clone()))
+            .unwrap();
+        assert_eq!(
+            control(endpoint, TransactionAction::Prepare(transaction.clone())),
+            TransactionValue::Prepared
+        );
+        if let Some(outcome) = saved {
+            original
+                .store
+                .journal
+                .apply(&Record::Decide {
+                    transaction: transaction.clone(),
+                    outcome,
+                })
+                .unwrap();
+        }
+        let checkpoint = original.log.host().unwrap().checkpoint().unwrap();
+        wait(|| {
+            replicas.iter().all(|replica| {
+                replica
+                    .as_ref()
+                    .unwrap()
+                    .log
+                    .host()
+                    .unwrap()
+                    .status()
+                    .applied
+                    .index
+                    >= checkpoint.index
+            })
+        });
+        drop(servers[first].take());
+        drop(replicas[first].take());
+        wait(|| leader(&replicas).is_some());
+        let next = leader(&replicas).unwrap();
+        let endpoint = servers[next].as_ref().unwrap().address();
+        let outcome = saved.unwrap_or(Outcome::Abort);
+        assert_eq!(
+            control(
+                endpoint,
+                TransactionAction::Decide {
+                    transaction: transaction.clone(),
+                    outcome
+                }
+            ),
+            TransactionValue::Completed(outcome)
+        );
+        let recovered = replicas[next].as_ref().unwrap();
+        assert_eq!(
+            recovered
+                .store
+                .journal
+                .lookup(id)
+                .unwrap()
+                .unwrap()
+                .decision,
+            Some(outcome)
+        );
+        assert_eq!(
+            recovered.read(b"in-doubt").as_deref(),
+            if saved.is_some() {
+                Some(b"prepared data".as_slice())
+            } else {
+                None
+            }
+        );
+    }
 }

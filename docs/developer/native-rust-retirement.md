@@ -40,7 +40,7 @@ third-party code. The dependency audit checks what executables actually link.
 | C++ shard clients, receiver and transaction admission | `mako-runtime`; participant/coordinator integration, conflict cleanup, replayed messages, stream leases and unknown-outcome fencing |
 | C++ migration host and storage fixture drivers | `src/cluster`, `shard-host-core`, `mako-runtime::migration`; raw/warehouse relocation, live admission drain, paginated scans and separate-process migration |
 | C++ Raft host and transpiler shell | `raft-host` using retained `raft-core`/`raft-store`; quorum/no-op/read-barrier, isolation, failover, divergent tails, compaction and crash/restart tests |
-| C++ replay and persistence integration | Runtime replication/local persistence; durable receipts, post-install quorum failure, checkpoint installation, SIGKILL recovery and resumable loads |
+| C++ replay and persistence integration | Runtime replication/local persistence; durable receipts, prepare/decision uncertainty, checkpoint installation, SIGKILL recovery and resumable loads |
 | `dbtest`, `sto_tpcc_bench`, simple transaction binaries | `mako_bench`, `mako_transactions`, `mako_node`; all five TPC-C operations, concurrent orders, counters, micro workload and native topology matrix |
 | C++ gateway and Redis wrapper | `mako_client`, `mako_admin`, `mako_redis`; native process tests for clients, migration administration, binary values and transactional MULTI/EXEC |
 | C++ SRPC runtime and generated adapter tests | Canonical Rust SRPC workspace tests/doctests; copied-source independence with C++ tools disabled, native kernel inventory and negative controls |
@@ -76,5 +76,6 @@ status; a rewritten gate is not considered qualified until it has run.
 Live migration rejects Raft replication and local disk persistence. Migration
 metadata reopen is inspection, not data-serving recovery. Native disk formats
 do not import the old C++ WAL. Unknown installed outcomes fence the runtime;
-this port does not introduce a durable distributed coordinator protocol.
+the subsequent [OCC + 2PC change](../mako-book.md#durability-and-recovery) adds
+durable prepared-transaction and coordinator-decision recovery.
 Gateway operations auto-commit, while Redis MULTI/EXEC is transactional.

@@ -12,7 +12,7 @@ use mako_sharding::{
 use parking_lot::RwLock;
 use std::{
     collections::BTreeMap,
-    sync::{atomic::AtomicU32, Arc},
+    sync::{atomic::AtomicU32, Arc, OnceLock},
 };
 use sto_tpcc_ffi::native as sto;
 
@@ -55,7 +55,9 @@ struct StoreJournal {
     memory: MemoryJournal,
 }
 impl Journal for StoreJournal {
-    fn durable(&self) -> bool { self.log.transaction_journal().is_some_and(Journal::durable) }
+    fn durable(&self) -> bool {
+        self.log.transaction_journal().is_some_and(Journal::durable)
+    }
     fn apply(&self, record: &Record) -> Result<Entry> {
         self.log.health()?;
         match self.log.transaction_journal() {
@@ -92,6 +94,9 @@ pub struct Store {
     pub term: AtomicU32,
     pub log: Arc<dyn CommitLog>,
     pub journal: Arc<dyn Journal>,
+    pub(crate) participants: OnceLock<Result<Arc<crate::receiver::ParticipantService>>>,
+    pub(crate) endpoint: RwLock<Option<String>>,
+    fault: Arc<RwLock<Option<Error>>>,
     tables: RwLock<BTreeMap<TableKey, Table>>,
     quarantine: parking_lot::Mutex<Vec<Protection>>,
     materializer: RwLock<Option<Arc<Materializer>>>,
@@ -105,7 +110,13 @@ impl Store {
             migration,
             epochs: Arc::new(EpochDomain::default()),
             term: AtomicU32::new(0),
-            journal: Arc::new(StoreJournal { log: log.clone(), memory: MemoryJournal::new(owner) }),
+            journal: Arc::new(StoreJournal {
+                log: log.clone(),
+                memory: MemoryJournal::new(owner),
+            }),
+            participants: OnceLock::new(),
+            endpoint: RwLock::new(None),
+            fault: Arc::new(RwLock::new(None)),
             log,
             tables: RwLock::new(BTreeMap::new()),
             quarantine: parking_lot::Mutex::new(Vec::new()),
@@ -176,6 +187,7 @@ impl Store {
             .collect()
     }
     pub fn protect(&self) -> Result<Protection> {
+        self.health()?;
         let permit = self.log.admit()?;
         let pin = self.epochs.enter();
         let snapshot = if self.migration {
@@ -189,15 +201,90 @@ impl Store {
             None
         };
         Ok(Protection {
+            fault: self.fault.clone(),
             permit,
             _pin: pin,
             snapshot,
             owner: self.owner,
         })
     }
+    pub(crate) fn health(&self) -> Result<()> {
+        self.fault
+            .read()
+            .clone()
+            .map_or_else(|| self.log.health(), Err)
+    }
+    pub fn shutdown(&self) {
+        self.fence(Error::new(ErrorCode::Closed, "shard shutdown"));
+        if let Some(Ok(service)) = self.participants.get() {
+            service.shutdown();
+        }
+    }
+    pub(crate) fn fence(&self, error: Error) {
+        self.fault.write().get_or_insert(Error::new(
+            ErrorCode::Unknown,
+            format!("shard requires recovery: {error}"),
+        ));
+    }
+    pub(crate) fn table_for_log(&self, id: u16) -> Result<Table> {
+        self.tables
+            .read()
+            .values()
+            .find(|table| table.log_id == id)
+            .cloned()
+            .ok_or_else(|| Error::new(ErrorCode::Invalid, "prepared table is not open"))
+    }
+    pub(crate) fn gateway_receipt(
+        &self,
+        request: &GatewayRequest,
+    ) -> Result<Option<GatewayResponse>> {
+        self.health()?;
+        // Also recognizes receipts written by the preceding row-log format.
+        if let Some(response) = self.log.gateway_receipt(request)? {
+            return Ok(Some(response));
+        }
+        for entry in self.journal.entries()? {
+            let Some(participant) = entry.participant else {
+                continue;
+            };
+            let Some(receipt) = participant.receipt else {
+                continue;
+            };
+            if receipt.request.client != request.client
+                || receipt.request.sequence != request.sequence
+            {
+                continue;
+            }
+            if !receipt.matches(request) {
+                return Err(Error::new(
+                    ErrorCode::Invalid,
+                    "gateway identity reused with different intent",
+                ));
+            }
+            match participant.outcome {
+                Some(mako_protocol::journal::Outcome::Commit) => return Ok(Some(receipt.response)),
+                Some(mako_protocol::journal::Outcome::Abort) => (),
+                None => {
+                    return Err(Error::new(
+                        ErrorCode::Unknown,
+                        "gateway transaction needs decision recovery",
+                    ))
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+impl Drop for Store {
+    fn drop(&mut self) {
+        if let Some(Ok(service)) = self.participants.get() {
+            service.shutdown();
+        }
+    }
 }
 
 pub struct Protection {
+    fault: Arc<RwLock<Option<Error>>>,
     permit: Box<dyn CommitPermit>,
     _pin: Pin,
     snapshot: Option<Arc<AdmissionSnapshot>>,
@@ -210,6 +297,9 @@ pub(crate) struct ScanSegment {
 }
 impl Protection {
     pub(crate) fn check(&self) -> Result<()> {
+        if let Some(error) = self.fault.read().as_ref() {
+            return Err(error.clone());
+        }
         self.permit.check()
     }
     pub(crate) fn captured_route(&self, table: u64, coordinate: &[u8]) -> Result<Route> {
@@ -354,42 +444,5 @@ impl Protection {
             }
         }
         Ok(())
-    }
-}
-
-pub(crate) struct LogCallbacks<'a>(pub &'a dyn CommitLog);
-impl sto::ProtocolCallbacks for LogCallbacks<'_> {
-    fn stage(&mut self, _: u32, _: u16, _: sto::Mutation, _: &[u8], _: &[u8]) -> sto::Result<()> {
-        Err(sto::Error {
-            kind: sto::ErrorKind::InvalidUse,
-            message: "remote work on participant log callback".into(),
-        })
-    }
-    fn timestamp(&mut self) -> sto::Result<u32> {
-        Err(sto::Error {
-            kind: sto::ErrorKind::InvalidUse,
-            message: "remote timestamp on participant".into(),
-        })
-    }
-    fn validate(&mut self) -> sto::Result<()> {
-        Err(sto::Error {
-            kind: sto::ErrorKind::InvalidUse,
-            message: "remote validation on participant".into(),
-        })
-    }
-    fn install(&mut self, _: u32) -> sto::Result<()> {
-        Err(sto::Error {
-            kind: sto::ErrorKind::InvalidUse,
-            message: "remote install on participant".into(),
-        })
-    }
-    fn abort(&mut self) -> sto::Result<()> {
-        Ok(())
-    }
-    fn log(&mut self, bytes: &[u8], time_term: u32) -> sto::Result<()> {
-        self.0.append(bytes, time_term).map_err(|e| sto::Error {
-            kind: sto::ErrorKind::UnknownOutcome,
-            message: e.to_string(),
-        })
     }
 }

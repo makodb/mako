@@ -1,9 +1,13 @@
-//! Native shard coordinator. STO owns the decision algorithm; these callbacks
-//! deliver its phases to retained native SRPC participants.
+//! Distributed OCC coordinator over service-owned participants.
 use crate::{
     rpc::Network,
-    storage::{engine, Protection, Store},
+    storage::{Protection, Store},
     wire::*,
+};
+use mako_protocol::{
+    commit::{self, Effects},
+    journal::{self, Outcome, Record},
+    remote::Remotes,
 };
 use std::{collections::BTreeMap, io::Read, sync::Arc, time::Duration};
 use sto_tpcc_ffi::native as sto;
@@ -59,6 +63,89 @@ impl Client {
         self.replicas.insert(owner, replicas);
         Ok(())
     }
+    /// Resolve the saved attempt without executing its body again. A missing
+    /// registration remains Unknown. An available authority can choose Abort
+    /// only while Pending; a saved Commit is completed at every participant.
+    pub fn resolve(&mut self, store: Arc<Store>, id: journal::TransactionId) -> Result<Outcome> {
+        use mako_protocol::contracts::Transport;
+        if id.coordinator != store.owner
+            || id.coordinator != self.stream.node
+            || id.worker != self.stream.worker
+            || id.incarnation != self.incarnation
+            || id.attempt != self.attempt
+        {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "transaction does not identify this client's last attempt",
+            ));
+        }
+        let service = crate::receiver::ParticipantService::for_store(&store, self.network.clone())?;
+        service.recover()?;
+        let transaction = store
+            .journal
+            .lookup(id)?
+            .ok_or_else(|| Error::new(ErrorCode::Unknown, "transaction registration unavailable"))?
+            .transaction;
+        let outcome = crate::prepared::local_decision(&store, &transaction, true)?
+            .ok_or_else(|| Error::new(ErrorCode::Unknown, "decision is unavailable"))?;
+        let endpoint = service.endpoint(&store)?;
+        let transport = crate::receiver::LocalTransport {
+            service,
+            network: self.network.clone(),
+            endpoint: endpoint.clone(),
+            owner: store.owner,
+        };
+        let mut failure = None;
+        for member in &transaction.members {
+            let endpoints = if member.owner == store.owner {
+                vec![endpoint.clone()]
+            } else {
+                member.endpoints.clone()
+            };
+            let mut acknowledged = false;
+            let mut last = Error::new(ErrorCode::Unknown, "participant is unavailable");
+            for address in endpoints {
+                let message = Message::Transaction(TransactionRequest {
+                    id,
+                    lease: member.lease,
+                    term: transaction.time_term % 10,
+                    action: TransactionAction::Decide {
+                        transaction: transaction.clone(),
+                        outcome,
+                    },
+                });
+                match transport.call(&address, message, self.timeout) {
+                    Ok(Reply::Transaction(reply))
+                        if reply.id == id && reply.owner == member.owner =>
+                    {
+                        match reply.result {
+                            Ok(TransactionValue::Completed(saved)) if saved == outcome => {
+                                acknowledged = true;
+                                break;
+                            }
+                            Err(error) => last = error,
+                            _ => last = Error::new(ErrorCode::Unknown, "completion reply mismatch"),
+                        }
+                    }
+                    Ok(Reply::Error(error)) | Err(error) => last = error,
+                    _ => {
+                        last = Error::new(ErrorCode::Unknown, "completion reply identity mismatch")
+                    }
+                }
+            }
+            if !acknowledged {
+                failure.get_or_insert(last);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(Error::new(
+                ErrorCode::Unknown,
+                format!("saved {outcome:?}; completion pending: {error}"),
+            ));
+        }
+        self.fenced = false;
+        Ok(outcome)
+    }
     pub fn begin<'a, 'worker>(
         &'a mut self,
         store: Arc<Store>,
@@ -87,10 +174,19 @@ impl Client {
             .checked_add(1)
             .ok_or_else(|| Error::new(ErrorCode::Capacity, "transaction attempt exhausted"))?;
         let protection = store.protect()?;
-        let participant = worker.begin_participant(self.term).map_err(engine)?;
-        let remotes = Remotes(mako_protocol::remote::Remotes::new(
-            self.network.clone(),
-            self.endpoints.clone(),
+        let service = crate::receiver::ParticipantService::for_store(&store, self.network.clone())?;
+        let endpoint = service.endpoint(&store)?;
+        let transport = Arc::new(crate::receiver::LocalTransport {
+            service,
+            network: self.network.clone(),
+            endpoint: endpoint.clone(),
+            owner: store.owner,
+        });
+        let mut endpoints = (*self.endpoints).clone();
+        endpoints.insert(store.owner, endpoint);
+        let mut remotes = Remotes::new(
+            transport,
+            Arc::new(endpoints),
             self.replicas.clone(),
             self.stream,
             Identity {
@@ -101,14 +197,23 @@ impl Client {
             },
             store.log.clone(),
             self.timeout,
-        ));
+        );
+        if let Err(error) = remotes.call(store.owner, Action::Begin) {
+            if remotes.abort().is_err() {
+                self.fenced = true;
+            }
+            return Err(error);
+        }
         Ok(Transaction {
-            participant: Some(participant),
+            worker: std::marker::PhantomData,
+            finished: false,
             remotes,
             store,
             protection: Some(protection),
             client_fenced: &mut self.fenced,
             failed: None,
+            receipt: None,
+            retain_snapshot: false,
         })
     }
     /// A body error runs cleanup before returning. Unknown outcomes and failed
@@ -133,74 +238,17 @@ impl Client {
     }
 }
 
-struct Remotes(mako_protocol::remote::Remotes);
-impl std::ops::Deref for Remotes {
-    type Target = mako_protocol::remote::Remotes;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for Remotes {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-fn callback_error(error: Error) -> sto::Error {
-    let kind = match error.code {
-        ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy => sto::ErrorKind::Conflict,
-        ErrorCode::Capacity => sto::ErrorKind::Capacity,
-        ErrorCode::Unknown => sto::ErrorKind::UnknownOutcome,
-        ErrorCode::CommittedFailure => sto::ErrorKind::CommittedFailure,
-        _ => sto::ErrorKind::Fatal,
-    };
-    sto::Error {
-        kind,
-        message: error.to_string(),
-    }
-}
-impl sto::ProtocolCallbacks for Remotes {
-    fn stage(
-        &mut self,
-        shard: u32,
-        table: u16,
-        mutation: sto::Mutation,
-        key: &[u8],
-        value: &[u8],
-    ) -> sto::Result<()> {
-        let mutation = match mutation {
-            sto::Mutation::Put => Mutation::Put,
-            sto::Mutation::Insert => Mutation::Insert,
-            sto::Mutation::Remove => Mutation::Remove,
-        };
-        self.0
-            .stage(shard, table, mutation, key, value)
-            .map_err(callback_error)
-    }
-    fn timestamp(&mut self) -> sto::Result<u32> {
-        self.0.timestamp().map_err(callback_error)
-    }
-    fn validate(&mut self) -> sto::Result<()> {
-        self.0.validate().map_err(callback_error)
-    }
-    fn install(&mut self, timestamp: u32) -> sto::Result<()> {
-        self.0.install(timestamp).map_err(callback_error)
-    }
-    fn abort(&mut self) -> sto::Result<()> {
-        self.0.abort().map_err(callback_error)
-    }
-    fn log(&mut self, bytes: &[u8], time_term: u32) -> sto::Result<()> {
-        self.0.log(bytes, time_term).map_err(callback_error)
-    }
-}
-
 pub struct Transaction<'client, 'worker> {
-    participant: Option<sto::Participant<'worker>>,
+    worker: std::marker::PhantomData<&'worker mut sto::Worker>,
+    finished: bool,
     remotes: Remotes,
     store: Arc<Store>,
     protection: Option<Protection>,
     client_fenced: &'client mut bool,
     // A failed operation cannot be ignored to publish a partial transaction.
     failed: Option<Error>,
+    receipt: Option<GatewayReceipt>,
+    retain_snapshot: bool,
 }
 impl Transaction<'_, '_> {
     /// Scan all captured routing segments in key order. The existing checked
@@ -279,52 +327,20 @@ impl Transaction<'_, '_> {
         rows: &mut Vec<Row>,
         limit: usize,
     ) -> Result<()> {
-        let mut identity = self.remotes.identity();
-        if target.owner != self.store.owner {
-            self.participant
-                .as_mut()
-                .expect("live transaction")
-                .flush_remote(&mut self.remotes)
-                .map_err(engine)?;
-            identity = self.remotes.remote_identity(target.owner)?;
-        }
+        let identity = self.remotes.remote_identity(target.owner)?;
         let mut driver = crate::scan::Driver::new(target, identity, lower, upper, reverse)?;
         loop {
             let request = driver.request()?;
-            let participant = self.participant.as_mut().expect("live transaction");
-            let response = if target.owner == self.store.owner {
-                crate::scan::produce(
-                    &self.store,
-                    self.protection.as_ref().expect("transaction epoch"),
-                    participant,
-                    identity,
-                    &target.access,
-                    &request,
-                )?
-            } else {
-                participant
-                    .flush_remote(&mut self.remotes)
-                    .map_err(engine)?;
-                self.remotes.call(
-                    target.owner,
-                    Action::ScanPage {
-                        access: target.access.clone(),
-                        request,
-                    },
-                )?
-            };
-            let Value::Page {
-                bytes,
-                read_dependency,
-            } = response
-            else {
+            let response = self.remotes.call(
+                target.owner,
+                Action::ScanPage {
+                    access: target.access.clone(),
+                    request,
+                },
+            )?;
+            let Value::Page { bytes, .. } = response else {
                 return Err(Error::new(ErrorCode::Transport, "missing scan page"));
             };
-            if target.owner != self.store.owner {
-                participant
-                    .observe_remote_scan(target.owner, read_dependency)
-                    .map_err(engine)?;
-            }
             if driver.consume(&bytes, rows, limit)? {
                 return Ok(());
             }
@@ -346,6 +362,12 @@ impl Transaction<'_, '_> {
         }
         result
     }
+    pub fn id(&self) -> journal::TransactionId {
+        self.remotes.transaction_id()
+    }
+    pub(crate) fn gateway_receipt(&mut self, receipt: GatewayReceipt) {
+        self.receipt = Some(receipt);
+    }
     pub fn get(&mut self, target: &Target, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.attempt(|this| {
             if key.len() > MAX_KEY {
@@ -354,38 +376,17 @@ impl Transaction<'_, '_> {
                     "key exceeds protocol limit",
                 ));
             }
-            let participant = this.participant.as_mut().expect("live transaction");
-            if target.owner == this.store.owner {
-                this.protection
-                    .as_ref()
-                    .expect("transaction epoch")
-                    .point(&target.access, key)?;
-                let table = this.store.table(target.access.table)?;
-                return participant
-                    .get(&table.tree, key)
-                    .map(|v| v.value)
-                    .map_err(engine);
-            }
-            participant
-                .flush_remote(&mut this.remotes)
-                .map_err(engine)?;
-            let result = this.remotes.call(
+            match this.remotes.call(
                 target.owner,
                 Action::Get {
                     access: target.access.clone(),
                     key: key.to_vec(),
                 },
-            )?;
-            match result {
-                Value::Point { value, time_term } => {
-                    participant
-                        .observe_remote_read(target.owner, time_term)
-                        .map_err(engine)?;
-                    Ok(value)
-                }
+            )? {
+                Value::Point { value, .. } => Ok(value),
                 _ => Err(Error::new(
                     ErrorCode::Transport,
-                    "missing remote read result",
+                    "missing participant read result",
                 )),
             }
         })
@@ -404,34 +405,9 @@ impl Transaction<'_, '_> {
                     "mutation exceeds protocol limits",
                 ));
             }
-            let participant = this.participant.as_mut().expect("live transaction");
-            let mutation = match mutation {
-                Mutation::Put => sto::Mutation::Put,
-                Mutation::Insert => sto::Mutation::Insert,
-                Mutation::Remove => sto::Mutation::Remove,
-            };
-            if target.owner == this.store.owner {
-                this.protection
-                    .as_ref()
-                    .expect("transaction epoch")
-                    .point(&target.access, key)?;
-                let table = this.store.table(target.access.table)?;
-                if !participant
-                    .mutate(&table.tree, table.log_id, mutation, key, value, false)
-                    .map_err(engine)?
-                {
-                    return Err(Error::new(
-                        ErrorCode::Conflict,
-                        "insert/delete precondition failed",
-                    ));
-                }
-            } else {
-                this.remotes.bind_target(target, key)?;
-                participant
-                    .stage_remote(target.owner, target.log_id, mutation, key, value)
-                    .map_err(engine)?;
-            }
-            Ok(())
+            this.remotes.bind_target(target, key)?;
+            this.remotes
+                .stage(target.owner, target.log_id, mutation, key, value)
         })
     }
     pub fn scan(
@@ -443,68 +419,25 @@ impl Transaction<'_, '_> {
         limit: usize,
     ) -> Result<Vec<Row>> {
         self.attempt(|this| {
-            if !(Action::Scan {
+            let action = Action::Scan {
                 access: target.access.clone(),
-                lower: lower.clone(),
-                upper: upper.clone(),
+                lower,
+                upper,
                 reverse,
                 limit,
-            })
-            .valid()
-            {
+            };
+            if !action.valid() {
                 return Err(Error::new(
                     ErrorCode::Invalid,
                     "invalid scan bounds or row limit",
                 ));
             }
-            let participant = this.participant.as_mut().expect("live transaction");
-            if target.owner == this.store.owner {
-                this.protection.as_ref().expect("transaction epoch").range(
-                    &target.access,
-                    &lower,
-                    &upper,
-                )?;
-                let table = this.store.table(target.access.table)?;
-                let result = participant
-                    .scan(&table.tree, lower.as_ref(), upper.as_ref(), reverse, limit)
-                    .map_err(engine)?;
-                Ok(result
-                    .rows
-                    .into_iter()
-                    .map(|r| Row {
-                        key: r.key,
-                        value: r.value,
-                        time_term: r.time_term,
-                    })
-                    .collect())
-            } else {
-                participant
-                    .flush_remote(&mut this.remotes)
-                    .map_err(engine)?;
-                match this.remotes.call(
-                    target.owner,
-                    Action::Scan {
-                        access: target.access.clone(),
-                        lower,
-                        upper,
-                        reverse,
-                        limit,
-                    },
-                )? {
-                    Value::Scan {
-                        rows,
-                        read_dependency,
-                    } => {
-                        participant
-                            .observe_remote_scan(target.owner, read_dependency)
-                            .map_err(engine)?;
-                        Ok(rows)
-                    }
-                    _ => Err(Error::new(
-                        ErrorCode::Transport,
-                        "missing remote scan result",
-                    )),
-                }
+            match this.remotes.call(target.owner, action)? {
+                Value::Scan { rows, .. } => Ok(rows),
+                _ => Err(Error::new(
+                    ErrorCode::Transport,
+                    "missing participant scan result",
+                )),
             }
         })
     }
@@ -516,21 +449,50 @@ impl Transaction<'_, '_> {
             self.abort_inner()?;
             return Err(error);
         }
-        let result = self
-            .participant
-            .take()
-            .expect("live transaction")
-            .commit(0, &mut self.remotes)
-            .map(|_| ())
-            .map_err(engine);
-        if let Some(error) = self.remotes.take_cleanup_failure() {
+        self.finished = true;
+        let owners = self.remotes.owners();
+        let mut effects = NativeEffects {
+            remotes: &mut self.remotes,
+            store: &self.store,
+            owners,
+            proposal: 0,
+            durable: None,
+            receipt: self.receipt.take(),
+            registered: false,
+        };
+        let result = match commit::coordinate(&mut effects) {
+            Ok(completion) if completion.outcome == Outcome::Commit && completion.acknowledged => {
+                Ok(())
+            }
+            Ok(completion) if completion.outcome == Outcome::Abort && completion.acknowledged => {
+                Err(completion
+                    .failure
+                    .filter(|error| {
+                        matches!(
+                            error.code,
+                            ErrorCode::Conflict
+                                | ErrorCode::RouteChanged
+                                | ErrorCode::Busy
+                                | ErrorCode::Capacity
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        Error::new(ErrorCode::Conflict, "transaction aborted by coordinator")
+                    }))
+            }
+            Ok(completion) => Err(Error::new(
+                ErrorCode::Unknown,
+                format!(
+                    "transaction {:?} has saved {:?}; completion is pending: {:?}",
+                    completion.transaction.id, completion.outcome, completion.delivery_failure
+                ),
+            )),
+            Err(error) => Err(error),
+        };
+        if matches!(&result, Err(error) if !matches!(error.code, ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy | ErrorCode::Capacity | ErrorCode::Invalid))
+        {
             *self.client_fenced = true;
-            return Err(error);
-        }
-        let retryable = matches!(&result, Err(e) if matches!(e.code,
-            ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy | ErrorCode::Capacity));
-        if mako_protocol_core::admission::fence_client(result.is_ok(), retryable, false) {
-            *self.client_fenced = true;
+            self.retain_snapshot = !effects.registered;
         }
         result
     }
@@ -538,27 +500,142 @@ impl Transaction<'_, '_> {
         self.abort_inner()
     }
     fn abort_inner(&mut self) -> Result<()> {
-        let result = self.participant.take().map_or(Ok(()), |participant| {
-            participant.abort(&mut self.remotes).map_err(engine)
-        });
-        if let Err(error) = result {
+        if self.finished {
+            return Ok(());
+        }
+        self.finished = true;
+        self.remotes.abort().map_err(|error| {
             *self.client_fenced = true;
-            return Err(Error::new(
+            self.retain_snapshot = true;
+            Error::new(
                 ErrorCode::Unknown,
                 format!("transaction cleanup was not confirmed: {error}"),
-            ));
-        }
-        Ok(())
+            )
+        })
     }
 }
 impl Drop for Transaction<'_, '_> {
     fn drop(&mut self) {
         let _ = self.abort_inner();
-        // An uncertain local coordinator must keep migration frozen too.
-        if *self.client_fenced {
-            if let Some(pin) = self.protection.take() {
-                self.store.quarantine(pin);
+        if self.retain_snapshot {
+            if let Some(protection) = self.protection.take() {
+                self.store.quarantine(protection);
             }
         }
+    }
+}
+
+struct NativeEffects<'a> {
+    remotes: &'a mut Remotes,
+    store: &'a Store,
+    owners: Vec<u32>,
+    proposal: u32,
+    durable: Option<bool>,
+    receipt: Option<GatewayReceipt>,
+    registered: bool,
+}
+impl Effects for NativeEffects<'_> {
+    fn participants(&self) -> usize {
+        self.owners.len()
+    }
+    fn lock(&mut self, member: usize) -> Result<()> {
+        match self
+            .remotes
+            .transaction_call(self.owners[member], TransactionAction::Lock)?
+        {
+            TransactionValue::Locked { timestamp, durable } => {
+                if self.durable.is_some_and(|expected| expected != durable) {
+                    return Err(Error::new(
+                        ErrorCode::Invalid,
+                        "transaction mixes durable and volatile participants",
+                    ));
+                }
+                self.durable = Some(durable);
+                self.proposal = self.proposal.max(timestamp);
+                Ok(())
+            }
+            _ => Err(Error::new(
+                ErrorCode::Transport,
+                "missing participant lock acknowledgement",
+            )),
+        }
+    }
+    fn register(&mut self) -> Result<journal::Transaction> {
+        use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+        let timestamp = DistributedTimestamp::new(self.proposal)
+            .map_err(|error| Error::new(ErrorCode::Invalid, error.to_string()))?;
+        let term = DistributedTerm::new(self.remotes.identity().term)
+            .map_err(|error| Error::new(ErrorCode::Invalid, error.to_string()))?;
+        let transaction = journal::Transaction {
+            version: journal::VERSION,
+            id: self.remotes.transaction_id(),
+            time_term: DistributedTimeTerm::new(timestamp, term).encode_legacy(),
+            durable: self.durable.expect("locked membership"),
+            members: self.remotes.members(),
+        };
+        transaction.validate()?;
+        self.store
+            .journal
+            .apply(&Record::Begin(transaction.clone()))?;
+        self.registered = true;
+        Ok(transaction)
+    }
+    fn prepare(&mut self, member: usize, transaction: &journal::Transaction) -> Result<()> {
+        let action = if let Some(receipt) = &self.receipt {
+            TransactionAction::PrepareGateway {
+                transaction: transaction.clone(),
+                receipt: receipt.clone(),
+            }
+        } else {
+            TransactionAction::Prepare(transaction.clone())
+        };
+        match self.remotes.transaction_call(self.owners[member], action)? {
+            TransactionValue::Prepared => Ok(()),
+            _ => Err(Error::new(
+                ErrorCode::Transport,
+                "missing participant Yes vote",
+            )),
+        }
+    }
+    fn decide(&mut self, transaction: &journal::Transaction, proposed: Outcome) -> Result<Outcome> {
+        match self.store.journal.apply(&Record::Decide {
+            transaction: transaction.clone(),
+            outcome: proposed,
+        }) {
+            Ok(entry) => entry
+                .decision
+                .ok_or_else(|| Error::new(ErrorCode::Unknown, "decision was not saved")),
+            Err(error) => self
+                .store
+                .journal
+                .lookup(transaction.id)?
+                .and_then(|entry| entry.decision)
+                .ok_or(error),
+        }
+    }
+    fn complete(
+        &mut self,
+        member: usize,
+        transaction: &journal::Transaction,
+        outcome: Outcome,
+    ) -> Result<()> {
+        match self.remotes.transaction_call(
+            self.owners[member],
+            TransactionAction::Decide {
+                transaction: transaction.clone(),
+                outcome,
+            },
+        )? {
+            TransactionValue::Completed(saved) if saved == outcome => Ok(()),
+            _ => Err(Error::new(
+                ErrorCode::Unknown,
+                "missing participant completion acknowledgement",
+            )),
+        }
+    }
+    fn abort_unprepared(&mut self, member: usize) -> Result<()> {
+        self.remotes
+            .call(self.owners[member], Action::Abort)
+            .map(|_| ())
     }
 }

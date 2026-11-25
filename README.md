@@ -91,8 +91,10 @@ native code; stable Rust has no UBSan compiler mode. See
 
 ## Current behavior and limits
 
-- Raft is the supported replication protocol. Unknown installed outcomes fence
-  the affected runtime rather than report a successful abort.
+- Distributed transactions use OCC + 2PC: acquire every write lock before
+  final validation, save one coordinator decision, then complete every member.
+  Resolve Unknown by transaction ID; never rerun its body. Raft is the supported
+  replication protocol.
 - Live migration supports volatile, unreplicated shards. Replicated or locally
   persistent migration is rejected. Reopening migration metadata alone does
   not recover row data.
@@ -103,8 +105,10 @@ native code; stable Rust has no UBSan compiler mode. See
   stored in bounded transactional chunks. Durable Redis rejects transactions
   above 2 MiB of logical command data before installation. Other transaction
   resource limits still apply.
-- Native durable formats are not compatible with the retired C++ WAL. This
-  migration does not add a durable distributed coordinator recovery protocol.
+- Native durable formats are not compatible with the retired C++ WAL. Durable
+  prepare, decision and completion records support transaction recovery before
+  new admission. Mixed old/new transaction-protocol operation is unsupported.
+  See [the book](docs/mako-book.md) for durability and recovery limits.
 
 See [development](docs/developer/development.md),
 [native source retirement and test mapping](docs/developer/native-rust-retirement.md),

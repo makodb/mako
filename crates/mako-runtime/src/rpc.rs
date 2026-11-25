@@ -1,6 +1,6 @@
 //! Uses SRPC's Rust client, server and reactor directly. Only owned bytes and a
 //! pending-reply guard cross worker threads, never SRPC's borrowed archive.
-use crate::wire::{self, Action, Error, ErrorCode, Message, Reply, Result};
+use crate::wire::{self, Action, Error, ErrorCode, Message, Reply, Result, TransactionAction};
 use parking_lot::Mutex;
 use srpc::{
     client::Client,
@@ -165,7 +165,9 @@ impl Network {
     }
     pub fn call(&self, endpoint: &str, message: Message, timeout: Duration) -> Result<Reply> {
         let may_commit = matches!(&message, Message::Participant(r) if matches!(r.action, Action::Install { .. }))
-            || matches!(&message, Message::Gateway(r) if matches!(r.kind, 23 | 25 | 28));
+            || matches!(&message, Message::Gateway(_))
+            || matches!(&message, Message::Transaction(r) if !matches!(r.action, TransactionAction::Lock))
+            || matches!(&message, Message::TransactionOutcome { resolve: true, .. });
         // Oversized local encoding cannot have sent an effect.
         let bytes = wire::encode(&message)?;
         let client = self.client(endpoint)?;
@@ -243,7 +245,7 @@ impl mako_protocol::contracts::Transport for Network {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{Identity, Request, Response, Stream, Value};
+    use crate::wire::{Identity, Request, Response, Stream, TransactionRequest, Value};
     #[test]
     fn native_srpc_preserves_owned_request_and_reply_across_worker_threads() {
         let network = Network::default();
@@ -286,7 +288,7 @@ mod tests {
         server.shutdown();
     }
     #[test]
-    fn timed_out_install_is_unknown_and_pending_call_is_cancelled() {
+    fn timed_out_decision_is_unknown_and_pending_call_is_cancelled() {
         let network = Network::default();
         let pending = Arc::new(Mutex::new(Vec::new()));
         let hold = pending.clone();
@@ -294,21 +296,36 @@ mod tests {
             hold.lock().push(reply)
         })
         .unwrap();
-        let request = Request {
-            stream: Stream { node: 0, worker: 0 },
-            identity: Identity {
+        let transaction = mako_protocol::journal::Transaction {
+            version: mako_protocol::journal::VERSION,
+            id: mako_protocol::journal::TransactionId {
+                coordinator: 0,
+                worker: 0,
                 incarnation: 7,
                 attempt: 1,
-                sequence: 1,
-                term: 0,
             },
-            action: Action::Install { timestamp: 1 },
+            time_term: 100,
+            durable: false,
+            members: vec![mako_protocol::journal::Member {
+                owner: 0,
+                endpoints: vec![server.address().into()],
+                lease: 1,
+            }],
+        };
+        let request = TransactionRequest {
+            id: transaction.id,
+            lease: 1,
+            term: 0,
+            action: TransactionAction::Decide {
+                transaction,
+                outcome: mako_protocol::journal::Outcome::Commit,
+            },
         };
         assert_eq!(
             network
                 .call(
                     server.address(),
-                    Message::Participant(request),
+                    Message::Transaction(request),
                     Duration::from_millis(100)
                 )
                 .unwrap_err()

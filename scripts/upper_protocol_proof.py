@@ -23,9 +23,12 @@ ADAPTERS = {
         'core::admit(', 'core::claim(', 'core::completed(',
         'self.last.as_ref() == Some(request) && self.response.is_some()'],
     'crates/mako-protocol/src/participant.rs': ['core::admission::release_protection(', 'self.engine.execute(', 'self.engine.retain_uncertain()'],
-    'crates/mako-runtime/src/receiver.rs': ['impl ParticipantEngine for NativeEngine', 'Lane::new(', 'self.store.quarantine(protection)'],
+    'crates/mako-runtime/src/receiver.rs': ['Lane::new(', 'prepared::transaction(&mut lane, request)', 'entry.unresolved()'],
+    'crates/mako-runtime/src/prepared.rs': ['impl ParticipantEngine for NativeEngine', 'core::begin_prepare(', 'core::prepared(', 'core::finish(', 'Record::Prepare', 'Record::Complete', 'participant.prepared_redo('],
+    'crates/mako-protocol/src/commit.rs': ['Coordinator::new(', 'coordinator.record_locked(', 'coordinator.record_prepared(', 'coordinator.record_decision(', 'coordinator.acknowledge('],
     'crates/mako-runtime/src/rpc.rs': ['impl mako_protocol::contracts::Transport for Network'],
-    'crates/mako-runtime/src/client.rs': ['mako_protocol::remote::Remotes', 'fence_client('],
+    'crates/mako-runtime/src/client.rs': ['remote::Remotes', 'impl Effects for NativeEffects', 'commit::coordinate(&mut effects)', 'TransactionAction::Lock', 'TransactionAction::Prepare', 'Record::Begin', 'Record::Decide'],
+    'crates/mako-runtime/src/gateway.rs': ['client.run(', 'transaction.gateway_receipt('],
     'crates/mako-runtime/src/gateway_client.rs': ['mako_protocol::gateway_client::GatewayClient'],
 }
 

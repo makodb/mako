@@ -1,6 +1,9 @@
 //! Distributed OCC preparation and two-phase commit over named adapter effects.
 //! No backend supplies an assumed whole-transaction commit operation.
-use crate::{journal::{Outcome, Transaction}, wire::{Error, ErrorCode, Result}};
+use crate::{
+    journal::{Outcome, Transaction},
+    wire::{Error, ErrorCode, Result},
+};
 use mako_protocol_core::two_phase::{Coordinator, Decision};
 
 /// Membership is fixed for the lifetime of this driver. Each index identifies
@@ -20,7 +23,12 @@ pub trait Effects {
     /// error leaves the decision unresolved and must not cause autonomous abort.
     fn decide(&mut self, transaction: &Transaction, proposed: Outcome) -> Result<Outcome>;
     /// Complete the saved decision, idempotently. Commit errors cannot rollback.
-    fn complete(&mut self, member: usize, transaction: &Transaction, outcome: Outcome) -> Result<()>;
+    fn complete(
+        &mut self,
+        member: usize,
+        transaction: &Transaction,
+        outcome: Outcome,
+    ) -> Result<()>;
     /// Used only before any participant has been sent Prepare. Visit every
     /// member even if one cleanup fails. A failure leaves the attempt fenced.
     fn abort_unprepared(&mut self, member: usize) -> Result<()>;
@@ -32,16 +40,22 @@ pub struct Completion {
     pub outcome: Outcome,
     pub acknowledged: bool,
     pub failure: Option<Error>,
+    pub delivery_failure: Option<Error>,
 }
 
 fn unknown(error: Error) -> Error {
-    Error::new(ErrorCode::Unknown, format!("2PC decision or completion unresolved: {error}"))
+    Error::new(
+        ErrorCode::Unknown,
+        format!("2PC decision or completion unresolved: {error}"),
+    )
 }
 
 fn abort_unprepared<E: Effects>(effects: &mut E, count: usize, cause: Error) -> Error {
     let mut failure = None;
     for member in 0..count {
-        if let Err(error) = effects.abort_unprepared(member) { failure.get_or_insert(error); }
+        if let Err(error) = effects.abort_unprepared(member) {
+            failure.get_or_insert(error);
+        }
     }
     failure.map_or(cause, unknown)
 }
@@ -69,8 +83,14 @@ pub fn coordinate<E: Effects>(effects: &mut E) -> Result<Completion> {
         return Err(abort_unprepared(effects, count, error));
     }
     if transaction.members.len() != count {
-        return Err(abort_unprepared(effects, count,
-            Error::new(ErrorCode::Invalid, "registered membership differs from lock barrier")));
+        return Err(abort_unprepared(
+            effects,
+            count,
+            Error::new(
+                ErrorCode::Invalid,
+                "registered membership differs from lock barrier",
+            ),
+        ));
     }
     let mut failure = None;
     for member in 0..count {
@@ -88,13 +108,33 @@ pub fn coordinate<E: Effects>(effects: &mut E) -> Result<Completion> {
     };
     let outcome = effects.decide(&transaction, proposed).map_err(unknown)?;
     if !coordinator.record_decision(outcome.decision(), true) {
-        return Err(unknown(Error::new(ErrorCode::Invalid, "decision conflicts with retained votes")));
+        return Err(unknown(Error::new(
+            ErrorCode::Invalid,
+            "decision conflicts with retained votes",
+        )));
     }
+    let mut delivery_failure = None;
     for member in 0..count {
         match effects.complete(member, &transaction, outcome) {
-            Ok(()) => { assert!(coordinator.acknowledge(member, outcome.decision())); }
-            Err(error) => { failure.get_or_insert(error); }
+            Ok(()) => {
+                assert!(coordinator.acknowledge(member, outcome.decision()));
+            }
+            Err(error) => {
+                delivery_failure.get_or_insert_with(|| {
+                    Error::new(
+                        error.code,
+                        format!("participant {member} completion: {error}"),
+                    )
+                });
+                failure.get_or_insert(error);
+            }
         }
     }
-    Ok(Completion { transaction, outcome, acknowledged: coordinator.complete(), failure })
+    Ok(Completion {
+        transaction,
+        outcome,
+        acknowledged: coordinator.complete(),
+        failure,
+        delivery_failure,
+    })
 }

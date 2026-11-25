@@ -25,10 +25,30 @@ impl<E: ParticipantEngine> Lane<E> {
     pub fn engine(&self) -> &E {
         &self.engine
     }
+    pub fn engine_mut(&mut self) -> &mut E {
+        &mut self.engine
+    }
+    pub fn owns_transaction(&self, request: &TransactionRequest) -> bool {
+        self.session.owns_transaction(request)
+    }
+    /// Used after the 2PC journal/engine has supplied the corresponding state.
+    pub fn seal_external(&mut self) {
+        self.session.seal_external();
+    }
+    pub fn finish_external(&mut self, outcome: crate::journal::Outcome) {
+        self.session.finish_external(outcome);
+    }
     pub fn process(&mut self, request: Request) -> Response {
         let admission = self.session.admit(&request, self.engine.minimum_term());
         if let Admission::Reply(response) = admission {
             return response;
+        }
+        if !self.engine.accepts(&request.action) {
+            return Response::error(
+                request.identity,
+                ErrorCode::Busy,
+                "transaction execution is frozen",
+            );
         }
         let result = self
             .engine

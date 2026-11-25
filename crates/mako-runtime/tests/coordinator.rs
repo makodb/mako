@@ -189,3 +189,158 @@ fn failed_abort_is_reported_as_unknown_and_fences_the_client_immediately() {
     let cut = local.epochs.cut().unwrap();
     assert!(!local.epochs.drained(cut).unwrap());
 }
+
+#[test]
+fn global_lock_barrier_rejects_point_absence_and_scan_write_skew() {
+    for mode in ["point", "absence", "scan"] {
+        let stores = [store(0), store(1)];
+        let network = Arc::new(Network::default());
+        let servers: Vec<_> = stores
+            .iter()
+            .map(|store| {
+                RunningShard::start(store.clone(), network.clone(), "127.0.0.1:0", 2, 2, 16)
+                    .unwrap()
+            })
+            .collect();
+        let endpoints = BTreeMap::from([
+            (0, servers[0].address().to_owned()),
+            (1, servers[1].address().to_owned()),
+        ]);
+        let mut loader = stores[0].database.worker().unwrap();
+        let mut initializer = Client::new(
+            network.clone(),
+            endpoints.clone(),
+            Stream { node: 0, worker: 1 },
+            0,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        initializer
+            .run(stores[0].clone(), &mut loader, |tx| {
+                if mode == "point" {
+                    tx.mutate(&target(0), Mutation::Put, b"x", b"0")?;
+                }
+                tx.mutate(&target(1), Mutation::Put, b"y", b"0")
+            })
+            .unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut threads = Vec::new();
+        for owner in 0..2u32 {
+            let local = stores[owner as usize].clone();
+            let network = network.clone();
+            let endpoints = endpoints.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                let mut worker = local.database.worker().unwrap();
+                let mut client = Client::new(
+                    network,
+                    endpoints,
+                    Stream {
+                        node: owner,
+                        worker: 0,
+                    },
+                    0,
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+                let mut tx = client.begin(local, &mut worker).unwrap();
+                if owner == 0 {
+                    if mode == "scan" {
+                        assert!(tx
+                            .scan(
+                                &target(0),
+                                Bound::Included(b"a".to_vec()),
+                                Bound::Excluded(b"z".to_vec()),
+                                false,
+                                8
+                            )
+                            .unwrap()
+                            .is_empty());
+                    } else {
+                        assert_eq!(
+                            tx.get(&target(0), b"x").unwrap().as_deref(),
+                            if mode == "point" {
+                                Some(b"0".as_slice())
+                            } else {
+                                None
+                            }
+                        );
+                    }
+                    tx.mutate(&target(1), Mutation::Put, b"y", b"1").unwrap();
+                } else {
+                    assert_eq!(
+                        tx.get(&target(1), b"y").unwrap().as_deref(),
+                        Some(b"0".as_slice())
+                    );
+                    tx.mutate(&target(0), Mutation::Put, b"x", b"1").unwrap();
+                }
+                barrier.wait();
+                match tx.commit() {
+                    Ok(()) => true,
+                    Err(error) => {
+                        assert_eq!(error.code, ErrorCode::Conflict, "{mode}: {error}");
+                        false
+                    }
+                }
+            }));
+        }
+        let commits = threads
+            .into_iter()
+            .map(|thread| usize::from(thread.join().unwrap()))
+            .sum::<usize>();
+        assert!(commits < 2, "{mode} admitted a serialization cycle");
+        initializer
+            .run(stores[0].clone(), &mut loader, |tx| {
+                tx.mutate(&target(0), Mutation::Put, b"x", b"after conflict")?;
+                tx.mutate(&target(1), Mutation::Put, b"y", b"after conflict")
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion() {
+    struct Log;
+    impl mako_runtime::storage::CommitLog for Log {
+        fn append(&self, _: &[u8], _: u32) -> Result<()> {
+            panic!("obsolete row log");
+        }
+        fn replica_status(&self, owner: u32) -> ReplicaStatus {
+            ReplicaStatus {
+                owner,
+                group: None,
+                leader: true,
+                term: 0,
+                healthy: false,
+                durable_receipts: false,
+            }
+        }
+        // The blocking health/admission checks remain successful. A nonblocking
+        // discovery probe can report false simply because apply owns its mutex.
+    }
+    let local = Store::new(0, false, Arc::new(Log)).unwrap();
+    let mut worker = local.database.worker().unwrap();
+    local.open(&mut worker, target(0).access.table, 1).unwrap();
+    let mut client = Client::new(
+        Arc::new(Network::default()),
+        BTreeMap::new(),
+        Stream { node: 0, worker: 0 },
+        0,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    client
+        .run(local.clone(), &mut worker, |tx| {
+            tx.mutate(&target(0), Mutation::Put, b"key", b"committed")
+        })
+        .unwrap();
+    client
+        .run(local, &mut worker, |tx| {
+            assert_eq!(
+                tx.get(&target(0), b"key")?.as_deref(),
+                Some(b"committed".as_slice())
+            );
+            Ok(())
+        })
+        .unwrap();
+}

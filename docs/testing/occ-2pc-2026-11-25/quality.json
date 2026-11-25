@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "checks": [
+    "native runtime and adapter Clippy with -D warnings",
+    "native API doctests",
+    "ordinary protocol Clippy with -D warnings",
+    "native source audit: 16 storage sources"
+  ],
+  "logs": {
+    "mako-occ-native-qualified.log": {
+      "path": "/tmp/mako-occ-native-qualified.log",
+      "sha256": "19f7cd80e157ed374cfdd06789d1dc3adc3432117c57712fd148fe89aad23e33"
+    },
+    "mako-occ-upper-qualified.log": {
+      "path": "/tmp/mako-occ-upper-qualified.log",
+      "sha256": "bf6297b49069f2e06fed3c41081e8681e2e919e1187eca49bbfcb005a3392197"
+    },
+    "mako-occ-quality-final.log": {
+      "path": "/tmp/mako-occ-quality-final.log",
+      "sha256": "adfd0c4f6a9609f4ee94fc1f258f4f490bd702a5299aded60b7550bc918d4c6e"
+    },
+    "mako-occ-dependencies-qualified.log": {
+      "path": "/tmp/mako-occ-dependencies-qualified.log",
+      "sha256": "d03cce175745e8db493e657b58834bddd71096bc9fce9dbabb241895465dde26"
+    }
+  }
+}

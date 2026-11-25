@@ -53,7 +53,13 @@ impl<'a> Input<'a> {
     }
 }
 pub fn decode_legacy(bytes: &[u8], expected: u32) -> Result<Vec<Row>> {
-    if bytes.len() < 18 || bytes.len() > MAX_BYTES {
+    decode_legacy_bounded(bytes, expected, MAX_BYTES)
+}
+
+/// Volatile native intents can span many bounded RPC operations. Their owned
+/// local log has a separate aggregate limit from one transport/durable frame.
+pub fn decode_legacy_bounded(bytes: &[u8], expected: u32, limit: usize) -> Result<Vec<Row>> {
+    if bytes.len() < 18 || bytes.len() > limit {
         return Err(invalid("redo log length"));
     }
     let mut input = Input(&bytes[..bytes.len() - 8]);

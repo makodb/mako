@@ -3,8 +3,8 @@ use crate::wire::*;
 use std::time::Duration;
 
 /// Owned request/reply transport. Replies may be lost and a failed call may
-/// already have executed remotely. Implementations authenticate endpoints and
-/// never silently retry transaction INSTALL requests. Per-request identity
+/// already have executed remotely. Implementations use configured trusted peers
+/// and never silently replay transaction bodies. Per-request identity
 /// validation belongs to the protocol caller. See the contract document.
 pub trait Transport: Send + Sync {
     fn call(&self, endpoint: &str, message: Message, timeout: Duration) -> Result<Reply>;
@@ -35,15 +35,19 @@ pub trait Transport: Send + Sync {
     }
 }
 
-/// One affine local transaction worker. The protocol has already validated
-/// identity, payload bounds and sequencing when it calls execute. `begin`
-/// requires cleanup of the previous uninstalled attempt, fresh admission and
-/// retained table/epoch ownership. Validation certifies all observations;
-/// install success includes the configured log and terminal publication.
-/// Other failures complete definite local cleanup or report uncertainty.
-/// The implementation owns rollback on drop and must retain protection after
-/// an uncertain outcome even when the request lane is destroyed.
+/// One affine execution worker. The lane validates identity, bounds and sequence
+/// before execute. A new attempt requires cleanup of previous unprepared work,
+/// fresh admission and retained table/epoch ownership. The native runtime handles
+/// Lock, Prepare and Decide outside this execution interface. Frozen work must
+/// remain owned by the retained service until its saved outcome completes;
+/// ordinary request or listener teardown cannot roll it back.
 pub trait ParticipantEngine {
+    /// A frozen participant must reject further execution without replacing its
+    /// retained admission/receipt state. Terminal 2PC commands have a separate
+    /// transaction identity and are dispatched by the retained worker service.
+    fn accepts(&self, _action: &Action) -> bool {
+        true
+    }
     fn minimum_term(&self) -> u32;
     fn execute(&mut self, request: &Request, begin: bool) -> Result<Value>;
     fn release_terminal(&mut self);

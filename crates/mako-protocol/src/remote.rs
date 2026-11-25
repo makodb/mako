@@ -23,6 +23,71 @@ pub struct Remotes {
     timeout: Duration,
 }
 impl Remotes {
+    pub fn transaction_id(&self) -> crate::journal::TransactionId {
+        crate::journal::TransactionId {
+            coordinator: self.stream.node,
+            worker: self.stream.worker,
+            incarnation: self.identity.incarnation,
+            attempt: self.identity.attempt,
+        }
+    }
+    pub fn owners(&self) -> Vec<u32> {
+        self.peers.keys().copied().collect()
+    }
+    pub fn members(&self) -> Vec<crate::journal::Member> {
+        self.peers
+            .iter()
+            .map(|(&owner, peer)| {
+                let mut endpoints = vec![peer.endpoint.clone()];
+                if let Some(replicas) = self.replicas.get(&owner) {
+                    for endpoint in &replicas.endpoints {
+                        if !endpoints.contains(endpoint) {
+                            endpoints.push(endpoint.clone());
+                        }
+                    }
+                }
+                crate::journal::Member {
+                    owner,
+                    endpoints,
+                    lease: peer.incarnation,
+                }
+            })
+            .collect()
+    }
+    pub fn transaction_call(
+        &self,
+        owner: u32,
+        action: TransactionAction,
+    ) -> Result<TransactionValue> {
+        let peer = self.peers.get(&owner).ok_or_else(|| {
+            Error::new(
+                ErrorCode::Invalid,
+                "transaction participant is not enrolled",
+            )
+        })?;
+        let id = self.transaction_id();
+        let reply = self.network.call(
+            &peer.endpoint,
+            Message::Transaction(TransactionRequest {
+                id,
+                lease: peer.incarnation,
+                term: self.identity.term,
+                action,
+            }),
+            self.timeout,
+        )?;
+        match reply {
+            Reply::Transaction(response) if response.id == id && response.owner == owner => {
+                response.result
+            }
+            Reply::Error(error) => Err(error),
+            _ => Err(Error::new(
+                ErrorCode::Transport,
+                "transaction reply identity mismatch",
+            )),
+        }
+    }
+
     fn select(&mut self, owner: u32) -> Result<()> {
         if !self.peers.contains_key(&owner) {
             let endpoint = if let Some(replicas) = self.replicas.get(&owner) {

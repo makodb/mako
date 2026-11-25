@@ -45,6 +45,25 @@ impl Default for Session {
     }
 }
 impl Session {
+    pub fn owns_transaction(&self, request: &crate::wire::TransactionRequest) -> bool {
+        self.binding == Some((request.id.incarnation, request.lease))
+            && self.last.as_ref().is_some_and(|last| {
+                last.stream.node == request.id.coordinator
+                    && last.stream.worker == request.id.worker
+                    && last.identity.incarnation == request.lease
+                    && last.identity.attempt == request.id.attempt
+                    && last.identity.term == request.term
+            })
+    }
+    pub fn seal_external(&mut self) {
+        self.phase = Phase::Sealed;
+    }
+    pub fn finish_external(&mut self, outcome: crate::journal::Outcome) {
+        self.phase = match outcome {
+            crate::journal::Outcome::Commit => Phase::Committed,
+            crate::journal::Outcome::Abort => Phase::Aborted,
+        };
+    }
     /// Replace only a physically cleaned-up stream. The receiver mints a fresh
     /// lease, so a delayed OPEN cannot make its old data packets current again.
     /// Repeating the current OPEN returns the same lease after a lost reply.

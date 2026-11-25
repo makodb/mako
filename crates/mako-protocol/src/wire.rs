@@ -225,6 +225,8 @@ pub enum Action {
         timestamp: u32,
     },
     Abort,
+    /// Start an empty participant, including the coordinator's local shard.
+    Begin,
 }
 impl Action {
     pub fn valid(&self) -> bool {
@@ -256,6 +258,42 @@ pub struct Request {
     pub stream: Stream,
     pub identity: Identity,
     pub action: Action,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TransactionAction {
+    Lock,
+    Prepare(crate::journal::Transaction),
+    Decide {
+        transaction: crate::journal::Transaction,
+        outcome: crate::journal::Outcome,
+    },
+    PrepareGateway {
+        transaction: crate::journal::Transaction,
+        receipt: GatewayReceipt,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TransactionRequest {
+    pub id: crate::journal::TransactionId,
+    pub lease: u64,
+    pub term: u32,
+    pub action: TransactionAction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum TransactionValue {
+    Locked { timestamp: u32, durable: bool },
+    Prepared,
+    Completed(crate::journal::Outcome),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TransactionResponse {
+    pub id: crate::journal::TransactionId,
+    pub owner: u32,
+    pub result: Result<TransactionValue>,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Row {
@@ -308,6 +346,13 @@ pub enum Message {
         operation: u32,
         payload: Vec<u8>,
     },
+    Transaction(TransactionRequest),
+    /// Query the coordinator authority. When resolve is true, that authority
+    /// may atomically choose Abort if no final decision has been recorded.
+    TransactionOutcome {
+        transaction: crate::journal::Transaction,
+        resolve: bool,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
@@ -316,8 +361,17 @@ pub enum Reply {
     Gateway(GatewayResponse),
     Route(Result<Target>),
     Participant(Response),
-    Migration { status: u32, payload: Vec<u8> },
+    Migration {
+        status: u32,
+        payload: Vec<u8>,
+    },
     Error(Error),
+    Transaction(TransactionResponse),
+    TransactionOutcome {
+        id: crate::journal::TransactionId,
+        owner: u32,
+        outcome: Result<Option<crate::journal::Outcome>>,
+    },
 }
 
 fn codec() -> impl Options {

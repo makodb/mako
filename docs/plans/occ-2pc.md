@@ -10,7 +10,9 @@ Implementation branch: `occ-2pc` in `/var/tmp/mako-shard-rust`.
 The user authorized implementation through completion, including updating the
 book. The agreed OCC rule is to acquire every transaction write lock across all
 participants before final read validation. Do not add shard-wide certification
-locks. Implementation is in progress; the inventory is complete.
+locks. All six implementation stages and their qualification checks are complete.
+The implementation is committed locally on `occ-2pc`; mainline promotion is a
+separate action.
 
 The implementation target includes recovery for durable/replicated deployments,
 with an explicit volatile mode for development. This follows the recommended
@@ -23,9 +25,9 @@ Do not add early client success, speculative visibility, dependency rollback,
 one-phase commit shortcuts or read-only voting shortcuts. Evaluate optimizations
 after the baseline passes its correctness gates.
 
-## Current implementation
+## Starting inventory at `7cdaecafe`
 
-| Area | Current behavior | Required change |
+| Area | Starting behavior | Implemented change |
 | --- | --- | --- |
 | `mako-protocol-core/src/coordinator.rs` | Flush remote writes, lock locally, select timestamp, validate locally/remotely, install locally/remotely, append local log, finish | Explicit prepare votes, immutable global decision before installation, and decision delivery/recovery |
 | `mako-protocol-core/src/admission.rs` | Active, Sealed, Committed, Aborted and Unknown; newer terms can replace active work | Prepared state that survives request-lane replacement and cannot be aborted by a newer request or timeout |
@@ -39,8 +41,8 @@ after the baseline passes its correctness gates.
 
 The old `docs/architecture/speculative-2pc.md` describes the removed C++/Paxos
 implementation. It is historical context, not the specification of the current
-Rust path. In particular, the current Rust coordinator already waits for its log
-callback; the problem is the ordering and recovery of distributed decisions.
+Rust path. The starting Rust coordinator waited for its log callback, but its distributed
+decision ordering and recovery needed replacement.
 
 ## Protocol target
 
@@ -65,7 +67,8 @@ callback; the problem is the ordering and recovery of distributed decisions.
    or recovery, not a conflicting Abort decision.
 
 Coordinator states: Executing, Preparing, CommitDecided or AbortDecided, Complete.
-Participant states: Executing, Prepared, Committed or Aborted. Keep uncertainty
+Participant states: Executing, Locked, Preparing, Prepared, Committed or Aborted.
+Preparing retains protection when an append may have persisted. Keep uncertainty
 about an RPC or log result separate from the recorded transaction decision.
 
 Prepare, Commit, Abort and outcome lookup carry a stable transaction ID, the
@@ -81,10 +84,10 @@ one-time local check with neither retained read/predicate protection nor an
 ordering rule that makes the votes globally compatible. 2PC agrees on a commit
 decision; it does not supply that missing concurrency-control rule.
 
-The current coordinator flushes and locks remote writes before the validation
-round, then locks local writes before validating any participant. Replacing that
-sequence with independent lock-and-validate Prepare handlers needs a new
-cross-shard argument.
+The previous coordinator locked remote and local writes before validation. The
+replacement preserves that all-participant barrier and adds durable prepare,
+immutable decisions and recovery. Independent lock-and-validate Prepare handlers
+would require a different cross-shard argument.
 
 For example, transaction A reads x and writes y, while B reads y and writes x.
 If each participant certifies an unprotected read before the other transaction
@@ -145,39 +148,33 @@ design. This transaction change does not by itself remove the restriction.
 
 ## Implementation stages
 
+All stages below are complete.
+
 | Stage | Deliverable | Completion check |
 | --- | --- | --- |
 | 1 | Inventory, protocol specification and recovery scope | State transitions, authority, conflict protection and success semantics are explicit |
 | 2 | Executable coordinator/participant core and journal contracts | Verus checks the production transitions; deterministic tests reject conflicting votes/decisions and premature installation |
 | 3 | Preserve the global write-lock barrier and implement prepared ownership | Cross-shard write-skew, point/absence/scan conflicts, read-only transactions, gateway concurrency and prepared teardown tests pass |
-| 4 | Durable prepare/decision/completion and recovery adapters, if in scope | Restart and leader-change fault matrix preserves decisions, intents and conflict protection |
+| 4 | Durable prepare/decision/completion and recovery adapters | Restart and leader-change fault matrix preserves decisions, intents and conflict protection |
 | 5 | Runtime, client and migration integration | The deployed path uses the verified core; lost replies resolve by transaction ID; prepared work blocks migration drain |
 | 6 | Remove obsolete speculative paths and qualify the replacement | Fast upper gate, focused native regressions, protocol compatibility checks and updated documentation pass |
 
-## Checkpoints
+## Implementation record
 
-- Created branch `occ-2pc` from `7cdaecafe`, now on `mako-dev`.
-- Located the book at `docs/mako-book.md`. Its speculative commit chapter and
-  related architecture text require replacement with the implemented protocol.
-- Starting the shared executable state machine and durable journal contracts.
-- Added the executable coordinator/participant state, journal transitions and
-  generic commit driver. The full upper check passed in 147.200 seconds with 32
-  CPUs: 1495 sharding, 40 storage-host and 46 protocol verified entries, 20
-  semantic negative controls, and 53 executable cases. Report:
-  `build_docker/upper/runs/20261125T035517-6vkos7t2/report.json`.
-- The native prepared-redo regression passes: exporting intent leaves the
-  participant validated and abortable without publishing rows. A real RocksDB
-  restart regression passes across prepare, decision and completion boundaries;
-  a conflicting later decision retains the first outcome.
-- Local and replicated journal adapters compile. The foreground runtime still
-  uses the previous coordinator; production cutover and Raft journal regressions
-  remain pending.
-- Prepared work must be owned by the service rather than a client stack frame.
-  Next, route the local participant through the same retained worker service as
-  remote participants, keeping the public transaction API. This permits client
-  teardown without dropping a prepared STO frame, and gives recovery a worker
-  that can finish the saved decision. Use row/predicate locks, not a shard-wide
-  certification reservation.
+- Started from `7cdaecafe`, the accepted upper verification work on `mako-dev`.
+  Implementation stays on `occ-2pc` until separately promoted.
+- Foundation commit `7c3275139` adds the executable 2PC states, journal contracts,
+  effect driver, prepared redo and durable/replicated journal adapters.
+- The client and gateway now call the shared driver. Local and remote participants
+  belong to the shard service through prepare and recovery. Ordinary request
+  teardown cannot release prepared protections.
+- The runtime refuses obsolete distributed Timestamp/Validate/Install controls.
+  Lower-component callback APIs and tests remain separate compatibility code.
+- Saved gateway receipts and `Client::resolve` preserve the original attempt
+  across uncertain replies. Restart and elected-replica recovery restore saved
+  intents before foreground admission.
+- The book and upper contracts describe the implemented path and its limitations.
+  The cache HLC reference remains separate from distributed timestamp encoding.
 
 ## Verification and test obligations
 
@@ -225,3 +222,32 @@ benchmark result or add performance runs to normal compilation.
 - [Tu et al., Speedy Transactions in Multicore In-Memory Databases](https://people.csail.mit.edu/stephentu/papers/silo.pdf),
   for local OCC read/write-set validation. Its shared-memory correctness argument
   does not substitute for an argument about independently timed distributed votes.
+
+## Qualification
+
+The [qualification record](../testing/occ-2pc-2026-11-25/README.md) retains exact
+source inputs, commands and results. The final upper gate passed in 158.940
+seconds on 32 logical CPUs: 1495 sharding, 40 storage-host and 46 protocol verified
+entries, 20 semantic negative controls and 57 executable cases.
+
+The native debug runtime suite passed all 52 cases in fresh processes. These
+include cross-shard point/absence/scan cycles, retained prepares, exact identity,
+local restart, process SIGKILL recovery, replicated prepared recovery, gateway
+receipts, migration and application regressions. The final release suite passed all 53 cases, including an added prepared-worker
+panic regression. Eight focused cases passed under both ASan and TSan. Native
+and protocol Clippy, API doctests, the 16-source storage audit and the 12-program
+production dependency audit passed.
+
+The regression run found and fixed two integration failures. A nonblocking Raft
+health probe could report busy during a valid completion; the participant worker
+now checks authoritative health separately. Large volatile Redis transactions
+need an aggregate intent bound separate from the per-message wire limit. A
+prepared worker panic now fences shard admission before native cleanup releases
+locks, retains the migration pin, and preserves the saved decision.
+
+Remaining boundaries are intentional and documented: trusted non-Byzantine
+peers, blocking 2PC while coordinator authority is unavailable, no volatile
+restart guarantee, no terminal-record reclamation, no mixed-version rolling
+upgrade, and no live migration with local persistence or Raft. The new upper
+proofs establish conditional state-machine properties, not a whole-stack proof
+of physical storage, consensus or network delivery.

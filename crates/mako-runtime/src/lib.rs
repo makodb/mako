@@ -1,6 +1,7 @@
 //! Native application ownership, shard sessions and SRPC transport.
-//! Transaction algorithms remain in STO; routing and migration remain in
-//! mako-sharding. This crate owns their process and network lifetimes.
+//! Distributed commit decisions use mako-protocol; native conflict protection
+//! uses STO. Routing and migration remain in mako-sharding. This crate owns
+//! their process and network lifetimes.
 pub mod admission;
 #[cfg(feature = "native-storage")]
 pub mod benchmark;
@@ -18,6 +19,8 @@ pub mod gateway_client;
 pub mod migration;
 #[cfg(feature = "native-storage")]
 pub mod node;
+#[cfg(feature = "native-storage")]
+mod prepared;
 #[cfg(feature = "native-storage")]
 pub mod process;
 #[cfg(feature = "native-storage")]

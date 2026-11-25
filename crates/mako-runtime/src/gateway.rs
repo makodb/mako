@@ -4,7 +4,7 @@
 use crate::{
     migration::Schema,
     rpc::{Network, Respond},
-    storage::{engine, CommitLog, LogCallbacks, Store},
+    storage::{engine, Store},
     wire::*,
 };
 use mako_sharding::{gateway as core, types::NO_SNAPSHOT};
@@ -20,19 +20,6 @@ use std::{
     time::Duration,
 };
 use sto_tpcc_ffi::native as sto;
-
-struct GatewayLog<'a> {
-    log: &'a dyn CommitLog,
-    receipt: GatewayReceipt,
-    submitted: AtomicBool,
-}
-impl CommitLog for GatewayLog<'_> {
-    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
-        self.log.append_gateway(bytes, time_term, &self.receipt)?;
-        self.submitted.store(true, Ordering::Release);
-        Ok(())
-    }
-}
 
 pub struct Config {
     pub schema: Arc<Schema>,
@@ -145,9 +132,9 @@ impl RunningGateway {
                                 Work::Route(request, respond) => {
                                     respond(Reply::Route(state.route(request)))
                                 }
-                                Work::Operation(request, respond) => {
-                                    respond(Reply::Gateway(state.operation(&mut worker, request)))
-                                }
+                                Work::Operation(request, respond) => respond(Reply::Gateway(
+                                    state.operation(&mut worker, index as u32, request),
+                                )),
                             }
                         }
                         for work in receive.lock().try_iter() {
@@ -234,7 +221,12 @@ impl State {
             self.store.migration,
         )
     }
-    fn operation(&self, worker: &mut sto::Worker, request: GatewayRequest) -> GatewayResponse {
+    fn operation(
+        &self,
+        worker: &mut sto::Worker,
+        lane: u32,
+        request: GatewayRequest,
+    ) -> GatewayResponse {
         if request.key.len() > 64 || request.value.len() > 8000 {
             return response(&request, rejected());
         }
@@ -252,7 +244,30 @@ impl State {
         }
         let admission = self.admission.lock().admit(decoded);
         let reply = match admission {
-            core::Admission::Reply(reply) => reply,
+            core::Admission::Reply(reply) => {
+                if reply.outcome == core::UNKNOWN
+                    && request
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.owner == self.store.owner)
+                {
+                    match self.store.gateway_receipt(&request) {
+                        Ok(Some(saved)) => {
+                            let resolved =
+                                terminal(saved.status, saved.outcome, saved.op_result, saved.value);
+                            self.admission.lock().finish(
+                                request.client,
+                                request.sequence,
+                                resolved.clone(),
+                            );
+                            resolved
+                        }
+                        _ => reply,
+                    }
+                } else {
+                    reply
+                }
+            }
             core::Admission::Execute => {
                 let reply = if request
                     .target
@@ -261,7 +276,7 @@ impl State {
                 {
                     self.forward(&request)
                 } else {
-                    self.local(worker, &request)
+                    self.local(worker, lane, &request)
                 };
                 self.admission
                     .lock()
@@ -326,128 +341,109 @@ impl State {
             _ => terminal(1, core::UNKNOWN, false, Vec::new()),
         }
     }
-    fn local(&self, worker: &mut sto::Worker, request: &GatewayRequest) -> core::Reply {
+    fn local(&self, worker: &mut sto::Worker, lane: u32, request: &GatewayRequest) -> core::Reply {
         let Some(target) = &request.target else {
             return rejected();
         };
-        // Retry only a definite pre-install conflict. This is a single storage
-        // operation and its retained gateway identity survives every attempt.
-        for _ in 0..16 {
-            let protection = match self.store.protect() {
-                Ok(pin) => pin,
+        let service =
+            match crate::receiver::ParticipantService::for_store(&self.store, self.network.clone())
+            {
+                Ok(service) => service,
                 Err(error) => return failed(error, false),
             };
-            if let Err(error) = protection.point(&target.access, &request.key) {
+        if let Err(error) = service.recover() {
+            return failed(error, false);
+        }
+        let mut client = match crate::client::Client::new(
+            self.network.clone(),
+            self.endpoints.clone(),
+            Stream {
+                node: self.store.owner,
+                worker: 0x8000_0000 + lane,
+            },
+            self.store.term.load(Ordering::Acquire),
+            Duration::from_secs(5),
+        ) {
+            Ok(client) => client,
+            Err(error) => return failed(error, false),
+        };
+        for (&owner, replicas) in &self.replicas {
+            if let Err(error) = client.set_replicas(owner, replicas.clone()) {
                 return failed(error, false);
             }
-            match self.store.log.gateway_receipt(request) {
+        }
+        for _ in 0..16 {
+            match self.store.gateway_receipt(request) {
                 Ok(Some(reply)) => {
                     return terminal(reply.status, reply.outcome, reply.op_result, reply.value)
                 }
                 Ok(None) => (),
                 Err(error) => return failed(error, false),
             }
-            let table = match self.store.table(target.access.table) {
-                Ok(table) => table,
-                Err(error) => return failed(error, false),
-            };
-            let mut participant =
-                match worker.begin_participant(self.store.term.load(Ordering::Acquire)) {
-                    Ok(p) => p,
-                    Err(error) => return failed(engine(error), false),
-                };
-            let result: Result<(bool, Vec<u8>)> = match request.kind {
-                core::GET => participant
-                    .get(&table.tree, &request.key)
-                    .map(|row| (row.value.is_some(), row.value.unwrap_or_default()))
-                    .map_err(engine),
-                core::PUT | core::INSERT | core::DELETE => {
-                    let mutation = match request.kind {
-                        core::PUT => sto::Mutation::Put,
-                        core::INSERT => sto::Mutation::Insert,
-                        _ => sto::Mutation::Remove,
-                    };
-                    participant
-                        .mutate(
-                            &table.tree,
-                            table.log_id,
-                            mutation,
-                            &request.key,
-                            &request.value,
-                            false,
-                        )
-                        .map(|changed| (changed, Vec::new()))
-                        .map_err(engine)
-                }
-                _ => Err(Error::new(
-                    ErrorCode::Invalid,
-                    "unsupported gateway operation",
-                )),
-            };
-            let (changed, value) = match result {
-                Ok(result) if result.1.len() <= 8000 => result,
-                Ok(_) => {
-                    drop(participant);
-                    return terminal(2, core::ABORTED, false, Vec::new());
-                }
-                Err(error) => {
-                    drop(participant);
-                    if error.code == ErrorCode::Conflict {
-                        continue;
+            let result = client.run(self.store.clone(), worker, |transaction| {
+                let (changed, value) = match request.kind {
+                    core::GET => {
+                        let value = transaction.get(target, &request.key)?;
+                        (value.is_some(), value.unwrap_or_default())
                     }
-                    return failed(error, false);
+                    core::PUT => {
+                        transaction.mutate(target, Mutation::Put, &request.key, &request.value)?;
+                        (true, Vec::new())
+                    }
+                    core::INSERT | core::DELETE => {
+                        let exists = transaction.get(target, &request.key)?.is_some();
+                        let changed = if request.kind == core::INSERT {
+                            !exists
+                        } else {
+                            exists
+                        };
+                        if changed {
+                            transaction.mutate(
+                                target,
+                                if request.kind == core::INSERT {
+                                    Mutation::Insert
+                                } else {
+                                    Mutation::Remove
+                                },
+                                &request.key,
+                                &request.value,
+                            )?;
+                        }
+                        (changed, Vec::new())
+                    }
+                    _ => {
+                        return Err(Error::new(
+                            ErrorCode::Invalid,
+                            "unsupported gateway operation",
+                        ))
+                    }
+                };
+                if value.len() > 8000 {
+                    return Err(Error::new(
+                        ErrorCode::Capacity,
+                        "gateway result exceeds limit",
+                    ));
                 }
-            };
-            if let Err(error) = protection.check() {
-                drop(participant);
-                return failed(error, false);
-            }
-            let success = terminal(
-                if request.kind == core::GET && !changed {
-                    3
-                } else {
-                    0
-                },
-                core::COMMITTED,
-                changed,
-                value,
-            );
-            let log = GatewayLog {
-                log: &*self.store.log,
-                receipt: GatewayReceipt {
+                let success = terminal(
+                    if request.kind == core::GET && !changed {
+                        3
+                    } else {
+                        0
+                    },
+                    core::COMMITTED,
+                    changed,
+                    value,
+                );
+                transaction.gateway_receipt(GatewayReceipt {
                     request: request.clone(),
                     response: response(request, success.clone()),
-                },
-                submitted: AtomicBool::new(false),
-            };
-            match participant
-                .commit(0, &mut LogCallbacks(&log))
-                .map_err(engine)
-            {
-                Ok(_) => {
-                    // Reads and no-change INSERT/DELETE operations have no
-                    // row log. Persist their exact result before replying too.
-                    if self.store.log.retains_gateway_receipts()
-                        && !log.submitted.load(Ordering::Acquire)
-                    {
-                        if let Err(error) = log.append(&[], 0) {
-                            self.store.quarantine(protection);
-                            return failed(error, true);
-                        }
-                    }
-                    return success;
-                }
+                });
+                Ok(success)
+            });
+            match result {
+                Ok(success) => return success,
                 Err(error) if error.code == ErrorCode::Conflict => continue,
-                Err(error) => {
-                    let uncertain = matches!(
-                        error.code,
-                        ErrorCode::Unknown | ErrorCode::CommittedFailure | ErrorCode::Fatal
-                    );
-                    if uncertain {
-                        self.store.quarantine(protection);
-                    }
-                    return failed(error, uncertain);
-                }
+                Err(error) => return failed(error, false),
             }
         }
         terminal(4, core::ABORTED, false, Vec::new())

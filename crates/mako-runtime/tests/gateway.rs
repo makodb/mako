@@ -18,20 +18,50 @@ use std::{
     time::Duration,
 };
 
+use mako_protocol::journal::{self, Entry, Journal, Record, TransactionId};
+use parking_lot::Mutex;
+
 struct Log {
+    entries: Mutex<BTreeMap<TransactionId, Entry>>,
     calls: AtomicUsize,
     fail: bool,
 }
 impl CommitLog for Log {
+    fn transaction_journal(&self) -> Option<&dyn Journal> {
+        Some(self)
+    }
     fn append(&self, _: &[u8], _: u32) -> Result<()> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        if self.fail {
-            Err(Error::new(ErrorCode::Transport, "lost log acknowledgement"))
-        } else {
-            Ok(())
-        }
+        panic!("obsolete post-install logging")
     }
 }
+impl Journal for Log {
+    fn durable(&self) -> bool {
+        false
+    }
+    fn apply(&self, record: &Record) -> Result<Entry> {
+        let mut entries = self.entries.lock();
+        let id = record.transaction().id;
+        let next = journal::transition(id.coordinator, false, entries.get(&id), record)?;
+        if !next.rows.is_empty() {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if self.fail {
+                return Err(Error::new(
+                    ErrorCode::Unknown,
+                    "completion acknowledgement lost",
+                ));
+            }
+        }
+        entries.insert(id, next.entry.clone());
+        Ok(next.entry)
+    }
+    fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
+        Ok(self.entries.lock().get(&id).cloned())
+    }
+    fn entries(&self) -> Result<Vec<Entry>> {
+        Ok(self.entries.lock().values().cloned().collect())
+    }
+}
+
 fn schema(owner: u32, nodes: u32) -> Arc<Schema> {
     Schema::new(
         vec![TableSpec {
@@ -108,6 +138,7 @@ fn route(network: &Network, endpoint: &str) -> Target {
 #[test]
 fn native_gateway_retains_mutation_result_bits_and_exact_read_bytes() {
     let log = Arc::new(Log {
+        entries: Mutex::new(BTreeMap::new()),
         calls: AtomicUsize::new(0),
         fail: false,
     });
@@ -202,6 +233,7 @@ fn native_gateway_retains_mutation_result_bits_and_exact_read_bytes() {
 #[test]
 fn unknown_gateway_commit_is_not_reexecuted_or_reported_as_an_abort() {
     let log = Arc::new(Log {
+        entries: Mutex::new(BTreeMap::new()),
         calls: AtomicUsize::new(0),
         fail: true,
     });
@@ -244,6 +276,7 @@ fn unknown_gateway_commit_is_not_reexecuted_or_reported_as_an_abort() {
 #[test]
 fn forwarded_gateway_resolves_lost_reply_without_replaying_effect() {
     let log = Arc::new(Log {
+        entries: Mutex::new(BTreeMap::new()),
         calls: AtomicUsize::new(0),
         fail: false,
     });
@@ -286,6 +319,7 @@ fn forwarded_gateway_resolves_lost_reply_without_replaying_effect() {
     let ingress_store = store(
         0,
         Arc::new(Log {
+            entries: Mutex::new(BTreeMap::new()),
             calls: AtomicUsize::new(0),
             fail: false,
         }),
