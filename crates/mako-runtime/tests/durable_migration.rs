@@ -280,6 +280,7 @@ fn replicated_case(source_rocks: bool, pause: Option<&str>) {
                 engine: if source_rocks || owner == 1 {
                     EngineConfig::RocksDb {
                         directory: root.path().join(format!("data-{i}")),
+                        masstree: false,
                     }
                 } else {
                     EngineConfig::Masstree
@@ -492,6 +493,7 @@ fn local_configs(
             } {
                 EngineConfig::RocksDb {
                     directory: root.join(format!("data-{owner}")),
+                    masstree: false,
                 }
             } else {
                 EngineConfig::Masstree

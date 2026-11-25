@@ -38,8 +38,19 @@ impl Replica {
             let mut loader = store.database.worker().unwrap();
             store.open(&mut loader, target().access.table, 1).unwrap();
         }
-        log.start_engine(config, &store, schema, b"one table".to_vec())
-            .unwrap();
+        let backing = store
+            .database
+            .persistent()
+            .unwrap_or_else(|| mako_storage_rocksdb::backing(root, 0, config.sync_writes).unwrap());
+        log.start_materialized(
+            config,
+            &store,
+            schema,
+            b"one table".to_vec(),
+            backing,
+            Default::default(),
+        )
+        .unwrap();
         Self { log, store }
     }
     fn client(&self) -> Client {

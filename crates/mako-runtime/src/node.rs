@@ -64,7 +64,12 @@ pub enum EngineConfig {
     #[default]
     Masstree,
     #[serde(rename = "rocksdb")]
-    RocksDb { directory: PathBuf },
+    RocksDb {
+        directory: PathBuf,
+        /// Keep the committed working image in Masstree and batch rows to RocksDB.
+        #[serde(default)]
+        masstree: bool,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,7 +119,7 @@ impl Config {
         Ok(identity)
     }
     pub fn schema(&self) -> Result<Arc<Schema>> {
-        if let EngineConfig::RocksDb { directory } = &self.engine {
+        if let EngineConfig::RocksDb { directory, .. } = &self.engine {
             if directory.as_os_str().is_empty() {
                 return Err(Error::new(
                     ErrorCode::Invalid,
@@ -138,6 +143,12 @@ impl Config {
             ));
         }
         let persistent = self.persistence.is_some() || self.replication.is_some();
+        if !persistent && matches!(self.engine, EngineConfig::RocksDb { masstree: true, .. }) {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "Masstree over RocksDB requires a durable transaction log",
+            ));
+        }
         if persistent == self.volatile {
             return Err(Error::new(ErrorCode::Invalid,
                 "configure a local persistence directory or Raft; volatile=true is an exclusive development/test mode"));
@@ -299,8 +310,26 @@ impl RunningNode {
                 Arc::new(MemoryLog::new(config.owner))
             }
         };
+        #[cfg(feature = "logging")]
+        let data_path = config.persistence.as_ref().map(|c| (&c.directory, c.create))
+            .or_else(|| config.replication.as_ref().map(|c| (&c.directory, c.create)))
+            .map(|(root, create)| {
+                let data = match &config.engine {
+                    EngineConfig::Masstree => root.join("data"),
+                    EngineConfig::RocksDb { directory, .. } => directory.clone(),
+                };
+                if root.join("rows").exists() || root.join("raft").exists()
+                    || (!data.join("CURRENT").is_file() && (root.join("log").exists() || root.join("log.bootstrap").exists()))
+                {
+                    return Err(Error::new(ErrorCode::Invalid, "legacy or missing RocksDB image requires offline conversion; existing files retained"));
+                }
+                if !create && (!data.join("CURRENT").is_file() || !root.join("log/FORMAT").is_file()) {
+                    return Err(Error::new(ErrorCode::Invalid, "RocksDB data/log missing; creation must be explicit"));
+                }
+                Ok(data)
+            }).transpose()?;
         let database = match &config.engine {
-            EngineConfig::Masstree => {
+            EngineConfig::Masstree | EngineConfig::RocksDb { masstree: true, .. } => {
                 #[cfg(feature = "masstree-engine")]
                 {
                     mako_storage_masstree::database().map_err(engine)?
@@ -313,7 +342,7 @@ impl RunningNode {
                     ));
                 }
             }
-            EngineConfig::RocksDb { directory } => {
+            EngineConfig::RocksDb { directory, .. } => {
                 #[cfg(feature = "rocksdb-engine")]
                 {
                     let settings = config
@@ -378,18 +407,7 @@ impl RunningNode {
                     crate::migration::CONTROL_LOG_ID,
                 )?;
             }
-            let has_bootstrap = config
-                .persistence
-                .as_ref()
-                .map(|c| c.directory.join("log.bootstrap/MANIFEST"))
-                .or_else(|| {
-                    config
-                        .replication
-                        .as_ref()
-                        .map(|c| c.directory.join("log.bootstrap/MANIFEST"))
-                })
-                .is_some_and(|p| p.exists());
-            for chunk in config.initial.chunks(128).filter(|_| !has_bootstrap) {
+            for chunk in config.initial.chunks(128) {
                 let mut tx = loader.begin().map_err(engine)?;
                 for row in chunk {
                     let table = store.table(TableKey {
@@ -406,7 +424,7 @@ impl RunningNode {
         }
         #[cfg(feature = "logging")]
         if local_log.is_some() || replicated_log.is_some() {
-            let (directory, _group, _sync_writes, create, mode) =
+            let (_directory, _group, sync_writes, _create, mode) =
                 if let Some(settings) = &config.replication {
                     let mode = crate::log::Mode::Raft(raft_host::Config {
                         group: settings.group,
@@ -448,35 +466,39 @@ impl RunningNode {
                         mode,
                     )
                 };
-            if directory.join("rows").exists() {
-                return Err(Error::new(
-                    ErrorCode::Invalid,
-                    "legacy row mirror requires offline conversion; existing data retained",
-                ));
-            }
-            if !create
-                && ((matches!(config.engine, EngineConfig::Masstree)
-                    && !directory.join("log.bootstrap/MANIFEST").is_file())
-                    || !directory.join("log/FORMAT").is_file())
-            {
-                return Err(Error::new(ErrorCode::Invalid,"engine checkpoint/log missing or legacy format; create must be explicit and existing stores require offline conversion"));
-            }
-            if directory.join("raft").exists() {
-                return Err(Error::new(
-                    ErrorCode::Invalid,
-                    "legacy Raft directory requires offline format conversion",
-                ));
-            }
             let identity = config.storage_identity()?;
+            let backing = match store.database.persistent() {
+                Some(application) => application,
+                None => mako_storage_rocksdb::backing(
+                    data_path.as_ref().expect("persistent data path"),
+                    u64::from(config.owner),
+                    sync_writes,
+                )
+                .map_err(engine)?,
+            };
             match mode {
                 crate::log::Mode::Local(settings) => local_log
                     .as_ref()
                     .expect("local log configured")
-                    .start_engine(settings, &store, schema.clone(), identity)?,
+                    .start_materialized(
+                        settings,
+                        &store,
+                        schema.clone(),
+                        identity,
+                        backing,
+                        Default::default(),
+                    )?,
                 crate::log::Mode::Raft(settings) => replicated_log
                     .as_ref()
                     .expect("Raft log configured")
-                    .start_engine(settings, &store, schema.clone(), identity)?,
+                    .start_materialized(
+                        settings,
+                        &store,
+                        schema.clone(),
+                        identity,
+                        backing,
+                        Default::default(),
+                    )?,
             }
         }
         let network = Arc::new(Network::default());

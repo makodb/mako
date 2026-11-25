@@ -91,7 +91,7 @@ fn stop(log: Arc<LocalLog>, store: Arc<Store>) {
 }
 
 #[test]
-fn local_checkpoint_replays_suffix_and_tombstones_without_rocks_user_rows() {
+fn local_checkpoint_replays_suffix_and_tombstones_from_rocks_base() {
     let root = tempfile::tempdir().unwrap();
     let (log, store) = start(root.path(), true);
     assert_eq!(
@@ -119,6 +119,7 @@ fn local_checkpoint_replays_suffix_and_tombstones_without_rocks_user_rows() {
     put(&store, b"key", b"in suffix");
     stop(log, store);
     assert!(!root.path().join("rows").exists());
+    assert!(root.path().join("log.data/CURRENT").is_file());
     assert!(root.path().join("log/checkpoints").is_dir());
     let (log, store) = start(root.path(), false);
     assert_eq!(
@@ -271,7 +272,7 @@ fn corrupt_engine_checkpoint_is_rejected_before_admission() {
         .unwrap()
         .unwrap()
         .path();
-    let rows = checkpoint.join("rows");
+    let rows = checkpoint.join("STO-CHECKPOINT");
     let mut bytes = std::fs::read(&rows).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     std::fs::write(rows, bytes).unwrap();
@@ -303,7 +304,9 @@ fn corrupt_engine_checkpoint_is_rejected_before_admission() {
         )
         .unwrap_err();
     assert!(
-        failure.message.contains("corrupt") || failure.message.contains("checksum"),
+        failure.message.contains("corrupt")
+            || failure.message.contains("checksum")
+            || failure.message.contains("identity"),
         "{failure}"
     );
 }

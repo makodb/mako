@@ -1,10 +1,9 @@
 //! Shared local and Raft log application. The pluggable Masstree path derives
-//! its protocol index and data from checkpoints plus the committed log.
+//! its protocol index and data from RocksDB plus the committed log.
 //! A locally installed proposal is identified by owned bytes and is never
 //! replayed into its own retained locks. Unknown outcomes fence the shard.
 use crate::{
     application::Index,
-    checkpoint,
     durable::DurableRows,
     migration::Schema,
     redo,
@@ -26,6 +25,9 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
+
+mod materialization;
+pub use materialization::Options as MaterializationOptions;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Command {
@@ -62,14 +64,10 @@ fn host_position(p: sto_rocksdb::Position) -> Position {
 enum ReplayWork {
     Tables(Vec<u16>, mpsc::SyncSender<Result<()>>),
     Apply(Vec<redo::Row>, mpsc::SyncSender<Result<()>>),
-    Export {
-        path: std::path::PathBuf,
-        index: Index,
-        overlay: Vec<redo::Row>,
-        identity: Vec<u8>,
-        durable: bool,
-        reply: mpsc::SyncSender<Result<()>>,
-    },
+    Bootstrap(
+        Arc<dyn mako_storage_api::PersistentApplication>,
+        mpsc::SyncSender<Result<()>>,
+    ),
 }
 struct Replay {
     sender: Option<mpsc::SyncSender<ReplayWork>>,
@@ -108,80 +106,46 @@ impl Replay {
                             continue;
                         }
                         ReplayWork::Apply(rows, reply) => (rows, reply),
-                        ReplayWork::Export {
-                            path,
-                            index,
-                            overlay,
-                            identity,
-                            durable,
-                            reply,
-                        } => {
+                        ReplayWork::Bootstrap(application, reply) => {
                             let result = (|| {
                                 let store = weak
                                     .upgrade()
                                     .ok_or_else(|| storage("shard store stopped"))?;
-                                let engine_name = format!("{:?}", store.database.kind());
-                                let mut overlay: BTreeMap<_, _> = overlay
-                                    .into_iter()
-                                    .map(|r| ((r.table, r.key.clone()), r))
-                                    .collect();
-                                checkpoint::write(
-                                    &path,
-                                    checkpoint::Identity {
-                                        owner: store.owner,
-                                        engine: &engine_name,
-                                        schema: &identity,
-                                        durable,
-                                    },
-                                    &index,
-                                    |write| {
-                                        for (_, table) in store.tables() {
-                                            let mut after: Option<Vec<u8>> = None;
-                                            loop {
-                                                let page = worker
-                                                    .checkpoint_page(
-                                                        &table.tree,
-                                                        after.as_deref(),
-                                                        256,
-                                                    )
-                                                    .map_err(engine)?;
-                                                if !page.end && page.rows.is_empty() {
-                                                    return Err(storage(
-                                                        "checkpoint export made no progress",
-                                                    ));
-                                                }
-                                                for row in page.rows {
-                                                    if after
-                                                        .as_ref()
-                                                        .is_some_and(|prior| prior >= &row.key)
-                                                    {
-                                                        return Err(storage(
-                                                            "checkpoint export key order",
-                                                        ));
-                                                    }
-                                                    after = Some(row.key.clone());
-                                                    let row = overlay
-                                                        .remove(&(table.log_id, row.key.clone()))
-                                                        .unwrap_or(redo::Row {
-                                                            table: table.log_id,
-                                                            key: row.key,
-                                                            value: row.value,
-                                                            time_term: row.time_term,
-                                                        });
-                                                    write(row)?;
-                                                }
-                                                if page.end {
-                                                    break;
-                                                }
+                                for (_, table) in store.tables() {
+                                    application.ensure_tables(&[table.log_id]).map_err(engine)?;
+                                    let mut after = None;
+                                    loop {
+                                        // 128 maximum-size protocol rows fit below
+                                        // the native 16 MiB materialization bound.
+                                        let page = worker
+                                            .checkpoint_page(&table.tree, after.as_deref(), 128)
+                                            .map_err(engine)?;
+                                        if !page.end && page.rows.is_empty() {
+                                            return Err(storage(
+                                                "bootstrap export made no progress",
+                                            ));
+                                        }
+                                        let mut rows = Vec::new();
+                                        for row in page.rows {
+                                            if after.as_ref().is_some_and(|prior| prior >= &row.key)
+                                            {
+                                                return Err(storage("bootstrap export key order"));
                                             }
+                                            after = Some(row.key.clone());
+                                            rows.push(redo::Row {
+                                                table: table.log_id,
+                                                key: row.key,
+                                                value: row.value,
+                                                time_term: row.time_term,
+                                            });
                                         }
-                                        for (_, row) in overlay {
-                                            schema.key_for_log(row.table)?;
-                                            write(row)?;
+                                        application.bootstrap(&rows).map_err(engine)?;
+                                        if page.end {
+                                            break;
                                         }
-                                        Ok(())
-                                    },
-                                )
+                                    }
+                                }
+                                Ok(())
                             })();
                             let _ = reply.send(result);
                             continue;
@@ -249,26 +213,15 @@ impl Replay {
             .map_err(storage)?;
         receive.recv().map_err(storage)?
     }
-    fn export(
+    fn bootstrap(
         &self,
-        path: &Path,
-        index: Index,
-        overlay: Vec<redo::Row>,
-        identity: &[u8],
-        durable: bool,
+        application: Arc<dyn mako_storage_api::PersistentApplication>,
     ) -> Result<()> {
         let (reply, receive) = mpsc::sync_channel(1);
         self.sender
             .as_ref()
             .expect("live replay")
-            .send(ReplayWork::Export {
-                path: path.into(),
-                index,
-                overlay,
-                identity: identity.to_vec(),
-                durable,
-                reply,
-            })
+            .send(ReplayWork::Bootstrap(application, reply))
             .map_err(storage)?;
         receive.recv().map_err(storage)?
     }
@@ -295,9 +248,7 @@ struct Gate {
     active: usize,
     fault: Option<String>,
     pending: BTreeMap<(u64, u64), Vec<u8>>,
-    // Complete is durable before the affine participant installs. Checkpoints
-    // overlay these exact committed rows while publication is paused.
-    installing: BTreeMap<TransactionId, Vec<redo::Row>>,
+    materialization: materialization::Pending,
 }
 struct State {
     owner: u32,
@@ -307,7 +258,8 @@ struct State {
     persistent: Option<Arc<dyn mako_storage_api::PersistentApplication>>,
     index: Mutex<Index>,
     identity: Vec<u8>,
-    engine_name: String,
+    accelerated: bool,
+    limits: MaterializationOptions,
     replay: Replay,
     schema: Arc<Schema>,
 }
@@ -329,20 +281,6 @@ impl State {
         }
         Ok(())
     }
-    fn persist(&self, change: &crate::application::Change) -> Result<()> {
-        self.replay.tables(change.table_ids())?;
-        if let Some(application) = &self.persistent {
-            application
-                .apply(
-                    change.position.into(),
-                    change.fingerprint(),
-                    &change.rows,
-                    &change.metadata()?,
-                )
-                .map_err(engine)?;
-        }
-        Ok(())
-    }
     fn load_persistent(&self) -> Result<()> {
         if let Some(application) = &self.persistent {
             let index = Index::from_metadata(
@@ -357,7 +295,37 @@ impl State {
                 .into_iter()
                 .map(|id| u16::try_from(id).map_err(storage))
                 .collect::<Result<Vec<_>>>()?;
-            self.replay.tables(ids)?;
+            self.replay.tables(ids.clone())?;
+            if self.accelerated {
+                for table in ids {
+                    let mut after = None;
+                    loop {
+                        let page = application
+                            .page(table, after.as_deref(), 256)
+                            .map_err(engine)?;
+                        if !page.end && page.rows.is_empty() {
+                            return Err(storage("RocksDB recovery made no progress"));
+                        }
+                        let mut rows = Vec::new();
+                        for row in page.rows {
+                            if after.as_ref().is_some_and(|prior| prior >= &row.key) {
+                                return Err(storage("RocksDB recovery key order"));
+                            }
+                            after = Some(row.key.clone());
+                            rows.push(redo::Row {
+                                table,
+                                key: row.key,
+                                value: row.value,
+                                time_term: row.time_term,
+                            });
+                        }
+                        self.replay.apply(rows)?;
+                        if page.end {
+                            break;
+                        }
+                    }
+                }
+            }
             *self.index.lock() = index;
         }
         Ok(())
@@ -394,14 +362,6 @@ impl State {
             None => Ok(None),
         }
     }
-    fn checkpoint_identity(&self) -> checkpoint::Identity<'_> {
-        checkpoint::Identity {
-            owner: self.owner,
-            engine: &self.engine_name,
-            schema: &self.identity,
-            durable: self.durable_transactions,
-        }
-    }
     fn ensure(gate: &Gate) -> Result<()> {
         if let Some(error) = &gate.fault {
             Err(Error::new(ErrorCode::Unknown, error.clone()))
@@ -424,7 +384,7 @@ impl StateMachine for State {
                 }
                 let mut index = self.index.lock();
                 let change = index.no_op(p.into())?;
-                self.persist(&change)?;
+                self.persist(&mut gate, index.position, &change)?;
                 index.publish(change);
                 return Ok(());
             };
@@ -468,14 +428,9 @@ impl StateMachine for State {
                         self.durable_transactions,
                         &command.record,
                     )?;
-                    self.persist(&change)?;
-                    if self.persistent.is_none() && !change.rows.is_empty() {
-                        if local {
-                            gate.installing
-                                .insert(command.record.transaction().id, change.rows.clone());
-                        } else {
-                            self.replay.apply(change.rows.clone())?;
-                        }
+                    self.persist(&mut gate, index.position, &change)?;
+                    if self.accelerated && !local && !change.rows.is_empty() {
+                        self.replay.apply(change.rows.clone())?;
                     }
                     index.publish(change);
                 }
@@ -519,43 +474,51 @@ impl StateMachine for State {
                 let mut index = self.index.lock();
                 let change =
                     index.gateway(p.into(), bytes, &command.rows, command.receipt.as_ref())?;
-                self.persist(&change)?;
-                if self.persistent.is_none() && !local {
+                self.persist(&mut gate, index.position, &change)?;
+                if self.accelerated && !local {
                     self.replay.apply(change.rows.clone())?;
                 }
                 index.publish(change);
             }
             Ok(())
         })();
+        let result = result.and_then(|()| {
+            if gate.materialization.full(self.limits) {
+                self.flush_locked(&mut gate, self.position()?)?;
+            }
+            Ok(())
+        });
         if let Err(error) = &result {
             gate.fault = Some(error.to_string());
         }
         result.map_err(|error| error.to_string())
     }
     fn create_checkpoint(&self, path: &Path, p: Position) -> std::result::Result<(), String> {
-        let gate = self.gate.lock();
+        let mut gate = self.gate.lock();
         let result = (|| {
             Self::ensure(&gate)?;
             if let Some(durable) = &self.durable {
                 return durable.create_checkpoint(path, position(p));
             }
-            if let Some(application) = &self.persistent {
-                return application
-                    .create_checkpoint(path, crate::application::Position::from(p).into())
-                    .map_err(engine);
-            }
-            let index = self.index.lock().clone();
-            if index.position != p.into() {
+            if self.position()? != p {
                 return Err(storage("checkpoint cut differs from applied prefix"));
             }
-            let overlay = gate.installing.values().flatten().cloned().collect();
-            self.replay.export(
-                path,
-                index,
-                overlay,
-                &self.identity,
-                self.durable_transactions,
-            )
+            self.flush_locked(&mut gate, p)?;
+            let application = self
+                .persistent
+                .as_ref()
+                .ok_or_else(|| storage("missing RocksDB backing"))?;
+            let durable = application.position().map_err(engine)?;
+            if !mako_protocol_core::recovery::materialized_checkpoint(
+                p.index,
+                durable.index,
+                p.term == durable.term,
+            ) {
+                return Err(storage("checkpoint does not cover applied prefix"));
+            }
+            application
+                .create_checkpoint(path, crate::application::Position::from(p).into())
+                .map_err(engine)
         })();
         result.map_err(|e| e.to_string())
     }
@@ -575,8 +538,7 @@ impl StateMachine for State {
                 Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
                 return Ok(());
             }
-            checkpoint::validate(path, self.checkpoint_identity(), p.into())?;
-            checkpoint::visit(path, |row| self.schema.key_for_log(row.table).map(|_| ()))
+            Err(storage("missing RocksDB backing"))
         })();
         result.map_err(|e| e.to_string())
     }
@@ -605,31 +567,10 @@ impl StateMachine for State {
                 application
                     .publish_checkpoint(path, crate::application::Position::from(p).into())
                     .map_err(engine)?;
+                gate.materialization.clear();
                 return self.load_persistent();
             }
-            let index = checkpoint::validate(path, self.checkpoint_identity(), p.into())?;
-            let replay_start = mako_protocol_core::recovery::replay_start(
-                self.index.lock().position.index,
-                p.index,
-            );
-            if index.position.index != replay_start {
-                return Err(storage("checkpoint replay start mismatch"));
-            }
-            let mut batch = Vec::new();
-            checkpoint::visit(path, |row| {
-                self.schema.key_for_log(row.table)?;
-                batch.push(row);
-                if batch.len() == 256 {
-                    self.replay.apply(std::mem::take(&mut batch))?;
-                }
-                Ok(())
-            })?;
-            if !batch.is_empty() {
-                self.replay.apply(batch)?;
-            }
-            *self.index.lock() = index;
-            gate.installing.clear();
-            Ok(())
+            Err(storage("missing RocksDB backing"))
         })();
         if let Err(error) = &result {
             gate.fault = Some(error.to_string());
@@ -703,6 +644,7 @@ struct Binding {
     host: Driver,
     state: Arc<State>,
     group: Option<u64>,
+    flusher: Mutex<Option<materialization::Flusher>>,
 }
 /// Shared implementation behind the typed local and replicated logs.
 pub struct Log<C> {
@@ -738,7 +680,15 @@ impl<C: Into<Mode>> Log<C> {
         schema: Arc<Schema>,
         durable: Arc<DurableRows>,
     ) -> Result<()> {
-        self.start_backing(config, store, schema, Some(durable), Vec::new())
+        self.start_backing(
+            config,
+            store,
+            schema,
+            Some(durable),
+            Vec::new(),
+            None,
+            MaterializationOptions::default(),
+        )
     }
     pub fn start_engine(
         &self,
@@ -747,8 +697,29 @@ impl<C: Into<Mode>> Log<C> {
         schema: Arc<Schema>,
         identity: Vec<u8>,
     ) -> Result<()> {
-        self.start_backing(config, store, schema, None, identity)
+        self.start_backing(
+            config,
+            store,
+            schema,
+            None,
+            identity,
+            None,
+            MaterializationOptions::default(),
+        )
     }
+    /// Use a shared RocksDB data directory with either transaction adapter.
+    pub fn start_materialized(
+        &self,
+        config: C,
+        store: &Arc<Store>,
+        schema: Arc<Schema>,
+        identity: Vec<u8>,
+        backing: Arc<dyn mako_storage_api::PersistentApplication>,
+        limits: MaterializationOptions,
+    ) -> Result<()> {
+        self.start_backing(config, store, schema, None, identity, Some(backing), limits)
+    }
+    #[allow(clippy::too_many_arguments)]
     fn start_backing(
         &self,
         config: C,
@@ -756,6 +727,8 @@ impl<C: Into<Mode>> Log<C> {
         schema: Arc<Schema>,
         durable: Option<Arc<DurableRows>>,
         identity: Vec<u8>,
+        backing: Option<Arc<dyn mako_storage_api::PersistentApplication>>,
+        limits: MaterializationOptions,
     ) -> Result<()> {
         if self.binding.get().is_some() {
             return Err(storage("transaction log already started"));
@@ -765,8 +738,26 @@ impl<C: Into<Mode>> Log<C> {
             Mode::Local(config) => config.sync_writes,
             Mode::Raft(config) => config.sync_writes,
         };
+        let limits = limits.validate()?;
+        let accelerated = durable.is_none() && store.database.persistent().is_none();
         let persistent = if durable.is_none() {
-            store.database.persistent()
+            match backing.or_else(|| store.database.persistent()) {
+                Some(application) => Some(application),
+                None => {
+                    let (log_path, create) = match &config {
+                        Mode::Local(c) => (&c.directory, c.create),
+                        Mode::Raft(c) => (&c.directory, c.create),
+                    };
+                    let data = log_path.with_extension("data");
+                    if !data.join("CURRENT").exists() && (!create || log_path.exists()) {
+                        return Err(storage("RocksDB data image missing; existing file-only state requires offline conversion"));
+                    }
+                    Some(
+                        mako_storage_rocksdb::backing(&data, store.owner.into(), sync_writes)
+                            .map_err(engine)?,
+                    )
+                }
+            }
         } else {
             None
         };
@@ -782,45 +773,19 @@ impl<C: Into<Mode>> Log<C> {
             durable_transactions: sync_writes && durable.as_ref().is_none_or(|d| d.durable()),
             index: Mutex::new(Index::default()),
             identity,
-            engine_name: format!("{:?}", store.database.kind()),
+            accelerated,
+            limits,
             gate: Mutex::new(Gate::default()),
             durable,
             persistent,
             replay,
             schema,
         });
-        if state.persistent.is_some() {
-            state.load_persistent()?;
-        } else if state.durable.is_none() {
-            let (log_path, create) = match &config {
-                Mode::Local(c) => (&c.directory, c.create),
-                Mode::Raft(c) => (&c.directory, c.create),
-            };
-            let bootstrap = log_path.with_extension("bootstrap");
-            if !bootstrap.exists() {
-                if !create || log_path.exists() {
-                    return Err(storage(
-                        "engine bootstrap checkpoint missing; existing state requires conversion",
-                    ));
-                }
-                if let Some(parent) = bootstrap.parent() {
-                    std::fs::create_dir_all(parent).map_err(storage)?;
-                }
-                let staging =
-                    bootstrap.with_extension(format!("bootstrap-{:x}.creating", self.incarnation));
-                state
-                    .create_checkpoint(&staging, Position::default())
-                    .map_err(storage)?;
-                std::fs::rename(&staging, &bootstrap).map_err(storage)?;
-                if let Some(parent) = bootstrap.parent() {
-                    std::fs::File::open(parent)
-                        .and_then(|f| f.sync_all())
-                        .map_err(storage)?;
-                }
+        if let Some(application) = &state.persistent {
+            if state.accelerated && application.position().map_err(engine)?.index == 0 {
+                state.replay.bootstrap(application.clone())?;
             }
-            state
-                .publish_checkpoint(&bootstrap, Position::default())
-                .map_err(storage)?;
+            state.load_persistent()?;
         } else {
             state.restore()?;
         }
@@ -837,8 +802,31 @@ impl<C: Into<Mode>> Log<C> {
                 None,
             ),
         };
+        if let Some(application) = &state.persistent {
+            let materialized = application.position().map_err(engine)?.index;
+            let status = host.status();
+            if mako_protocol_core::recovery::materialized_replay(
+                materialized,
+                status.committed.index,
+            )
+            .is_none()
+            {
+                host.shutdown();
+                return Err(storage("RocksDB image exceeds committed log"));
+            }
+        }
+        let flusher = if state.accelerated {
+            Some(materialization::Flusher::start(&state)?)
+        } else {
+            None
+        };
         self.binding
-            .set(Binding { host, state, group })
+            .set(Binding {
+                host,
+                state,
+                group,
+                flusher: Mutex::new(flusher),
+            })
             .map_err(|_| storage("transaction log already started"))
     }
     pub fn status(&self) -> Result<raft_host::Status> {
@@ -883,6 +871,32 @@ impl<C: Into<Mode>> Log<C> {
     pub fn shutdown(&self) {
         if let Some(binding) = self.binding.get() {
             binding.host.shutdown();
+            binding.flusher.lock().take();
+            let _ = binding.state.flush();
+        }
+    }
+    /// Flush committed effects without changing the transaction decision or log retention.
+    pub fn flush(&self) -> Result<()> {
+        self.binding
+            .get()
+            .ok_or_else(|| storage("log not started"))?
+            .state
+            .flush()
+    }
+    pub fn materialized_position(&self) -> Result<Position> {
+        let binding = self
+            .binding
+            .get()
+            .ok_or_else(|| storage("log not started"))?;
+        match &binding.state.persistent {
+            Some(application) => application
+                .position()
+                .map(|p| Position {
+                    index: p.index,
+                    term: p.term,
+                })
+                .map_err(engine),
+            None => binding.state.position(),
         }
     }
     fn append_inner(&self, binding: &Binding, bytes: &[u8], time_term: u32) -> Result<()> {
@@ -978,7 +992,7 @@ impl<C: Into<Mode>> CommitLog for Log<C> {
     fn checkpoint(&self) -> Result<(u64, u64)> {
         Log::checkpoint(self).map(|p| (p.index, p.term))
     }
-    fn publish(&self, id: TransactionId, effect: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+    fn publish(&self, _id: TransactionId, effect: &mut dyn FnMut() -> Result<()>) -> Result<()> {
         let binding = self
             .binding
             .get()
@@ -986,10 +1000,7 @@ impl<C: Into<Mode>> CommitLog for Log<C> {
         let mut gate = binding.state.gate.lock();
         State::ensure(&gate)?;
         match effect() {
-            Ok(()) => {
-                gate.installing.remove(&id);
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(error) => {
                 gate.fault = Some(error.to_string());
                 Err(error)

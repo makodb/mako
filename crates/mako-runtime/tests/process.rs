@@ -358,6 +358,7 @@ fn replicated_server_recovers_rows_in_a_fresh_process_engine(rocks: bool) {
         engine: if rocks {
             mako_runtime::node::EngineConfig::RocksDb {
                 directory: root.path().join("data"),
+                masstree: false,
             }
         } else {
             Default::default()
@@ -512,6 +513,7 @@ fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft_engin
         engine: if rocks {
             mako_runtime::node::EngineConfig::RocksDb {
                 directory: root.path().join("data"),
+                masstree: false,
             }
         } else {
             Default::default()

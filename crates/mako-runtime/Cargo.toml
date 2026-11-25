@@ -6,14 +6,14 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-test-hooks = ["mako-sharding/test-hooks"]
+test-hooks = ["mako-sharding/test-hooks", "sto-rocksdb?/test-hooks"]
 default = []
 runtime-storage = ["dep:serde-saphyr"]
 masstree-engine = ["runtime-storage", "dep:mako-storage-masstree"]
 rocksdb-engine = ["runtime-storage", "dep:mako-storage-rocksdb"]
 native-storage = ["masstree-engine"]
 durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
-logging = ["runtime-storage", "durable-storage", "dep:raft-host"]
+logging = ["runtime-storage", "durable-storage", "dep:raft-host", "dep:mako-storage-rocksdb"]
 # Compatibility profile for existing Masstree build commands.
 replication = ["native-storage", "logging"]
 

@@ -12,22 +12,38 @@ mod node_process;
 use node_process::Process;
 #[test]
 fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
-    conversion_case(false, false);
+    conversion_case(false, false, false);
 }
 #[test]
 fn converted_raft_node_preserves_distinct_shard_and_replica_group_identities() {
-    conversion_case(true, false);
+    conversion_case(true, false, false);
 }
 #[test]
 fn converted_migration_node_recovers_its_control_namespace() {
-    conversion_case(false, true);
+    conversion_case(false, true, false);
 }
-fn conversion_case(replicated: bool, migration: bool) {
+#[cfg(feature = "masstree-engine")]
+#[test]
+fn local_node_toggles_masstree_over_the_same_files() {
+    conversion_case(false, false, true);
+}
+#[cfg(feature = "masstree-engine")]
+#[test]
+fn raft_node_toggles_masstree_over_the_same_files() {
+    conversion_case(true, false, true);
+}
+#[cfg(feature = "masstree-engine")]
+#[test]
+fn migration_node_toggles_masstree_over_the_same_control_state() {
+    conversion_case(false, true, true);
+}
+fn conversion_case(replicated: bool, migration: bool, toggle: bool) {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     let mut config = Config {
         engine: EngineConfig::RocksDb {
             directory: source.join("data"),
+            masstree: false,
         },
         owner: 0,
         nodes: 1,
@@ -97,23 +113,36 @@ fn conversion_case(replicated: bool, migration: bool) {
         vec!["rocksdb"]
     };
     for (i, engine) in engines.into_iter().enumerate() {
-        let path = root.path().join(format!("input-{i}.json"));
-        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-        let output = root.path().join(format!("converted-{i}"));
-        let result = Command::new(env!("CARGO_BIN_EXE_mako_convert"))
-            .arg("--config")
-            .arg(path)
-            .arg("--destination")
-            .arg(&output)
-            .args(["--engine", engine])
-            .output()
-            .unwrap();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        config = mako_runtime::configuration::read(output.join("node.json")).unwrap();
+        if toggle {
+            let EngineConfig::RocksDb { masstree, .. } = &mut config.engine else {
+                unreachable!()
+            };
+            *masstree = engine == "masstree";
+            if let Some(c) = &mut config.persistence {
+                c.create = false;
+            }
+            if let Some(c) = &mut config.replication {
+                c.create = false;
+            }
+        } else {
+            let path = root.path().join(format!("input-{i}.json"));
+            std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+            let output = root.path().join(format!("converted-{i}"));
+            let result = Command::new(env!("CARGO_BIN_EXE_mako_convert"))
+                .arg("--config")
+                .arg(path)
+                .arg("--destination")
+                .arg(&output)
+                .args(["--engine", engine])
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            config = mako_runtime::configuration::read(output.join("node.json")).unwrap();
+        }
         assert!(config.persistence.as_ref().is_none_or(|c| !c.create));
         assert!(config.replication.as_ref().is_none_or(|c| !c.create));
         let mut child = Process::start(config.clone());
@@ -137,6 +166,10 @@ fn conversion_case(replicated: bool, migration: bool) {
             client.get(target, b"after-conversion").unwrap().as_deref(),
             Some(b"new commit".as_slice())
         );
-        child.stop();
+        if toggle {
+            child.crash();
+        } else {
+            child.stop();
+        }
     }
 }

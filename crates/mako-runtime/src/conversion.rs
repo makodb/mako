@@ -423,19 +423,22 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
             DurableRows::open(&source.join("rows"), group, durable, &identity).map_err(error)?,
         )
     } else {
-        match &config.engine {
-            EngineConfig::Masstree => Backing::Logical(Mutex::new(Image::default())),
-            EngineConfig::RocksDb { directory } => {
-                if !directory.join("CURRENT").is_file() {
-                    return Err("source RocksDB generation is missing".into());
-                }
-                let db = Database::open_distributed(directory, u64::from(config.owner), durable)
-                    .map_err(error)?;
-                if db.distributed_identity().map_err(error)?.as_deref() != Some(&identity) {
-                    return Err("source RocksDB schema mismatch".into());
-                }
-                Backing::Rocks(db)
+        let data = match &config.engine {
+            EngineConfig::Masstree => source.join("data"),
+            EngineConfig::RocksDb { directory, .. } => directory.clone(),
+        };
+        if matches!(config.engine, EngineConfig::Masstree) && !data.join("CURRENT").is_file() {
+            Backing::Logical(Mutex::new(Image::default()))
+        } else {
+            if !data.join("CURRENT").is_file() {
+                return Err("source RocksDB generation is missing".into());
             }
+            let db = Database::open_distributed(&data, u64::from(config.owner), durable)
+                .map_err(error)?;
+            if db.distributed_identity().map_err(error)?.as_deref() != Some(&identity) {
+                return Err("source RocksDB schema mismatch".into());
+            }
+            Backing::Rocks(db)
         }
     };
     let source_machine = Machine {
@@ -469,17 +472,10 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
         .as_nanos();
     let staging = parent.join(format!(".mako-convert-{}-{nonce:x}", std::process::id()));
     fs::create_dir(&staging).map_err(error)?;
-    let target_backing = if rocksdb {
-        let db = Database::open_distributed(staging.join("data"), u64::from(config.owner), durable)
-            .map_err(error)?;
-        db.bind_distributed_identity(&identity).map_err(error)?;
-        Backing::Rocks(db)
-    } else {
-        Backing::Logical(Mutex::new(Image {
-            index: index.clone(),
-            ..Default::default()
-        }))
-    };
+    let db = Database::open_distributed(staging.join("data"), u64::from(config.owner), durable)
+        .map_err(error)?;
+    db.bind_distributed_identity(&identity).map_err(error)?;
+    let target_backing = Backing::Rocks(db);
     let target = Machine {
         backing: target_backing,
         owner: config.owner,
@@ -552,16 +548,6 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
             .collect::<Vec<_>>();
         d.finish_distributed_import(&history, &index.metadata().map_err(error)?)
             .map_err(error)?;
-    } else {
-        // Runtime restores this zero cut first, then the authoritative host
-        // snapshot. It must never treat the converted head as bootstrap data.
-        checkpoint::write(
-            &staging.join("log.bootstrap"),
-            target.checkpoint_identity(),
-            &Index::default(),
-            |_| Ok(()),
-        )
-        .map_err(error)?;
     }
     source_log.copy_checkpoint(&staging.join("log"), &target)?;
     if wire::encode(&target.index()?).map_err(error)? != wire::encode(&index).map_err(error)? {
@@ -582,12 +568,9 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
         receipts: index.receipts.len(),
     };
     let mut config = config;
-    config.engine = if rocksdb {
-        EngineConfig::RocksDb {
-            directory: destination.join("data"),
-        }
-    } else {
-        EngineConfig::Masstree
+    config.engine = EngineConfig::RocksDb {
+        directory: destination.join("data"),
+        masstree: !rocksdb,
     };
     if let Some(c) = &mut config.persistence {
         c.directory = destination.clone();
@@ -816,7 +799,7 @@ mod tests {
         let identity = config.storage_identity().unwrap();
         let backing = match &config.engine {
             EngineConfig::Masstree => Backing::Logical(Mutex::new(Image::default())),
-            EngineConfig::RocksDb { directory } => Backing::Rocks(
+            EngineConfig::RocksDb { directory, .. } => Backing::Rocks(
                 Database::open_distributed(directory, u64::from(config.owner), durable).unwrap(),
             ),
         };
@@ -892,6 +875,57 @@ mod tests {
         );
     }
     #[test]
+    fn file_only_masstree_checkpoint_upgrades_to_common_rocks_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("file-only");
+        fs::create_dir(&root).unwrap();
+        let config = config(&root);
+        let machine = Arc::new(Machine {
+            backing: Backing::Logical(Mutex::new(Image::default())),
+            owner: config.owner,
+            durable: true,
+            identity: config.storage_identity().unwrap(),
+            schema: config.schema().unwrap(),
+        });
+        machine
+            .create_checkpoint(&root.join("log.bootstrap"), Default::default())
+            .unwrap();
+        let host = LocalHost::start(
+            LocalConfig {
+                group: 0,
+                directory: root.join("log"),
+                create: true,
+                sync_writes: true,
+            },
+            machine.clone(),
+        )
+        .unwrap();
+        fixture(&config, &host);
+        let expected = wire::encode(&machine.index().unwrap()).unwrap();
+        host.shutdown();
+        drop(host);
+        drop(machine);
+        let before = fs::read(root.join("log.bootstrap/MANIFEST")).unwrap();
+        let refusal = crate::node::RunningNode::start(config.clone())
+            .err()
+            .expect("old format must be refused");
+        assert!(refusal.message.contains("offline conversion"));
+        assert!(!root.join("data").exists());
+        assert_eq!(
+            fs::read(root.join("log.bootstrap/MANIFEST")).unwrap(),
+            before
+        );
+        for rocksdb in [false, true] {
+            let destination = dir.path().join(format!("upgraded-{rocksdb}"));
+            convert(config.clone(), &destination, rocksdb).unwrap();
+            assert!(destination.join("data/CURRENT").is_file());
+            assert!(!destination.join("log.bootstrap").exists());
+            let cfg: Config = crate::configuration::read(destination.join("node.json")).unwrap();
+            let (_, machine) = open_target(&cfg);
+            assert_eq!(wire::encode(&machine.index().unwrap()).unwrap(), expected);
+        }
+    }
+    #[test]
     fn conversion_refuses_live_source_existing_target_and_corrupt_checkpoint() {
         let dir = tempfile::tempdir().unwrap();
         let (config, machine, host) = legacy(&dir.path().join("source"));
@@ -918,7 +952,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .path();
-        fs::write(generation.join("rows"), b"corrupt").unwrap();
+        fs::write(generation.join("STO-CHECKPOINT"), b"corrupt").unwrap();
         let bad = dir.path().join("bad");
         assert!(convert(cfg, &bad, true).is_err());
         assert!(!bad.exists());
