@@ -1,5 +1,6 @@
-//! The RocksDB base, through `rocksdb/c.h`, which Mako
-//! already links. The default durable store writes batches with RocksDB's WAL
+//! The RocksDB log/base, through `rocksdb/c.h`, which Mako
+//! already links. `open_journal` enables RocksDB WAL and synchronizes each
+//! atomic batch under the default policy. The legacy base API writes with WAL
 //! off because the separately synced Raft WAL protects them until a waiting
 //! base flush. The explicit weak async policy retains RocksDB's WAL (without
 //! sync), allowing non-waiting base flushes and process-crash recovery after
@@ -74,6 +75,7 @@ pub struct RocksBase {
     wopts: *mut c_void,
     ropts: *mut c_void,
     sync_writes: bool,
+    journal: bool,
 }
 
 // SAFETY: a RocksDB handle may move between threads; this type has one owner.
@@ -90,6 +92,15 @@ impl RocksBase {
     /// Selects waiting durable base flushes, or weak asynchronous persistence.
     /// Async still writes both the upstream Raft WAL and this base's WAL.
     pub fn open_with_sync_writes(path: &Path, create: bool, sync_writes: bool) -> io::Result<RocksBase> {
+        Self::open_policy(path, create, sync_writes, false)
+    }
+
+    /// Shared local/Raft log: RocksDB WAL owns the persistence barrier.
+    pub fn open_journal(path: &Path, create: bool, sync_writes: bool) -> io::Result<RocksBase> {
+        Self::open_policy(path, create, sync_writes, true)
+    }
+
+    fn open_policy(path: &Path, create: bool, sync_writes: bool, journal: bool) -> io::Result<RocksBase> {
         let name = CString::new(path.to_string_lossy().as_bytes()).map_err(io::Error::other)?;
         // SAFETY: plain C API calls on handles created here.
         unsafe {
@@ -111,9 +122,9 @@ impl RocksBase {
                 return Err(io::Error::other("rocksdb: open returned no handle"));
             }
             let wopts = rocksdb_writeoptions_create();
-            rocksdb_writeoptions_disable_WAL(wopts, i32::from(sync_writes));
-            rocksdb_writeoptions_set_sync(wopts, 0);
-            Ok(RocksBase { db, wopts, ropts: rocksdb_readoptions_create(), sync_writes })
+            rocksdb_writeoptions_disable_WAL(wopts, i32::from(sync_writes && !journal));
+            rocksdb_writeoptions_set_sync(wopts, u8::from(sync_writes && journal));
+            Ok(RocksBase { db, wopts, ropts: rocksdb_readoptions_create(), sync_writes, journal })
         }
     }
 }
@@ -130,6 +141,11 @@ impl Drop for RocksBase {
 }
 
 impl Base for RocksBase {
+    fn persist(&mut self, ops: &[Op]) -> io::Result<()> {
+        self.write(ops)?;
+        if self.journal { Ok(()) } else { self.flush() }
+    }
+
     fn write(&mut self, ops: &[Op]) -> io::Result<()> {
         // SAFETY: the batch borrows the slices only for each call.
         unsafe {
@@ -153,7 +169,7 @@ impl Base for RocksBase {
         // SAFETY: plain C API calls.
         unsafe {
             let o = rocksdb_flushoptions_create();
-            rocksdb_flushoptions_set_wait(o, u8::from(self.sync_writes));
+            rocksdb_flushoptions_set_wait(o, u8::from(self.sync_writes || self.journal));
             let mut err: *mut c_char = std::ptr::null_mut();
             rocksdb_flush(self.db, o, &mut err);
             rocksdb_flushoptions_destroy(o);

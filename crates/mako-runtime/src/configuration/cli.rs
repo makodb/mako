@@ -16,6 +16,7 @@ pub struct Args {
     replicated: bool,
     micro: bool,
     migration: bool,
+    volatile: bool,
     raft: Vec<(Option<u32>, PathBuf)>,
     data: Option<PathBuf>,
     create: bool,
@@ -88,6 +89,7 @@ impl Args {
                 "--data-dir" => result.data = Some(value()?.into()),
                 "--create" => result.create = true,
                 "--migration" => result.migration = true,
+                "--volatile" => result.volatile = true,
                 "--is-replicated" => result.replicated = true,
                 "--is-micro" => result.micro = true,
                 "--load-only" => result.load_only = true,
@@ -119,6 +121,7 @@ impl Args {
                     || self.data.is_some()
                     || !self.raft.is_empty()
                     || self.replicated
+                    || self.volatile
                 {
                     return Err(invalid("topology selection/replication flags belong with --shard-config; native --config already declares them"));
                 }
@@ -135,6 +138,7 @@ impl Args {
                     data_root: self.data.clone(),
                     create: self.create,
                     migration: self.migration,
+                    volatile: self.volatile,
                 },
                 benchmark::Config::default(),
             )?,
@@ -180,4 +184,4 @@ fn number<T: std::str::FromStr>(value: &str, flag: &str) -> Result<T> {
         .parse()
         .map_err(|_| invalid(format!("invalid value for {flag}: {value}")))
 }
-pub const HELP:&str="Usage: mako_bench --config FILE [options]\n       mako_bench --shard-config FILE [-g SHARD | -L all|LIST] [-N SITE] [options]\n\nNative --config accepts JSON/YAML, one node or a nodes list.\n--shard-config accepts the existing role-based and sites/shard_map topologies.\n-t, --num-threads N         Worker threads per shard\n-u, --runtime SECONDS       Workload duration\n-C, --cpu-limit PERCENT     Work/sleep duty cycle; 0 or 100 disables it\n-Y, --throttle-cycle MS     Duty-cycle period, default 100 ms\n-T, --startup-timeout-sec N Readiness timeout\n--is-micro                 Run the item read/update workload\n-R, --replication raft      Enable native Raft for a topology file\n-F, --raft-config [N=]FILE  Raft site file or mode fragment; qualify colocated shard files\n--data-dir DIRECTORY       Native durable storage root for topology mode\n--create                   Allow creation of new native durable databases\n--migration                Enable the supported volatile migration mode\n--print-config             Print the validated native configuration and exit\n--load-only | --serve-only  Load without workload, or serve without loading\n--exit-after-run            Exit when all unreplicated colocated shards finish\n--exit-on-stdin-close       Stop when stdin closes or receives 'stop'\n\nBy default servers remain available after the workload. SIGINT/SIGTERM joins all workers.\nNative loading uses committed completion markers; the old --sync-dir barrier is retired.";
+pub const HELP:&str="Usage: mako_bench --config FILE [options]\n       mako_bench --shard-config FILE [-g SHARD | -L all|LIST] [-N SITE] [options]\n\nNative --config accepts JSON/YAML, one node or a nodes list.\n--shard-config accepts the existing role-based and sites/shard_map topologies.\n-t, --num-threads N         Worker threads per shard\n-u, --runtime SECONDS       Workload duration\n-C, --cpu-limit PERCENT     Work/sleep duty cycle; 0 or 100 disables it\n-Y, --throttle-cycle MS     Duty-cycle period, default 100 ms\n-T, --startup-timeout-sec N Readiness timeout\n--is-micro                 Run the item read/update workload\n-R, --replication raft      Enable native Raft for a topology file\n-F, --raft-config [N=]FILE  Raft site file or mode fragment; qualify colocated shard files\n--data-dir DIRECTORY       Required durable storage root for local/Raft topology mode\n--create                   Allow creation of new native durable databases\n--volatile                 Explicit in-memory development mode\n--migration                Enable the supported volatile migration mode\n--print-config             Print the validated native configuration and exit\n--load-only | --serve-only  Load without workload, or serve without loading\n--exit-after-run            Exit when all unreplicated colocated shards finish\n--exit-on-stdin-close       Stop when stdin closes or receives 'stop'\n\nBy default servers remain available after the workload. SIGINT/SIGTERM joins all workers.\nNative loading uses committed completion markers; the old --sync-dir barrier is retired.";

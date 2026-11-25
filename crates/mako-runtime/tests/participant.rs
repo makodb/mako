@@ -383,8 +383,8 @@ fn new_attempt_cannot_steal_execution_and_delayed_abort_cannot_cancel_its_succes
 fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
     use mako_runtime::{
         durable::DurableRows,
+        log::{Log, Mode},
         migration::{Kind, Schema, TableSpec},
-        replication::LocalLog,
     };
     let schema = Schema::new(
         vec![TableSpec {
@@ -398,10 +398,17 @@ fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
         0,
     )
     .unwrap();
-    let log = LocalLog::new();
+    let log = Log::new(Duration::from_secs(5)).unwrap();
     let store = Store::new(0, false, log.clone()).unwrap();
     provision(&store);
+    let log_path = directory.join("log");
     log.start(
+        Mode::Local(raft_host::LocalConfig {
+            group: 1,
+            create: !log_path.exists(),
+            directory: log_path,
+            sync_writes: true,
+        }),
         &store,
         schema,
         DurableRows::open(directory, 1, true, b"prepared-recovery").unwrap(),

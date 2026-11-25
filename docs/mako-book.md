@@ -26,7 +26,8 @@ verified decisions from assumptions about storage, RPC and replication.
 | Storage-host decisions | `crates/shard-host-core` | Checked translation between migration effects and physical storage |
 | Local transaction manager | `crates/sto-core` | OCC read/write sets, locking, validation and terminal cleanup |
 | Ordered storage | `crates/sto-masstree`, `crates/sto-tpcc-ffi` | Masstree adapter, versioned rows, scans, retained affine workers and owned redo |
-| Persistence | `crates/sto-rocksdb`, runtime `durable.rs` | Atomic persistent row, intent, decision and receipt records |
+| Log persistence | `src/deptran/raft/store/src/journal.rs` | Shared RocksDB entries, commit prefix, identity and snapshot format for local and Raft ordering |
+| Applied storage | `crates/sto-rocksdb`, runtime `durable.rs` | Atomic persistent row, intent, decision and receipt records |
 | Replication | `crates/raft-host`, `src/deptran/raft` | Raft authority, committed prefixes, read barriers, snapshots and recovery |
 | RPC | `src/srpc`, runtime `rpc.rs` | Rust transport, reactor, bounded owned requests and pending-reply cancellation |
 
@@ -124,16 +125,47 @@ outcome. A missing registration or unavailable authority remains Unknown.
 
 ## Durability and recovery
 
+Production shards use `mako_runtime::log::Log` with either a local or Raft
+ordering driver. Both drivers submit the same application command bytes and call
+the same state machine. The upper protocol continues to use the backend-neutral
+`Journal` interface. Explicit development fixtures may select a volatile journal.
+
 Each participating shard chooses one journal policy:
 
 | Policy | Journal acknowledgement | Restart guarantee |
 | --- | --- | --- |
 | Volatile | In-memory transition | None |
-| Local persistent | Synchronous RocksDB transition | Local process restart |
+| Local persistent | Synchronous RocksDB log append and committed state-machine application | Local process restart |
 | Replicated | Current Raft authority and applied committed record, with synchronous durable storage | Recovery from the surviving committed replica prefix |
 
 A configuration with synchronous writes disabled cannot advertise durable
 transactions. All members of a transaction must agree on the durability policy.
+
+Both production modes use `<data>/log/base` for the ordered RocksDB log and
+`<data>/rows` for the applied RocksDB state. The log stores index/term/payload
+entries, hard state, committed prefix, durable sequence, snapshot boundary and
+exact authority metadata in one versioned format. Raft additionally uses the
+vote and election-term fields. RocksDB WAL is enabled; synchronous atomic
+batches supply the default durability barrier. The production Raft host no longer
+uses a separate segmented WAL.
+
+The common keys are `f` (format version), `a` (exact authority and sync policy),
+`i` (store identity), `h` (term, vote and committed index), `c` (durable transition
+sequence), `s` (snapshot boundary/reference), and `e` followed by a big-endian
+index (entry). Entry values contain a little-endian term and a tagged payload:
+`0` is a no-op; `1` precedes application command bytes. Local mode uses term 1
+and no vote. The shared store validates transitions before persisting them.
+
+A local append atomically saves its command and advances the committed prefix,
+then calls the application state machine. Raft saves entries and advances that
+prefix only through its consensus decisions. In either mode, recovery replays
+committed commands above the application's saved position. Failure after a saved
+command fences the driver until recovery, preserving an uncertain or committed
+outcome. Append alone cannot make an uncommitted Raft suffix visible.
+
+Sharing bytes does not make local and replicated authority interchangeable.
+Reopen checks the exact mode, group/membership and sync policy. Changing a
+configuration cannot turn an old Raft suffix into local committed data.
 
 The journal records `Begin`, `Prepare`, `Decide` and `Complete`. A prepare stores
 the full descriptor, final row intents and any gateway receipt. Completion
@@ -168,10 +200,15 @@ shard shutdown joins those workers and closes their native scopes. Durable
 records survive and must be recovered before serving again. Volatile mode loses
 its state on process shutdown. Terminal journal entries currently have no
 reclamation policy; removing them without a stale-request fence is unsafe.
+The local command log also retains its history; local snapshot/compaction is
+not implemented. Raft retains its existing snapshot and prefix-compaction path.
 
-The native durable format does not import the retired C++ WAL. Existing native
-row-command records remain readable. The new transaction journal uses a separate
-versioned command. Mixed old/new protocol operation is not a supported rolling
+The shared log directory format is `mako-rocks-log/1`. Existing segmented Raft
+WAL directories and local stores with applied rows but no command log require
+offline conversion. Startup refuses them and preserves their data; no automatic
+conversion tool is supplied by this cutover. The applied row/receipt encoding and
+application command versions remain unchanged. The retired C++ WAL is not
+imported. Mixed old/new protocol operation is not a supported rolling
 upgrade: old distributed Timestamp/Validate/Install commands are refused by the
 new runtime.
 
@@ -291,8 +328,11 @@ workers.
 
 Node configuration specifies owner count, listen addresses, worker counts,
 tables, peer endpoints and optional replica groups. Choose either local
-`persistence` or `replication`. Both default to synchronous writes. Creating a
-new durable directory is explicit. Initial durable data is loaded through
+`persistence` with a data directory or `replication`. Both default to synchronous
+writes. Omitting both is an error unless `volatile: true` explicitly selects
+development/test mode. Volatile mode cannot be combined with either persistent
+policy. Creating a new durable directory is explicit; use `create: false` when
+reopening it. Initial durable data is loaded through
 transactions after authority is ready. Colocated shards require explicit ports
 and consistent topology and schema.
 
@@ -302,7 +342,8 @@ Inside the container, a bounded two-shard example is:
 python3 examples/run_native.py transactions --build build --shards 2 --workers 3 --count 50
 ```
 
-Add `--persistent` for local durability or `--replicas 3` for Raft. The launcher
+The launcher uses local RocksDB by default. Add `--replicas 3` for Raft, or
+`--volatile` for an explicitly ephemeral development run. The launcher
 owns its processes, assigns ports and retains failure diagnostics. Consult its
 `--help` for supported combinations.
 
@@ -319,7 +360,9 @@ Verus cores, runs semantic negative controls, and executes deterministic
 contract tests. It has a five-minute deadline. Choose a CPU budget suitable for
 the machine. Detailed reports record the source inputs and wall time. The
 [OCC + 2PC qualification](testing/occ-2pc-2026-11-25/README.md) records the
-checks for this cutover.
+checks for that cutover. The later
+[unified-log qualification](testing/unified-rocks-log-2026-11-25/README.md) records
+the shared local/Raft format, crash/refusal tests and the 156-second upper run.
 
 The 2PC proof covers the lock barrier, participant-specific Yes votes, the saved
 decision requirement, decision immutability, completion acknowledgements and

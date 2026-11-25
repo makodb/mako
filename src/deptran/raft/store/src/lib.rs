@@ -1,19 +1,13 @@
-//! The Rust Raft's on-disk store.
+//! Shared durable storage for local and replicated ordering.
 //!
-//! Every Raft step that changes saved state becomes one [`Record`], numbered
-//! in step order by the [`RecordQueue`] under the server's `mtx_`. The
-//! flusher thread ([`flusher`]) writes each queued group of records to the
-//! [`Wal`] as one checksummed batch, syncs it, and publishes the durable
-//! sequence number ([`DurableState`]). A restart replays the WAL
-//! ([`wal::recover`]) into a [`SavedState`]. The log is redo-only: a record
-//! states the step's outcome, never what it replaced.
+//! Production `raft-host` and its single-disk driver use [`journal`]: identical
+//! RocksDB entries and metadata, atomic WAL-backed batches, and fenced authority.
+//! [`base::MemBase`] supplies a separate crash model for those transitions.
 //!
-//! The store is generic over the payload type `P` (an entry's command); the
-//! shell supplies a [`Codec`]. All file access goes through [`StoreFs`], so
-//! the tests run on [`MemFs`], which models what a crash or a power cut
-//! keeps. These durability guarantees require the default sync filesystem
-//! policy. Explicit `with_sync_writes(false)` is a weak persistence experiment:
-//! the WAL is still written, but acknowledgement is not power-crash durable.
+//! The earlier segmented [`Wal`], flusher and recovery modules remain for their
+//! component tests and inspection of the retired format. The production host
+//! does not use that WAL. Synchronous writes supply the durability guarantee;
+//! explicit async mode retains no machine/power-crash acknowledgement guarantee.
 
 pub mod applier;
 pub mod base;
@@ -23,15 +17,16 @@ pub mod create;
 pub mod flusher;
 pub mod fs;
 pub mod images;
+pub mod journal;
 pub mod local;
 pub mod queue;
 pub mod record;
+#[cfg(feature = "rocksdb")]
+pub mod rocks;
 pub mod segment;
 pub mod state;
 pub mod stats;
 pub mod wal;
-#[cfg(feature = "rocksdb")]
-pub mod rocks;
 
 mod bytes;
 

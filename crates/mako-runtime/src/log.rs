@@ -1,7 +1,7 @@
-//! Native Raft application integration. The Raft application thread writes
+//! Shared local and Raft log application. The ordered application callback writes
 //! committed RocksDB rows; one affine replay thread updates follower Masstrees.
 //! A locally installed proposal is identified by owned bytes and is never
-//! replayed into its own retained locks. Unknown outcomes fence the replica.
+//! replayed into its own retained locks. Unknown outcomes fence the shard.
 use crate::{
     durable::DurableRows,
     migration::Schema,
@@ -9,8 +9,8 @@ use crate::{
     storage::{engine, CommitLog, CommitPermit, Store},
     wire::{self, Error, ErrorCode, Result},
 };
-use parking_lot::Mutex;
 use mako_protocol::journal::{self, Entry, Journal, Record, TransactionId};
+use parking_lot::Mutex;
 use raft_host::{Host, Position, ProposalStatus, StateMachine};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -83,7 +83,7 @@ impl Replay {
                     let result = (|| {
                         let store = weak
                             .upgrade()
-                            .ok_or_else(|| storage("replica store stopped"))?;
+                            .ok_or_else(|| storage("shard store stopped"))?;
                         for row in rows {
                             let key = schema.key_for_log(row.table)?;
                             let table = store.open(&mut worker, key, row.table)?;
@@ -180,20 +180,33 @@ impl StateMachine for State {
             // command version follows it. Keep old row-command bytes readable.
             if bytes.get(4..8) == Some(2u32.to_le_bytes().as_slice()) {
                 let command: JournalCommand = wire::decode(bytes)?;
-                if command.version != 2 || command.incarnation == 0 || command.sequence == 0
-                    || command.record.transaction().durable != self.durable_transactions {
-                    return Err(storage("invalid replicated transaction record"));
+                if command.version != 2
+                    || command.incarnation == 0
+                    || command.sequence == 0
+                    || command.record.transaction().durable != self.durable_transactions
+                {
+                    return Err(storage("invalid transaction log record"));
                 }
                 if let Record::Prepare { rows, .. } = &command.record {
-                    for row in rows { self.schema.key_for_log(row.table)?; }
+                    for row in rows {
+                        self.schema.key_for_log(row.table)?;
+                    }
                 }
-                let local = gate.pending.get(&(command.incarnation, command.sequence))
+                let local = gate
+                    .pending
+                    .get(&(command.incarnation, command.sequence))
                     .is_some_and(|pending| pending == bytes);
                 if !local && gate.active != 0 {
-                    return Err(storage("leadership changed with active prepared transactions; recovery required"));
+                    return Err(storage(
+                        "leadership changed with active prepared transactions; recovery required",
+                    ));
                 }
-                let (rows, _) = self.durable.apply_journal(position(p), bytes, self.owner, &command.record)?;
-                if !local && !rows.is_empty() { self.replay.apply(rows)?; }
+                let (rows, _) =
+                    self.durable
+                        .apply_journal(position(p), bytes, self.owner, &command.record)?;
+                if !local && !rows.is_empty() {
+                    self.replay.apply(rows)?;
+                }
                 return Ok(());
             }
             let command: Command = wire::decode(bytes)?;
@@ -202,7 +215,7 @@ impl StateMachine for State {
                 || command.sequence == 0
                 || (command.rows.is_empty() && command.receipt.is_none())
             {
-                return Err(storage("invalid replicated command"));
+                return Err(storage("invalid log command"));
             }
             for row in &command.rows {
                 row.validate()?;
@@ -266,21 +279,65 @@ impl StateMachine for State {
         result.map_err(|error| error.to_string())
     }
 }
-struct Binding {
-    host: Host,
-    state: Arc<State>,
-    group: u64,
+/// Both modes submit identical commands and apply them through the same state machine.
+pub enum Mode {
+    Local(raft_host::LocalConfig),
+    Raft(raft_host::Config),
 }
-pub struct ReplicatedLog {
+#[derive(Clone)]
+enum Driver {
+    Local(raft_host::LocalHost),
+    Raft(Host),
+}
+impl Driver {
+    fn status(&self) -> raft_host::Status {
+        match self {
+            Self::Local(host) => host.status(),
+            Self::Raft(host) => host.status(),
+        }
+    }
+    fn propose(
+        &self,
+        term: u64,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<raft_host::Proposal, raft_host::AdmissionError> {
+        match self {
+            Self::Local(host) => host.propose(term, bytes),
+            Self::Raft(host) => host.propose(term, bytes),
+        }
+    }
+    fn read_barrier(
+        &self,
+        term: u64,
+        timeout: Duration,
+    ) -> std::result::Result<Position, raft_host::HostError> {
+        match self {
+            Self::Local(host) => host.read_barrier(term, timeout),
+            Self::Raft(host) => host.read_barrier(term, timeout),
+        }
+    }
+    fn shutdown(&self) {
+        match self {
+            Self::Local(host) => host.shutdown(),
+            Self::Raft(host) => host.shutdown(),
+        }
+    }
+}
+struct Binding {
+    host: Driver,
+    state: Arc<State>,
+    group: Option<u64>,
+}
+pub struct Log {
     binding: OnceLock<Binding>,
     timeout: Duration,
     incarnation: u64,
     next: AtomicU64,
 }
-impl ReplicatedLog {
+impl Log {
     pub fn new(timeout: Duration) -> Result<Arc<Self>> {
         if timeout.is_zero() {
-            return Err(storage("zero replication deadline"));
+            return Err(storage("zero log deadline"));
         }
         let mut nonce = [0; 8];
         std::fs::File::open("/dev/urandom")
@@ -294,44 +351,68 @@ impl ReplicatedLog {
         }))
     }
     /// Run before starting application listeners. Durable rows are replayed
-    /// first, then the existing Raft host reconciles its committed prefix.
+    /// first, then the ordering driver replays its committed prefix.
     pub fn start(
         &self,
-        config: raft_host::Config,
+        config: Mode,
         store: &Arc<Store>,
         schema: Arc<Schema>,
         durable: Arc<DurableRows>,
     ) -> Result<()> {
         if self.binding.get().is_some() {
-            return Err(storage("replication already started"));
+            return Err(storage("transaction log already started"));
         }
+        let sync_writes = match &config {
+            Mode::Local(config) => config.sync_writes,
+            Mode::Raft(config) => config.sync_writes,
+        };
         let replay = Replay::start(store, schema.clone())?;
         let state = Arc::new(State {
             owner: store.owner,
-            durable_transactions: config.sync_writes && durable.durable(),
+            durable_transactions: sync_writes && durable.durable(),
             gate: Mutex::new(Gate::default()),
             durable,
             replay,
             schema,
         });
         state.restore()?;
-        let group = config.group;
-        let host = Host::start(config, state.clone()).map_err(storage)?;
+        let (host, group) = match config {
+            Mode::Raft(config) => {
+                let group = config.group;
+                (
+                    Driver::Raft(Host::start(config, state.clone()).map_err(storage)?),
+                    Some(group),
+                )
+            }
+            Mode::Local(config) => (
+                Driver::Local(raft_host::LocalHost::start(config, state.clone()).map_err(storage)?),
+                None,
+            ),
+        };
         self.binding
             .set(Binding { host, state, group })
-            .map_err(|_| storage("replication already started"))
+            .map_err(|_| storage("transaction log already started"))
+    }
+    pub fn status(&self) -> Result<raft_host::Status> {
+        self.binding
+            .get()
+            .map(|binding| binding.host.status())
+            .ok_or_else(|| storage("log not started"))
     }
     pub fn host(&self) -> Result<&Host> {
         self.binding
             .get()
-            .map(|binding| &binding.host)
-            .ok_or_else(|| storage("replication not started"))
+            .and_then(|binding| match &binding.host {
+                Driver::Raft(host) => Some(host),
+                Driver::Local(_) => None,
+            })
+            .ok_or_else(|| storage("Raft is not configured or started"))
     }
     pub fn health(&self) -> Result<()> {
         let binding = self
             .binding
             .get()
-            .ok_or_else(|| storage("replication not started"))?;
+            .ok_or_else(|| storage("transaction log not started"))?;
         State::ensure(&binding.state.gate.lock())?;
         if let Some(failure) = binding.host.status().failure {
             return Err(storage(failure));
@@ -363,7 +444,7 @@ impl ReplicatedLog {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
-            .map_err(|_| storage("replication identity exhausted"))?;
+            .map_err(|_| storage("transaction log identity exhausted"))?;
         let command = wire::encode(&Command {
             version: 1,
             incarnation: self.incarnation,
@@ -384,7 +465,7 @@ impl ReplicatedLog {
         let proposal = binding
             .host
             .propose(status.term, command)
-            .map_err(|error| storage(format!("Raft admission: {error:?}")))?;
+            .map_err(|error| storage(format!("log admission: {error:?}")))?;
         match proposal.wait(self.timeout) {
             ProposalStatus::Applied => {
                 binding
@@ -395,13 +476,13 @@ impl ReplicatedLog {
                     .remove(&(self.incarnation, sequence));
                 Ok(())
             }
-            outcome => Err(storage(format!("Raft completion: {outcome:?}"))),
+            outcome => Err(storage(format!("log completion: {outcome:?}"))),
         }
     }
 }
 struct Permit {
     state: Arc<State>,
-    host: Host,
+    host: Driver,
     term: u64,
 }
 impl CommitPermit for Permit {
@@ -413,7 +494,7 @@ impl CommitPermit for Permit {
         } else {
             Err(Error::new(
                 ErrorCode::RouteChanged,
-                "replica leadership changed",
+                "transaction log authority changed",
             ))
         }
     }
@@ -423,13 +504,15 @@ impl Drop for Permit {
         self.state.gate.lock().active -= 1;
     }
 }
-impl CommitLog for ReplicatedLog {
-    fn transaction_journal(&self) -> Option<&dyn Journal> { Some(self) }
+impl CommitLog for Log {
+    fn transaction_journal(&self) -> Option<&dyn Journal> {
+        Some(self)
+    }
     fn health(&self) -> Result<()> {
-        ReplicatedLog::health(self)
+        Log::health(self)
     }
     fn shutdown(&self) {
-        ReplicatedLog::shutdown(self);
+        Log::shutdown(self);
     }
     fn replica_status(&self, owner: u32) -> wire::ReplicaStatus {
         let Some(binding) = self.binding.get() else {
@@ -445,7 +528,7 @@ impl CommitLog for ReplicatedLog {
         let status = binding.host.status();
         wire::ReplicaStatus {
             owner,
-            group: Some(binding.group),
+            group: binding.group,
             leader: status.is_leader,
             term: status.term,
             healthy: status.failure.is_none()
@@ -467,7 +550,7 @@ impl CommitLog for ReplicatedLog {
         let binding = self
             .binding
             .get()
-            .ok_or_else(|| storage("replication not started"))?;
+            .ok_or_else(|| storage("transaction log not started"))?;
         State::ensure(&binding.state.gate.lock())?;
         binding.state.durable.gateway_receipt(request)
     }
@@ -478,7 +561,10 @@ impl CommitLog for ReplicatedLog {
         receipt: &wire::GatewayReceipt,
     ) -> Result<()> {
         let binding = self.binding.get().ok_or_else(|| {
-            Error::new(ErrorCode::Unknown, "replication not started after install")
+            Error::new(
+                ErrorCode::Unknown,
+                "transaction log not started after install",
+            )
         })?;
         if let Err(error) = self.append_record(binding, bytes, time_term, Some(receipt)) {
             binding.state.gate.lock().fault = Some(error.to_string());
@@ -490,7 +576,7 @@ impl CommitLog for ReplicatedLog {
         let binding = self
             .binding
             .get()
-            .ok_or_else(|| Error::new(ErrorCode::Closed, "replication not started"))?;
+            .ok_or_else(|| Error::new(ErrorCode::Closed, "transaction log not started"))?;
         State::ensure(&binding.state.gate.lock())?;
         let status = binding.host.status();
         if !status.is_leader {
@@ -506,7 +592,7 @@ impl CommitLog for ReplicatedLog {
         if !now.is_leader || now.term != status.term || now.failure.is_some() {
             return Err(Error::new(
                 ErrorCode::RouteChanged,
-                "replica leadership changed",
+                "transaction log authority changed",
             ));
         }
         gate.active = gate
@@ -521,7 +607,10 @@ impl CommitLog for ReplicatedLog {
     }
     fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
         let binding = self.binding.get().ok_or_else(|| {
-            Error::new(ErrorCode::Unknown, "replication not started after install")
+            Error::new(
+                ErrorCode::Unknown,
+                "transaction log not started after install",
+            )
         })?;
         let result = self.append_inner(binding, bytes, time_term);
         if let Err(error) = result {
@@ -532,216 +621,94 @@ impl CommitLog for ReplicatedLog {
     }
 }
 
-impl Journal for ReplicatedLog {
+impl Journal for Log {
     fn durable(&self) -> bool {
-        self.binding.get().is_some_and(|binding| binding.state.durable_transactions)
+        self.binding
+            .get()
+            .is_some_and(|binding| binding.state.durable_transactions)
     }
     fn apply(&self, record: &Record) -> Result<Entry> {
         let _permit = <Self as CommitLog>::admit(self)?;
-        let binding = self.binding.get().ok_or_else(|| storage("replication not started"))?;
+        let binding = self
+            .binding
+            .get()
+            .ok_or_else(|| storage("transaction log not started"))?;
         let prior = binding.state.durable.transaction(record.transaction().id)?;
         journal::transition(binding.state.owner, self.durable(), prior.as_ref(), record)?;
         if let Record::Prepare { rows, .. } = record {
-            for row in rows { binding.state.schema.key_for_log(row.table)?; }
+            for row in rows {
+                binding.state.schema.key_for_log(row.table)?;
+            }
         }
-        let sequence = self.next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
-            .map_err(|_| storage("replication identity exhausted"))?;
+        let sequence = self
+            .next
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map_err(|_| storage("transaction log identity exhausted"))?;
         let command = wire::encode(&JournalCommand {
-            version: 2, incarnation: self.incarnation, sequence, record: record.clone(),
+            version: 2,
+            incarnation: self.incarnation,
+            sequence,
+            record: record.clone(),
         })?;
         let status = binding.host.status();
         if !status.is_leader || status.failure.is_some() {
-            return Err(Error::new(ErrorCode::RouteChanged, "journal authority changed"));
+            return Err(Error::new(
+                ErrorCode::RouteChanged,
+                "journal authority changed",
+            ));
         }
         {
             let mut gate = binding.state.gate.lock();
             State::ensure(&gate)?;
-            gate.pending.insert((self.incarnation, sequence), command.clone());
+            gate.pending
+                .insert((self.incarnation, sequence), command.clone());
         }
-        let proposal = binding.host.propose(status.term, command)
-            .map_err(|error| Error::new(ErrorCode::Unknown, format!("journal admission: {error:?}")))?;
+        let proposal = binding
+            .host
+            .propose(status.term, command)
+            .map_err(|error| {
+                Error::new(ErrorCode::Unknown, format!("journal admission: {error:?}"))
+            })?;
         match proposal.wait(self.timeout) {
             ProposalStatus::Applied => {
-                binding.state.gate.lock().pending.remove(&(self.incarnation, sequence));
-                let entry = binding.state.durable.transaction(record.transaction().id)?
+                binding
+                    .state
+                    .gate
+                    .lock()
+                    .pending
+                    .remove(&(self.incarnation, sequence));
+                let entry = binding
+                    .state
+                    .durable
+                    .transaction(record.transaction().id)?
                     .ok_or_else(|| storage("applied journal record has no transaction"))?;
                 journal::acknowledge(record, &entry)?;
                 Ok(entry)
             }
-            outcome => Err(Error::new(ErrorCode::Unknown, format!("journal completion: {outcome:?}"))),
+            outcome => Err(Error::new(
+                ErrorCode::Unknown,
+                format!("journal completion: {outcome:?}"),
+            )),
         }
     }
     fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
         let _permit = <Self as CommitLog>::admit(self)?;
-        self.binding.get().ok_or_else(|| storage("replication not started"))?.state.durable.transaction(id)
-    }
-    fn entries(&self) -> Result<Vec<Entry>> {
-        let _permit = <Self as CommitLog>::admit(self)?;
-        self.binding.get().ok_or_else(|| storage("replication not started"))?.state.durable.transactions()
-    }
-}
-
-/// Local disk persistence uses the same atomic row/receipt store and recovery
-/// path, without a consensus host or replication thread.
-pub struct LocalLog {
-    state: OnceLock<Arc<State>>,
-}
-impl LocalLog {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            state: OnceLock::new(),
-        })
-    }
-    pub fn start(
-        &self,
-        store: &Arc<Store>,
-        schema: Arc<Schema>,
-        durable: Arc<DurableRows>,
-    ) -> Result<()> {
-        if self.state.get().is_some() {
-            return Err(storage("local persistence already started"));
-        }
-        let replay = Replay::start(store, schema.clone())?;
-        let state = Arc::new(State {
-            owner: store.owner,
-            durable_transactions: durable.durable(),
-            gate: Mutex::new(Gate::default()),
-            durable,
-            replay,
-            schema,
-        });
-        state.restore()?;
-        if state.durable.position()?.index == 0 {
-            state
-                .durable
-                .advance(sto_rocksdb::Position { index: 1, term: 1 })?;
-        }
-        self.state
-            .set(state)
-            .map_err(|_| storage("local persistence already started"))
-    }
-    fn state(&self) -> Result<&Arc<State>> {
-        self.state
+        self.binding
             .get()
-            .ok_or_else(|| storage("local persistence not started"))
-    }
-    fn publish(
-        &self,
-        bytes: &[u8],
-        time_term: u32,
-        receipt: Option<&wire::GatewayReceipt>,
-    ) -> Result<()> {
-        let state = self.state()?;
-        let mut gate = state.gate.lock();
-        let result: Result<()> = (|| {
-            State::ensure(&gate)?;
-            let rows = if bytes.is_empty() && receipt.is_some() {
-                Vec::new()
-            } else {
-                redo::decode_legacy(bytes, time_term)?
-            };
-            for row in &rows {
-                state.schema.key_for_log(row.table)?;
-            }
-            let previous = state.durable.position()?;
-            let index = previous
-                .index
-                .checked_add(1)
-                .ok_or_else(|| storage("local log position exhausted"))?;
-            let source = wire::encode(&(1u32, index, &rows, receipt))?;
-            state.durable.apply_gateway(
-                sto_rocksdb::Position { index, term: 1 },
-                &source,
-                &rows,
-                receipt,
-            )?;
-            Ok(())
-        })();
-        if let Err(error) = result {
-            gate.fault = Some(error.to_string());
-            return Err(Error::new(ErrorCode::Unknown, error.to_string()));
-        }
-        Ok(())
-    }
-}
-struct LocalPermit(Arc<State>);
-impl CommitPermit for LocalPermit {
-    fn check(&self) -> Result<()> {
-        State::ensure(&self.0.gate.lock())
-    }
-}
-impl Drop for LocalPermit {
-    fn drop(&mut self) {
-        self.0.gate.lock().active -= 1;
-    }
-}
-impl CommitLog for LocalLog {
-    fn transaction_journal(&self) -> Option<&dyn Journal> { Some(self) }
-    fn health(&self) -> Result<()> {
-        State::ensure(&self.state()?.gate.lock())
-    }
-    fn admit(&self) -> Result<Box<dyn CommitPermit>> {
-        let state = self.state()?;
-        let mut gate = state.gate.lock();
-        State::ensure(&gate)?;
-        gate.active = gate
-            .active
-            .checked_add(1)
-            .ok_or_else(|| storage("local admission count exhausted"))?;
-        Ok(Box::new(LocalPermit(state.clone())))
-    }
-    fn retains_gateway_receipts(&self) -> bool {
-        true
-    }
-    fn gateway_receipt(
-        &self,
-        request: &wire::GatewayRequest,
-    ) -> Result<Option<wire::GatewayResponse>> {
-        let state = self.state()?;
-        State::ensure(&state.gate.lock())?;
-        state.durable.gateway_receipt(request)
-    }
-    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
-        self.publish(bytes, time_term, None)
-    }
-    fn append_gateway(
-        &self,
-        bytes: &[u8],
-        time_term: u32,
-        receipt: &wire::GatewayReceipt,
-    ) -> Result<()> {
-        self.publish(bytes, time_term, Some(receipt))
-    }
-}
-
-impl Journal for LocalLog {
-    fn durable(&self) -> bool { self.state.get().is_some_and(|state| state.durable_transactions) }
-    fn apply(&self, record: &Record) -> Result<Entry> {
-        let state = self.state()?;
-        let gate = state.gate.lock();
-        State::ensure(&gate)?;
-        let prior = state.durable.transaction(record.transaction().id)?;
-        journal::transition(state.owner, self.durable(), prior.as_ref(), record)?;
-        if let Record::Prepare { rows, .. } = record {
-            for row in rows { state.schema.key_for_log(row.table)?; }
-        }
-        let index = state.durable.position()?.index.checked_add(1)
-            .ok_or_else(|| storage("local journal position exhausted"))?;
-        let source = wire::encode(&(2u32, index, record))?;
-        let (_, entry) = state.durable.apply_journal(sto_rocksdb::Position { index, term: 1 }, &source, state.owner, record)?;
-        journal::acknowledge(record, &entry)?;
-        Ok(entry)
-    }
-    fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
-        let state = self.state()?;
-        let gate = state.gate.lock();
-        State::ensure(&gate)?;
-        state.durable.transaction(id)
+            .ok_or_else(|| storage("transaction log not started"))?
+            .state
+            .durable
+            .transaction(id)
     }
     fn entries(&self) -> Result<Vec<Entry>> {
-        let state = self.state()?;
-        let gate = state.gate.lock();
-        State::ensure(&gate)?;
-        state.durable.transactions()
+        let _permit = <Self as CommitLog>::admit(self)?;
+        self.binding
+            .get()
+            .ok_or_else(|| storage("transaction log not started"))?
+            .state
+            .durable
+            .transactions()
     }
 }

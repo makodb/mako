@@ -1,6 +1,8 @@
 node:
   owner: 0
   nodes: 1
+  # Use create: false when reopening this directory.
+  persistence: {directory: data/redis, create: true, sync_writes: true}
   listen: 127.0.0.1:31000
   workers: 4
   warehouses_per_shard: 1

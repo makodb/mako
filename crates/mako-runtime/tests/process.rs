@@ -135,6 +135,7 @@ fn separate_process_migration_moves_raw_and_lazy_warehouse_tables() {
         let owner = owner as u32;
         children.push(Process::spawn(Config {
             persistence: None,
+            volatile: true,
             replica_groups: BTreeMap::new(),
             owner,
             nodes: 2,
@@ -313,6 +314,7 @@ fn target(owner: u32) -> Target {
 fn separate_process_clocks_commit_and_abort_through_native_srpc() {
     let mut child = Process::start(Config {
         persistence: None,
+        volatile: true,
         replica_groups: BTreeMap::new(),
         owner: 1,
         nodes: 2,
@@ -428,6 +430,7 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
     drop(socket);
     let mut config = Config {
         persistence: None,
+        volatile: false,
         replica_groups: BTreeMap::new(),
         owner: 0,
         nodes: 1,
@@ -565,6 +568,7 @@ fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
         initial: Vec::new(),
         replication: None,
         replica_groups: BTreeMap::new(),
+        volatile: false,
         persistence: Some(PersistenceConfig {
             directory: root.path().to_owned(),
             create: true,

@@ -86,10 +86,15 @@ The descriptor fixes membership, leases, timestamp, recovery endpoints and
 policy. Identity reuse with another descriptor or intent is rejected. Terminal
 records are retained; reclamation requires a separate stale-request fence.
 
-`LocalLog` uses the RocksDB adapter. `ReplicatedLog` uses Raft authority/read
-barriers and applied committed records. Synchronous storage is required to
-advertise durability. The memory implementation explicitly has no process
-restart guarantee. A transaction cannot mix these durability policies.
+`mako_runtime::log::Log` uses one command codec and state machine with either
+`LocalHost` or Raft authority/read barriers. Both ordering drivers persist the
+same RocksDB log format through `raft_store::journal`; a local append saves its
+commit prefix atomically, while Raft controls that prefix through consensus.
+Applied rows and transaction receipts use the same RocksDB adapter in both modes.
+Recovery replays committed entries above the applied prefix. Synchronous storage
+is required to advertise durability. The memory implementation has no process
+restart guarantee and requires development/test opt-in in node configuration.
+A transaction cannot mix these durability policies.
 
 The participant service restores unresolved prepares before new foreground
 admission after startup or authority change. Only the coordinator may resolve
@@ -150,7 +155,7 @@ separate from Raft position, routing generation, transaction ID and cache HLC.
 | Lease and execution admission | Core and ordinary `admission.rs`, generic `participant::Lane` | Core proof plus changed-payload, retired-lease and delayed-request scenarios |
 | Serializability composition | Frozen reads/writes and row/predicate storage contract | Exhaustive small histories with independent serial-order oracle; focused native write-skew tests |
 | Prepared physical lifetime | Runtime `prepared.rs`, `receiver.rs`, owned native API | Native listener teardown, late message, migration pin, restart and saved-decision regressions |
-| Authoritative journal and replay | Runtime `replication.rs`, `durable.rs` | Separate RocksDB and Raft checks; native checkpoint, restart, prepared failover and receipt recovery |
+| Authoritative journal and replay | Runtime `log.rs`, `durable.rs` | Separate RocksDB and Raft checks; native checkpoint, restart, prepared failover and receipt recovery |
 | Delivery and discovery | `remote.rs`, gateway SDK, runtime `rpc.rs` | Deterministic delivery faults and separate real SRPC/runtime tests |
 | Sharding/migration effects | Existing protocol actors, storage host and native migration adapter | Production Verus proofs, semantic controls, ordered byte/absence oracles and native migration tests |
 

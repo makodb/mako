@@ -94,6 +94,7 @@ fn node(owner: u32, peers: BTreeMap<u32, String>) -> Config {
         initial: vec![],
         replication: None,
         persistence: None,
+        volatile: true,
         replica_groups: BTreeMap::new(),
     }
 }
@@ -120,6 +121,7 @@ fn verify(stats: &Stats, shards: u32, initial: u64) {
 fn local_transaction_example_reopens_persistent_data() {
     let directory = tempfile::tempdir().unwrap();
     let mut config = node(0, BTreeMap::from([(0, "127.0.0.1:0".into())]));
+    config.volatile = false;
     config.persistence = Some(PersistenceConfig {
         directory: directory.path().join("data"),
         create: true,
@@ -188,6 +190,7 @@ fn replicated_shards_run_transaction_example() {
             let mut config = node(owner as u32, peers.clone());
             config.listen = addresses[index].clone();
             config.replica_groups = groups.clone();
+            config.volatile = false;
             config.replication = Some(ReplicaConfig {
                 group: owner as u64 + 900,
                 id: replica as u16 + 1,

@@ -3,6 +3,8 @@
 //! Admission is not commitment. Only `Applied` is a successful write; losing
 //! leadership after an append yields `Unknown`, never an invented abort.
 mod durable;
+mod local;
+pub use local::{LocalConfig, LocalHost};
 mod runtime;
 mod snapshot;
 mod transport;

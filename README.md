@@ -45,8 +45,8 @@ python3 examples/run_native.py transactions --build build --shards 2 --replicas 
 ```
 
 The launcher assigns ports, writes configuration under `build/runs`, owns its
-child processes and retains diagnostics on failure. Add `--persistent` for
-local disk persistence, or `--replicas 3` for Raft replication. Use `--help` for
+child processes and retains diagnostics on failure. Local RocksDB logging is
+the default; use `--replicas 3` for Raft or `--volatile` for development. Use `--help` for
 configuration, duration and CPU-throttling options. The familiar
 `examples/test_*.sh` workload entry points use this launcher.
 
@@ -94,7 +94,9 @@ native code; stable Rust has no UBSan compiler mode. See
 - Distributed transactions use OCC + 2PC: acquire every write lock before
   final validation, save one coordinator decision, then complete every member.
   Resolve Unknown by transaction ID; never rerun its body. Raft is the supported
-  replication protocol.
+  replication protocol. Both modes use one transaction-log interface and the
+  same RocksDB entry/recovery format. A production node must configure local
+  persistence or Raft; memory-only mode requires `volatile: true`.
 - Live migration supports volatile, unreplicated shards. Replicated or locally
   persistent migration is rejected. Reopening migration metadata alone does
   not recover row data.
@@ -107,7 +109,9 @@ native code; stable Rust has no UBSan compiler mode. See
   resource limits still apply.
 - Native durable formats are not compatible with the retired C++ WAL. Durable
   prepare, decision and completion records support transaction recovery before
-  new admission. Mixed old/new transaction-protocol operation is unsupported.
+  new admission. The shared log format requires fresh log directories; legacy
+  segmented logs and applied-only local stores are refused intact pending offline
+  conversion. Mixed old/new transaction-protocol operation is unsupported.
   See [the book](docs/mako-book.md) for durability and recovery limits.
 
 See [development](docs/developer/development.md),

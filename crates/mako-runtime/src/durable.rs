@@ -1,5 +1,5 @@
 //! Committed application rows over the existing native RocksDB adapter.
-//! Its atomic batches own both the row versions and applied Raft position.
+//! Its atomic batches own both the row versions and applied log position.
 //! Checkpoint generations, validation, publication and fsync are delegated to
 //! sto-rocksdb. Masstree is rebuilt from this committed state after restart.
 use crate::{
@@ -84,7 +84,7 @@ impl DurableRows {
             .lookup_table(&self.table_name)
             .map_err(storage)?
             .map(|table| table.id)
-            .ok_or_else(|| storage("row store not initialized by first Raft no-op"))
+            .ok_or_else(|| storage("row store not initialized by first log no-op"))
     }
     pub fn advance(&self, position: Position) -> Result<()> {
         let _gate = self.gate.lock();
@@ -95,7 +95,7 @@ impl DurableRows {
             .is_none()
         {
             if position.index != 1 {
-                return Err(storage("first Raft prefix must be a no-op"));
+                return Err(storage("first log prefix must be a no-op"));
             }
             let bytes =
                 Command::create_table(self.db.group(), request(position), self.table_name.clone())
@@ -166,9 +166,7 @@ impl DurableRows {
                 }
             } else {
                 if existing.is_some() {
-                    return Err(storage(
-                        "request already published at another Raft position",
-                    ));
+                    return Err(storage("request already published at another log position"));
                 }
                 tx.put(table, &key, &encoded).map_err(storage)?;
             }

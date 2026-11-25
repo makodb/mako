@@ -1,4 +1,4 @@
-//! Real SRPC sockets, existing raft-core elections and existing raft-store WAL.
+//! Real SRPC sockets, existing raft-core elections and shared RocksDB log.
 //! Run inside Docker: cargo test --manifest-path crates/Cargo.toml -p raft-host --test protocol -- --test-threads=1
 use parking_lot::Mutex;
 use raft_host::{AdmissionError, Config, Host, Peer, Position, ProposalStatus, StateMachine};
@@ -891,4 +891,120 @@ fn interrupted_snapshot_stage_authority_and_generation_publication_recover() {
             host.shutdown();
         }
     }
+}
+
+#[test]
+fn local_log_replays_a_saved_decision_after_application_failure() {
+    use raft_host::{LocalConfig, LocalHost};
+    let root = Directory::new();
+    let config = LocalConfig {
+        group: 71,
+        directory: root.0.join("log"),
+        create: true,
+        sync_writes: true,
+    };
+    let machine = Machine::open(root.0.join("rows"));
+    let log = LocalHost::start(config.clone(), machine.clone()).unwrap();
+    machine.fail.store(true, Ordering::SeqCst);
+    let proposal = log.propose(1, b"saved decision".to_vec()).unwrap();
+    assert!(proposal.is_committed());
+    assert!(matches!(
+        proposal.status(),
+        ProposalStatus::StorageFailed(_)
+    ));
+    assert!(machine.bytes().is_empty());
+    assert!(log.propose(1, b"must not append".to_vec()).is_err());
+    drop(log);
+    drop(machine);
+    let machine = Machine::open(root.0.join("rows"));
+    let config = LocalConfig {
+        create: false,
+        ..config
+    };
+    let log = LocalHost::start(config.clone(), machine.clone()).unwrap();
+    assert_eq!(machine.bytes(), b"saved decision");
+    assert_eq!(log.status().applied, Position { index: 2, term: 1 });
+    drop(log);
+    let log = LocalHost::start(config, machine.clone()).unwrap();
+    assert_eq!(machine.bytes(), b"saved decision");
+    assert_eq!(
+        log.propose(1, b" next".to_vec())
+            .unwrap()
+            .wait(Duration::from_secs(1)),
+        ProposalStatus::Applied
+    );
+    assert_eq!(machine.bytes(), b"saved decision next");
+    drop(log);
+    machine
+        .apply(
+            Position { index: 4, term: 1 },
+            Some(b"unexpected applied state"),
+        )
+        .unwrap();
+    assert!(LocalHost::start(
+        LocalConfig {
+            group: 71,
+            directory: root.0.join("log"),
+            create: false,
+            sync_writes: true
+        },
+        machine
+    )
+    .is_err());
+}
+
+#[test]
+fn local_and_raft_drivers_write_the_same_rocksdb_entry_format() {
+    use raft_host::{LocalConfig, LocalHost};
+    use raft_store::{
+        base::{entry_key, Base},
+        rocks::RocksBase,
+    };
+    let root = Directory::new();
+    let payload = b"\0prepare\xffimmutable-intent";
+    let local_path = root.0.join("local");
+    let local = LocalHost::start(
+        LocalConfig {
+            group: 72,
+            directory: local_path.clone(),
+            create: true,
+            sync_writes: true,
+        },
+        Machine::open(root.0.join("local-rows")),
+    )
+    .unwrap();
+    let local_proposal = local.propose(1, payload.to_vec()).unwrap();
+    assert_eq!(local_proposal.status(), ProposalStatus::Applied);
+    drop(local);
+    let cfg = config(&root.0, 72, 1, &peers(1), true);
+    let raft_path = cfg.directory.clone();
+    let raft = Host::start(cfg, Machine::open(root.0.join("raft-rows"))).unwrap();
+    until(|| raft.status().is_leader && raft.status().applied.index > 0);
+    let raft_proposal = raft.propose(raft.status().term, payload.to_vec()).unwrap();
+    assert_eq!(
+        raft_proposal.wait(Duration::from_secs(10)),
+        ProposalStatus::Applied
+    );
+    raft.shutdown();
+    drop(raft);
+    let local = RocksBase::open_journal(&local_path.join("base"), false, true).unwrap();
+    let raft = RocksBase::open_journal(&raft_path.join("base"), false, true).unwrap();
+    let a = local
+        .get(&entry_key(local_proposal.position.index))
+        .unwrap()
+        .unwrap();
+    let b = raft
+        .get(&entry_key(raft_proposal.position.index))
+        .unwrap()
+        .unwrap();
+    assert_eq!(&a[8..], &b[8..]);
+    assert_eq!(&a[8..], raft_store::journal::encode_command(Some(payload)));
+    assert_eq!(
+        local.get(raft_store::journal::KEY_FORMAT).unwrap(),
+        raft.get(raft_store::journal::KEY_FORMAT).unwrap()
+    );
+    assert_ne!(
+        local.get(raft_store::journal::KEY_AUTHORITY).unwrap(),
+        raft.get(raft_store::journal::KEY_AUTHORITY).unwrap()
+    );
 }

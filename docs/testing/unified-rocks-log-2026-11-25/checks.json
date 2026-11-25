@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "checks": {
+    "shared_log": "6 cases passed; identical entries, crash barriers, corruption, real RocksDB process exit, legacy refusal, exclusive ownership and create/reopen",
+    "raft_store": "46 cases passed in the full suite; the subsequent focused six-case run added one refusal test (47 distinct cases total)",
+    "raft_host": "10 unit and 14 protocol cases passed with fault hooks; snapshot_process is an ignored child helper executed by the parent test",
+    "direct_service": "6 configuration cases passed",
+    "quality": "strict Clippy for runtime, native adapter, raft-host and raft-store; native adapter compile-fail doctest passed",
+    "native_audits": "16 storage translation units; 12 production links; 40 Rust archives",
+    "launcher": "default local RocksDB: 40 commits, reopen existing data and continue to 80"
+  },
+  "logs": {
+    "mako-unified-log-component-04.log": {
+      "path": "/tmp/mako-unified-log-component-04.log",
+      "sha256": "8e9584cab5545200100e341f69781966affb13e90240b5614f594dacd3420d99"
+    },
+    "mako-unified-log-refusal-01.log": {
+      "path": "/tmp/mako-unified-log-refusal-01.log",
+      "sha256": "46bcc5d662a9cc6f001dd2f0438342a0b79bb43fe8d9a215e0cdd8ca314733fc"
+    },
+    "mako-unified-log-service-01.log": {
+      "path": "/tmp/mako-unified-log-service-01.log",
+      "sha256": "af2b4a2c30d39fc73e951b59871f85d6b9cdfd0ef10ad0fd89733b44d0ef2161"
+    },
+    "mako-unified-log-release-01.log": {
+      "path": "/tmp/mako-unified-log-release-01.log",
+      "sha256": "192501d6aa624eed63f22147b4d89405c255b9ea86d2d17bcbd2d9586817b3b4"
+    },
+    "mako-unified-log-launcher-01.log": {
+      "path": "/tmp/mako-unified-log-launcher-01.log",
+      "sha256": "9cf996c380a548d4abd1715d17c192230819263a78920ec1e062412dbfc979d5"
+    },
+    "mako-unified-log-address-01.log": {
+      "path": "/tmp/mako-unified-log-address-01.log",
+      "sha256": "63256c4f47116d5441e47f1f7f9384a1bf24bce14664eb66e89a8a2653b7c131"
+    },
+    "mako-unified-log-thread-01.log": {
+      "path": "/tmp/mako-unified-log-thread-01.log",
+      "sha256": "9695c475ce6cdd4d51ad48be1957212aed2219471c9192482e820a98afd45ec0"
+    },
+    "mako-unified-log-upper-01.log": {
+      "path": "/tmp/mako-unified-log-upper-01.log",
+      "sha256": "c57b4d0a1222870b612e9503f51a6d3f4ef4e09bb371337257dfadad121628ac"
+    }
+  }
+}

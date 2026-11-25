@@ -1,11 +1,11 @@
-//! The base: the saved state as of WAL record c.
+//! Atomic log state and its ordered key/value encoding.
 //!
 //! The applier folds durable records into it in one atomic batch each, c
 //! included, so the base is always the replay of records 1..=c. A checkpoint
 //! makes it durable (a waiting flush) and then deletes the WAL segments it
-//! covers. RocksDB is the production base (rocks.rs, its own WAL off: ours is
-//! the log above it); [`MemBase`] models one for the tests, dropping what
-//! was not flushed when it crashes.
+//! covers in the older segmented-WAL adapter. The shared journal instead uses
+//! `Base::persist` and RocksDB WAL-backed batches directly. [`MemBase`] models
+//! crash loss of writes that have not reached the persistence barrier.
 //!
 //! Keys: `h` hard state, `s` snapshot, `c` the last record folded in, `i` the
 //! store's identity, `e<index, big-endian>` an entry (its term, then the
@@ -32,6 +32,11 @@ pub enum Op {
 pub trait Base: Send {
     /// Applies the batch atomically (all or nothing at a crash).
     fn write(&mut self, ops: &[Op]) -> io::Result<()>;
+    /// Atomically save a batch before acknowledging its durability.
+    fn persist(&mut self, ops: &[Op]) -> io::Result<()> {
+        self.write(ops)?;
+        self.flush()
+    }
     /// Makes every write so far durable.
     fn flush(&mut self) -> io::Result<()>;
     fn get(&self, key: &[u8]) -> io::Result<Option<Vec<u8>>>;
@@ -130,19 +135,22 @@ pub fn load(base: &dyn Base, id: &Identity, no_vote: u16) -> Result<(u64, SavedS
     if let Some(b) = base.get(KEY_HARD).map_err(e)? {
         let mut r = Reader::new(&b);
         state.hard = Hard { term: r.u64()?, vote: r.u16()?, commit: r.u64()? };
+        if r.remaining()!=0 {return Err("base: trailing hard state bytes".into());}
     }
     if let Some(b) = base.get(KEY_SNAP).map_err(e)? {
         let mut r = Reader::new(&b);
         let index = r.u64()?;
         let term = r.u64()?;
-        let _keep = r.u8()?;
+        let keep = r.u8()?;
+        if keep>1 {return Err("base: invalid snapshot retention flag".into());}
         let n = r.u16()? as usize;
         let name = String::from_utf8(r.take(n)?.to_vec()).map_err(|e| format!("base: image name: {e}"))?;
+        if r.remaining()!=0 {return Err("base: trailing snapshot bytes".into());}
         state.snap_index = index;
         state.snap_term = term;
         state.image = if name.is_empty() { None } else { Some(name) };
     }
-    for (expect, (k, v)) in (state.snap_index + 1..).zip(base.scan(b"e").map_err(e)?) {
+    for (expect, (k, v)) in (state.snap_index.checked_add(1).ok_or("base: snapshot index exhausted")?..).zip(base.scan(b"e").map_err(e)?) {
         if k.len() != 9 {
             return Err("base: malformed entry key".into());
         }

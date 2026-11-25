@@ -83,11 +83,34 @@ pub struct Config {
     pub replication: Option<ReplicaConfig>,
     #[serde(default)]
     pub persistence: Option<PersistenceConfig>,
+    /// Explicit development/test mode. Production requires a local or Raft log.
+    #[serde(default)]
+    pub volatile: bool,
     #[serde(default)]
     pub replica_groups: BTreeMap<u32, ReplicaSet>,
 }
 impl Config {
     pub fn schema(&self) -> Result<Arc<Schema>> {
+        if self
+            .persistence
+            .as_ref()
+            .is_some_and(|cfg| cfg.directory.as_os_str().is_empty())
+            || self
+                .replication
+                .as_ref()
+                .is_some_and(|cfg| cfg.directory.as_os_str().is_empty())
+        {
+            return Err(Error::new(
+                ErrorCode::Invalid,
+                "log directory must not be empty",
+            ));
+        }
+        let persistent = self.persistence.is_some() || self.replication.is_some();
+        if persistent == self.volatile {
+            return Err(Error::new(ErrorCode::Invalid,
+                "configure a local persistence directory or Raft; volatile=true is an exclusive development/test mode"));
+        }
+
         if self.replica_groups.iter().any(|(owner, group)| {
             *owner >= self.nodes
                 || group.endpoints.is_empty()
@@ -211,7 +234,7 @@ pub struct RunningNode {
     pub schema: Arc<Schema>,
     pub network: Arc<Network>,
     #[cfg(feature = "replication")]
-    replication: Option<Arc<crate::replication::ReplicatedLog>>,
+    log: Option<Arc<crate::log::Log>>,
 }
 impl RunningNode {
     pub fn start(mut config: Config) -> Result<Self> {
@@ -224,24 +247,18 @@ impl RunningNode {
             ));
         }
         #[cfg(feature = "replication")]
-        let replication = config
-            .replication
-            .as_ref()
-            .map(|_| crate::replication::ReplicatedLog::new(std::time::Duration::from_secs(10)))
-            .transpose()?;
-        #[cfg(feature = "replication")]
-        let persistent = config
-            .persistence
-            .as_ref()
-            .map(|_| crate::replication::LocalLog::new());
+        let durable_log = if config.replication.is_some() || config.persistence.is_some() {
+            Some(crate::log::Log::new(std::time::Duration::from_secs(10))?)
+        } else {
+            None
+        };
         let log: Arc<dyn CommitLog> = {
             #[cfg(feature = "replication")]
-            if let Some(replication) = &replication {
-                replication.clone() as Arc<dyn CommitLog>
-            } else if let Some(persistent) = &persistent {
-                persistent.clone() as Arc<dyn CommitLog>
-            } else {
-                Arc::new(VolatileLog)
+            {
+                durable_log.as_ref().map_or_else(
+                    || Arc::new(VolatileLog) as Arc<dyn CommitLog>,
+                    |log| log.clone(),
+                )
             }
             #[cfg(not(feature = "replication"))]
             {
@@ -284,12 +301,59 @@ impl RunningNode {
             schema.install()?;
         }
         #[cfg(feature = "replication")]
-        if let (Some(persistent), Some(settings)) = (&persistent, &config.persistence) {
-            let directory = settings.directory.join("rows");
-            if !settings.create && !directory.join("CURRENT").is_file() {
+        if let Some(log) = &durable_log {
+            let (directory, group, sync_writes, create, mode) =
+                if let Some(settings) = &config.replication {
+                    let mode = crate::log::Mode::Raft(raft_host::Config {
+                        group: settings.group,
+                        node: settings.id,
+                        listen: settings.listen.clone(),
+                        peers: settings
+                            .peers
+                            .iter()
+                            .map(|peer| raft_host::Peer {
+                                id: peer.id,
+                                address: peer.address.clone(),
+                            })
+                            .collect(),
+                        directory: settings.directory.join("log"),
+                        create: settings.create,
+                        sync_writes: settings.sync_writes,
+                        ..raft_host::Config::default()
+                    });
+                    (
+                        &settings.directory,
+                        settings.group,
+                        settings.sync_writes,
+                        settings.create,
+                        mode,
+                    )
+                } else {
+                    let settings = config.persistence.as_ref().expect("configured durable log");
+                    let mode = crate::log::Mode::Local(raft_host::LocalConfig {
+                        group: u64::from(config.owner),
+                        directory: settings.directory.join("log"),
+                        create: settings.create,
+                        sync_writes: settings.sync_writes,
+                    });
+                    (
+                        &settings.directory,
+                        u64::from(config.owner),
+                        settings.sync_writes,
+                        settings.create,
+                        mode,
+                    )
+                };
+            if !create
+                && (!directory.join("rows/CURRENT").is_file()
+                    || !directory.join("log/FORMAT").is_file())
+            {
+                return Err(Error::new(ErrorCode::Invalid,"durable rows/log missing or legacy format; create must be explicit and existing stores require offline conversion"));
+            }
+            if directory.join("raft").exists() {
                 return Err(Error::new(
                     ErrorCode::Invalid,
-                    "local database missing; create must be explicit",
+                    "legacy Raft directory requires offline format conversion",
                 ));
             }
             let mut specs = config.tables.clone();
@@ -301,51 +365,12 @@ impl RunningNode {
                 specs,
             ))?;
             let rows = crate::durable::DurableRows::open(
-                &directory,
-                u64::from(config.owner),
-                settings.sync_writes,
+                &directory.join("rows"),
+                group,
+                sync_writes,
                 &identity,
             )?;
-            persistent.start(&store, schema.clone(), rows)?;
-        }
-        #[cfg(feature = "replication")]
-        if let (Some(replication), Some(settings)) = (&replication, &config.replication) {
-            let mut specs = config.tables.clone();
-            specs.sort_by_key(|spec| spec.id);
-            let identity = crate::wire::encode(&(
-                config.owner,
-                config.nodes,
-                config.warehouses_per_shard,
-                specs,
-            ))?;
-            let rows = crate::durable::DurableRows::open(
-                &settings.directory.join("rows"),
-                settings.group,
-                settings.sync_writes,
-                &identity,
-            )?;
-            replication.start(
-                raft_host::Config {
-                    group: settings.group,
-                    node: settings.id,
-                    listen: settings.listen.clone(),
-                    peers: settings
-                        .peers
-                        .iter()
-                        .map(|peer| raft_host::Peer {
-                            id: peer.id,
-                            address: peer.address.clone(),
-                        })
-                        .collect(),
-                    directory: settings.directory.join("raft"),
-                    create: settings.create,
-                    sync_writes: settings.sync_writes,
-                    ..raft_host::Config::default()
-                },
-                &store,
-                schema.clone(),
-                rows,
-            )?;
+            log.start(mode, &store, schema.clone(), rows)?;
         }
         let network = Arc::new(Network::default());
         let server = RunningShard::start_with_gateway(
@@ -372,7 +397,7 @@ impl RunningNode {
             schema,
             network,
             #[cfg(feature = "replication")]
-            replication,
+            log: durable_log,
         };
         if config.migration {
             node.migration = Some(RunningMigration::start(
@@ -389,10 +414,9 @@ impl RunningNode {
     }
     pub fn ready(&self) -> bool {
         #[cfg(feature = "replication")]
-        if let Some(replication) = &self.replication {
-            return replication.health().is_ok()
-                && replication.host().is_ok_and(|host| {
-                    let status = host.status();
+        if let Some(log) = &self.log {
+            return log.health().is_ok()
+                && log.status().is_ok_and(|status| {
                     status.leader.is_some()
                         && status.applied.index > 0
                         && status.applied.term == status.term
@@ -408,8 +432,8 @@ impl RunningNode {
         self.store.shutdown();
         self.migration.take();
         #[cfg(feature = "replication")]
-        if let Some(replication) = self.replication.take() {
-            replication.shutdown();
+        if let Some(log) = self.log.take() {
+            log.shutdown();
         }
     }
 }

@@ -10,12 +10,14 @@ fn yaml(addresses: &[String]) -> String {
         r#"nodes:
   - owner: 0
     nodes: 2
+    volatile: true
     listen: "{first}"
     warehouses_per_shard: 1
     tables: &tables {tables}
     peers: &peers {{0: "{first}", 1: "{second}"}}
   - owner: 1
     nodes: 2
+    volatile: true
     listen: "{second}"
     warehouses_per_shard: 1
     tables: *tables
@@ -177,6 +179,8 @@ fn existing_topologies_and_raft_fragments_translate_to_reviewable_native_configu
             root.join("config").join(file).to_str().unwrap().into(),
             "-N".into(),
             site.into(),
+            "--data-dir".into(),
+            data.to_str().unwrap().into(),
         ];
         let (file, _) = Args::parse(arguments).unwrap().load().unwrap();
         let (nodes, _) = file.into_parts().unwrap();
@@ -197,6 +201,8 @@ fn native_cli_prints_converted_config_without_opening_listeners_or_storage() {
         .args([
             "-q",
             root.join("config/mako_single_node.yml").to_str().unwrap(),
+            "--data-dir",
+            "/var/tmp/mako-config-print-only",
             "--print-config",
             "-u2",
             "-E",
@@ -213,4 +219,30 @@ fn native_cli_prints_converted_config_without_opening_listeners_or_storage() {
     let (nodes, settings) = config.into_parts().unwrap();
     assert_eq!(nodes[0].listen, "127.0.0.1:31000");
     assert_eq!(settings.seconds, 2);
+}
+
+#[test]
+fn production_configuration_requires_local_or_replicated_log_and_volatile_is_explicit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("node.yml");
+    std::fs::write(
+        &path,
+        yaml(&["127.0.0.1:31000".into(), "127.0.0.1:31001".into()]),
+    )
+    .unwrap();
+    let mut file: BenchmarkFile = read(&path).unwrap();
+    for node in &mut file.nodes {
+        node.volatile = false;
+    }
+    assert!(file.clone().into_parts().is_err());
+    for node in &mut file.nodes {
+        node.persistence = Some(mako_runtime::node::PersistenceConfig {
+            directory: directory.path().join(format!("data-{}", node.owner)),
+            create: true,
+            sync_writes: true,
+        });
+    }
+    assert!(file.clone().into_parts().is_ok());
+    file.nodes[0].volatile = true;
+    assert!(file.into_parts().is_err());
 }

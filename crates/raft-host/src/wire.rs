@@ -131,20 +131,12 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, 
 pub(crate) struct CommandCodec;
 impl raft_store::Codec<Command> for CommandCodec {
     fn encode(&self, command: &Command, out: &mut Vec<u8>) {
-        match &command.0 {
-            None => out.push(0),
-            Some(bytes) => {
-                out.push(1);
-                out.extend_from_slice(bytes);
-            }
-        }
+        out.extend_from_slice(&raft_store::journal::encode_command(command.0.as_deref()));
     }
     fn decode(&self, bytes: &[u8]) -> Result<Command, String> {
-        match bytes.split_first() {
-            Some((0, [])) => Ok(Command(None)),
-            Some((1, rest)) => Ok(Command(Some(Arc::from(rest)))),
-            _ => Err("invalid host command record".into()),
-        }
+        Ok(Command(
+            raft_store::journal::decode_command(bytes)?.map(Arc::from),
+        ))
     }
 }
 

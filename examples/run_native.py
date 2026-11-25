@@ -71,7 +71,8 @@ def main():
     parser.add_argument("--replicas", type=int, choices=[1, 3], default=1)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--colocated", action="store_true")
-    parser.add_argument("--persistent", action="store_true", help="local RocksDB persistence without Raft")
+    parser.add_argument("--volatile", action="store_true", help="explicit in-memory development mode")
+    parser.add_argument("--persistent", action="store_true", help="local RocksDB persistence without Raft (the default)")
     parser.add_argument("--count", type=int, default=100, help="commits per transaction worker, or attempts per benchmark worker")
     parser.add_argument("--seconds", type=int, default=10, help="benchmark duration limit")
     parser.add_argument("--duration-only", action="store_true", help="run for --seconds instead of a fixed attempt/commit count")
@@ -90,6 +91,8 @@ def main():
         parser.error("invalid CPU limit or throttle cycle")
     if args.workload == "transactions" and args.cpu_limit:
         parser.error("CPU throttling is a benchmark option")
+    if args.volatile and (args.persistent or args.replicas != 1):
+        parser.error("volatile mode cannot use persistent or replicated logging")
     if args.persistent and args.replicas != 1:
         parser.error("choose local persistence or replicated persistence")
     binary = args.build / ("mako_transactions" if args.workload == "transactions" else "mako_bench")
@@ -131,8 +134,10 @@ def main():
                     node["replication"] = dict(group=owner + 1, id=replica + 1,
                         listen=addresses[owner, replica, "raft"], directory=str(data), create=create,
                         peers=[dict(id=peer + 1, address=addresses[owner, peer, "raft"]) for peer in range(args.replicas)])
-                elif args.persistent:
+                elif not args.volatile:
                     node["persistence"] = dict(directory=str(data), create=create)
+                else:
+                    node["volatile"] = True
                 nodes.append(node)
             config = {"nodes": nodes}
             if args.workload == "transactions":

@@ -15,6 +15,8 @@ pub mod epoch;
 #[cfg(feature = "native-storage")]
 pub mod gateway;
 pub mod gateway_client;
+#[cfg(feature = "replication")]
+pub mod log;
 #[cfg(feature = "native-storage")]
 pub mod migration;
 #[cfg(feature = "native-storage")]
@@ -28,8 +30,6 @@ pub mod receiver;
 #[cfg(feature = "native-storage")]
 pub mod redis;
 pub mod redo;
-#[cfg(feature = "replication")]
-pub mod replication;
 pub mod rpc;
 #[cfg(feature = "native-storage")]
 mod scan;

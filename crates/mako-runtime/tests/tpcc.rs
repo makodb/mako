@@ -22,6 +22,7 @@ fn config(owner: u32, nodes: u32) -> Config {
         initial: Vec::new(),
         replication: None,
         persistence: None,
+        volatile: true,
         replica_groups: BTreeMap::new(),
     }
 }
@@ -605,6 +606,7 @@ fn native_benchmark_process_reopens_persistent_workload_without_reloading() {
     use std::process::Command;
     let directory = tempfile::tempdir().unwrap();
     let mut config = config(0, 1);
+    config.volatile = false;
     config.persistence = Some(PersistenceConfig {
         directory: directory.path().join("data"),
         create: true,

@@ -1,0 +1,120 @@
+{
+  "passed": true,
+  "tests": [
+    {
+      "test": "elected_replica_restores_prepared_intent_and_obeys_the_saved_decision",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "global_lock_barrier_rejects_point_absence_and_scan_write_skew",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_restart",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    },
+    {
+      "test": "prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin",
+      "passed": true,
+      "exit_code": 0,
+      "startup_retries": [],
+      "listing_retries": []
+    }
+  ],
+  "manifest": {
+    "commit": "7b54fa72e48289f1907a16c6a4ac43eb049ef0eb",
+    "sanitizer": "address",
+    "native_scope": "Masstree-storage-and-SRPC-platform-kernels",
+    "rust_instrumentation": "address-nightly-sysroot",
+    "rust_std_source": "instrumented-sysroot",
+    "rust_std_sysroot": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-sanitizer-sysroot",
+    "rust_runtime": "external-clang",
+    "rustflags": "-Zsanitizer=address -Zexternal-clangrt --sysroot=/var/tmp/mako-shard-rust/build_native_san_address_05/rust-sanitizer-sysroot -C force-frame-pointers=yes -C link-arg=-fsanitize=address -C link-arg=--config=/var/tmp/mako-shard-rust/build_native_san_address_05/clang-gnu-unwind.cfg",
+    "target": "x86_64-unknown-linux-gnu",
+    "unwind_backend": "libgcc",
+    "unwind_config_sha256": "1571e544ff7d19141defe467e04c118e0eac528b78e394e1fe54913ff9f6fb3c",
+    "asan_options": "abort_on_error=1:detect_leaks=1:halt_on_error=1:print_suppressions=1:strict_init_order=1",
+    "ubsan_options": "",
+    "tsan_options": "",
+    "rocksdb_library_dir": "system",
+    "gate_status": "passed",
+    "rust_one_std_native": "92 artifacts, 92 with Rust, all std Cs8OdpPalgxf2_3std",
+    "final_commit": "7b54fa72e48289f1907a16c6a4ac43eb049ef0eb"
+  },
+  "native_archive_sha256": "20a5446030da1be4a9cee4daadaf20612e7d4425fda7326974de96ca71c60fbd",
+  "logs": {
+    "build.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/build.log",
+      "sha256": "6fb9c319c4ec72ede84765863656bbcca12588b832b3ab1cea74ff8555908a71"
+    },
+    "elected_replica_restores_prepared_intent_and_obeys_the_saved_decision.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/elected_replica_restores_prepared_intent_and_obeys_the_saved_decision.log",
+      "sha256": "aa721970f599c5f2c6008f632553d5a29bdcb7e652a5551565c89fc663431bf8"
+    },
+    "a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion.log",
+      "sha256": "b68b791afccd0194bc97b66b66402c63d3b8c03acafcf81fbebd8c4f46aa9e4c"
+    },
+    "global_lock_barrier_rejects_point_absence_and_scan_write_skew.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/global_lock_barrier_rejects_point_absence_and_scan_write_skew.log",
+      "sha256": "279bb20cec9a331152d02745f7cc36e0d85578aa16ed99304b00fd8debb2426f"
+    },
+    "client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin.log",
+      "sha256": "7801649a479c110c0323a2e2c6a5d7d4a1ec6117b13da1504ad06b27831191cc"
+    },
+    "durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_restart.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_restart.log",
+      "sha256": "c65a53f6a96ce3ecc3ca280e78ec82256f0acaaf862df9af3e7f9c74e2f9e8cf"
+    },
+    "frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin.log",
+      "sha256": "d0f33b6ed76e58c353f10a72f9fef37920a8111c2b2a0d9110aeb019fbd03cf5"
+    },
+    "prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort.log",
+      "sha256": "2122e73146178fdf12aadd571d45c0cdac3dd3f306fefdd78fe72ce61c63d2b1"
+    },
+    "prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin.log": {
+      "path": "/var/tmp/mako-shard-rust/build_upper_development/unified-log-qualification/address/prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin.log",
+      "sha256": "fe38653d6582350b6b57f6158b3a1ba40374e19d3498137b7e006f41077bad58"
+    }
+  }
+}

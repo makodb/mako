@@ -4,104 +4,55 @@ use crate::{
 };
 use raft_core::{CoreOutput, RaftCore};
 use raft_store::{
-    base::{self, Base},
-    Hard, Identity, RealFs, Record, SavedState, SnapRef, StoreFs, Wal, WalOptions,
+    journal::RocksLog, Codec, Hard, Identity, RealFs, Record, SavedState, SnapRef, StoreFs,
 };
-use std::any::Any;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub(crate) struct Disk {
-    pub wal: Wal,
     pub sequence: u64,
     pub state: SavedState<Command>,
     pub fs: Arc<dyn StoreFs>,
     pub path: PathBuf,
-    base: Box<dyn Base>,
-    top: u64,
-    _lock: Box<dyn Any + Send>,
+    log: RocksLog,
 }
 impl Disk {
     pub fn open(cfg: &Config) -> Result<Self, String> {
         let fs: Arc<dyn StoreFs> = Arc::new(RealFs::with_sync_writes(cfg.sync_writes));
-        // Both halves of the full-width group identity participate in WAL
-        // identity. A separate immutable identity file records exact membership.
         let identity = Identity {
             site: cfg.node as u32,
             partition: cfg.group as u32,
             fingerprint: fingerprint(cfg),
-            format: if cfg.sync_writes {
-                0x5248_0001
-            } else {
-                0x5248_0002
-            },
+            format: 0x524c_0001,
         };
-        let sync_writes = cfg.sync_writes;
-        let factory = move |p: &std::path::Path, create| -> std::io::Result<Box<dyn Base>> {
-            Ok(Box::new(
-                raft_store::rocks::RocksBase::open_with_sync_writes(p, create, sync_writes)?,
-            ))
-        };
-        let opened = raft_store::open_store_with_base(
-            fs.clone(),
-            &cfg.directory,
-            identity,
-            WalOptions::default(),
-            cfg.create,
-            &CommandCodec,
-            u16::MAX,
-            Some(&factory),
-        )?;
-        let legacy = format!(
-            "raft-host/1\ngroup={}\nnode={}\nmembers={:?}\n",
+        let authority = format!(
+            "raft-host/2\ngroup={}\nnode={}\nmembers={:?}\n",
             cfg.group,
             cfg.node,
-            cfg.peers.iter().map(|p| p.id).collect::<Vec<_>>()
+            cfg.peers.iter().map(|peer| peer.id).collect::<Vec<_>>()
         );
-        let exact = format!(
-            "{legacy}durability={}\n",
-            if cfg.sync_writes { "sync" } else { "async" }
-        );
-        let identity_path = cfg.directory.join("HOST_IDENTITY");
-        if opened.created && !identity_path.exists() {
-            let mut file = fs.create_new(&identity_path).map_err(|e| e.to_string())?;
-            file.write_all(exact.as_bytes())
-                .and_then(|_| file.sync_data())
-                .map_err(|e| e.to_string())?;
-            fs.sync_dir(&cfg.directory).map_err(|e| e.to_string())?;
-        } else {
-            let stored = fs.read(&identity_path).map_err(|e| e.to_string())?;
-            // Pre-policy stores were always synchronous. Never accept their
-            // identity in async mode, or an async identity in sync mode.
-            if stored != exact.as_bytes() && !(cfg.sync_writes && stored == legacy.as_bytes()) {
-                return Err("Raft host identity/membership/durability mismatch".into());
-            }
+        let log = RocksLog::open(
+            &cfg.directory,
+            identity,
+            authority.as_bytes(),
+            cfg.create,
+            cfg.sync_writes,
+        )?;
+        let raw = &log.journal.state;
+        let mut state = SavedState::new(u16::MAX);
+        state.hard = raw.hard;
+        state.snap_index = raw.snap_index;
+        state.snap_term = raw.snap_term;
+        state.image = raw.image.clone();
+        for (term, bytes) in &raw.entries {
+            state.entries.push((*term, CommandCodec.decode(bytes)?));
         }
-        let mut disk = Self {
-            wal: opened.wal,
-            sequence: opened.d,
-            top: u64::MAX,
-            state: opened.state,
-            base: opened.base.expect("opened with a base"),
+        Ok(Self {
+            sequence: log.journal.sequence,
+            state,
             fs,
             path: cfg.directory.clone(),
-            _lock: opened.lock,
-        };
-        // Fold recovered records that had reached WAL but not the base before
-        // the crash. Async base reclamation is protected by its unsynced WAL;
-        // sync mode requires completed durable base flushes before reclamation.
-        let recovered =
-            raft_store::wal::recover(&*disk.fs, &disk.path.join("wal"), &identity, opened.c)?;
-        for (seq, bytes) in recovered.records {
-            disk.fold(seq, &bytes)?;
-        }
-        Ok(disk)
-    }
-    fn fold(&mut self, sequence: u64, bytes: &[u8]) -> Result<(), String> {
-        let raw = raft_store::record::decode(bytes, &raft_store::BytesCodec)?;
-        let mut ops = Vec::new();
-        base::ops_for(&raw, sequence, &mut self.top, &mut ops);
-        self.base.write(&ops).map_err(|e| e.to_string())
+            log,
+        })
     }
     pub fn persist(
         &mut self,
@@ -142,16 +93,10 @@ impl Disk {
         }
         let mut bytes = Vec::new();
         raft_store::record::encode(&record, &CommandCodec, &mut bytes);
-        let sequence = self
-            .sequence
-            .checked_add(1)
-            .ok_or("WAL sequence exhausted")?;
-        self.wal
-            .append(sequence, std::slice::from_ref(&bytes))
-            .map_err(|e| e.to_string())?;
-        self.sequence = sequence;
+        let raw = raft_store::record::decode(&bytes, &raft_store::BytesCodec)?;
+        self.log.journal.persist(raw)?;
+        self.sequence = self.log.journal.sequence;
         self.state.apply(record)?;
-        self.fold(sequence, &bytes)?;
         Ok(())
     }
     pub fn save_image(&self, position: Position, reference: &[u8]) -> Result<String, String> {
@@ -162,22 +107,10 @@ impl Disk {
             position.term,
             reference,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
     }
     pub fn checkpoint_base(&mut self) -> Result<(), String> {
-        self.base.flush().map_err(|e| e.to_string())?;
-        let directory = self.path.join("wal");
-        for segment in raft_store::wal::covered_segments(
-            &*self.fs,
-            &directory,
-            self.sequence,
-            self.wal.rotated().get(),
-        )
-        .map_err(|e| e.to_string())?
-        {
-            self.fs.remove_file(&segment).map_err(|e| e.to_string())?;
-        }
-        self.fs.sync_dir(&directory).map_err(|e| e.to_string())
+        self.log.journal.flush()
     }
 }
 fn fingerprint(cfg: &Config) -> u64 {

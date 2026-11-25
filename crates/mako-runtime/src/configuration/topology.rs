@@ -267,6 +267,7 @@ pub struct Options {
     pub data_root: Option<PathBuf>,
     pub create: bool,
     pub migration: bool,
+    pub volatile: bool,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -490,6 +491,7 @@ pub fn convert(
             peers: peer_map.clone(),
             migration: options.migration,
             initial: vec![],
+            volatile: options.volatile || options.migration,
             replication,
             persistence,
             replica_groups: replica_groups.clone(),
