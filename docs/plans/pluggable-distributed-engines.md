@@ -1,6 +1,7 @@
 # Pluggable distributed transaction engines
 
-Status: implementation in progress on `pluggable-distributed-engines`.
+Status: complete and qualified locally on `pluggable-distributed-engines`.
+Executable implementation: `c79ba2617`. No push has been performed for this work.
 Baseline: `mako-dev` at `2b0387b91`. Work is paced by the exit conditions below;
 a passing intermediate stage does not mean the integration is complete.
 
@@ -207,96 +208,38 @@ fence and cross-participant safety argument.
 
 ## Implementation stages
 
-Progress on 2026-11-25:
+Completed on 2026-11-25:
 
-- Offline conversion is implemented. `mako_convert` imports the shared-log
-  legacy row mirror and converts both current engines into a fresh directory.
-  It preserves exact replay fingerprints, tombstones, protocol records and
-  Raft hard state/uncommitted suffix; it does not decide pending transactions.
-  Source log/data leases exclude a running source, and publication refuses any
-  existing destination. Unit tests cover trimmed checkpoints, suffix replay,
-  both engine round trips, pending prepares/receipts, corrupt checkpoints and
-  source/target refusal. A real converted RocksDB node serves old rows and new
-  transactions. Final combined-engine/release/sanitizer qualification remains.
-  Segmented pre-shared-log WALs, missing authority, changing migration schema
-  and external legacy migration metadata are explicitly outside this converter.
+- The neutral engine API, model conformance and explicit Masstree/RocksDB adapters
+  are connected to the distributed participant and client paths. Neither the
+  upper protocol nor its proof gate depends on a native backend.
+- Masstree recovers from checksummed checkpoints and committed log replay without
+  a RocksDB row mirror. Checkpoints cover pending prepares and saved Complete
+  effects awaiting affine installation. Local/Raft prefix trimming and artifact
+  retention preserve recovery authority.
+- Direct RocksDB uses STO conflict protection and the same OCC + 2PC protocol,
+  with atomic row/version/protocol/progress application. All four engine/log
+  combinations and transactions across engines are qualified.
+- Durable sharding/migration stores control state behind the selected engine and
+  log. Recovery restores locks and epoch pins before admission, rebuilds drain
+  cuts, preserves saved decisions and binds row/control work to log authority.
+  Local and replicated crash/retry scenarios pass, including mixed engines.
+- `mako_convert` imports shared-log legacy row mirrors and converts between both
+  current engines. It preserves tombstones, receipts, prepares and Raft authority
+  including uncommitted suffixes. Real node tests cover conversion, recovered
+  migration control and distinct shard/Raft-group identities. Existing targets
+  and live sources are rejected. Retired segmented WALs, missing log authority
+  and changing migration schema require separate format/authority work.
+- Final qualification passed 83 debug runtime cases, 80 release cases, 22
+  RocksDB-only cases, 18 cases each under ASan and TSan, strict Clippy/doctests,
+  component suites and both build audits. The upper gate passed in 175.663
+  seconds on 32 CPUs with all 25 semantic negative controls. The native audit
+  covers 13 production links and 47 Rust archives; the RocksDB-only audit covers
+  all seven executables without Masstree. No performance campaign was run.
 
-
-- Local checkpoint artifact retention is complete. Recovery and durable snapshot
-  publication reclaim obsolete generations and abandoned attempts while retaining
-  the current authority. All 25 Raft-host cases pass, including recovery after
-  old-generation/orphan removal. Raft's existing outgoing image-lease retirement
-  remains separate. The fixed Masstree bootstrap artifact remains retained.
-
-
-- Durable migration is now wired through the verified durable actors and the
-  same selected engine/log. Control namespaces use a reserved internal table;
-  startup restores prepared locks and pins before publishing routing admission,
-  and reconstructs fresh source drain cuts. Raft metadata and row work retain
-  captured authority through proposal admission. The old configuration rejection
-  is replaced with a synchronous-durability requirement. Legacy standalone
-  metadata mode remains separate and inspection-only.
-- Local RocksDB checkpoint/restart, both cross-engine directions, and local
-  crash boundaries (prepare, freeze, partial final copy, saved Commit, partial
-  cleanup) pass. Raft leader replacement and interrupted copy/Commit/cleanup
-  pass; temporary peer recovery failures now retry the saved coordinator phase.
-  The upper proof gate passed in 151.69 seconds on 32 CPUs after adding the
-  admitted actor/plan accessors. The final stage rerun passed all 78 native
-  runtime cases, the stale-grant/authority regressions and strict Clippy. The
-  upper gate passed again in 149.363 seconds with all 25 semantic negative
-  controls. Evidence: `docs/testing/pluggable-engines-2026-11-25/07-*.json`.
-  Conversion and final release/sanitizer work remain open.
-
-Earlier stage evidence (the status statements below describe those commits):
-
-
-- `ROCKSDB_RUNTIME` now builds all six application executables without a C++
-  compiler setup or Masstree. Its dependency/symbol audit and 14 native runtime
-  cases pass. The default native profile includes both adapters; runtime engine
-  selection defaults to Masstree. The current upper gate passed in 151 seconds on
-  32 CPUs with 25 semantic negative controls. Persistent migration recovery,
-  conversion and final release/sanitizer qualification remain.
-
-- Migration storage callbacks are engine-neutral and reuse the shared transaction
-  driver. Six migration scenarios pass, covering both directions between engines,
-  RocksDB-to-RocksDB, raw and lazy warehouse tables, admission drain, and binary
-  scan cursors. The separate-process migration regression and strict Clippy pass.
-  Durable migration restart remains fenced until its complete handoff/control
-  state is recoverable; this stage does not remove that fence.
-
-- The direct RocksDB adapter passes the shared conformance scenarios. Its native
-  extension separates logical time from STO generation, retains tombstones,
-  applies rows and protocol metadata in one batch, and distinguishes distributed
-  storage from the existing local-service format. New atomic-failure, reopen and
-  checkpoint cases pass with the existing 16 component cases. Both runtime log
-  modes now use the atomic capability. Six RocksDB runtime scenarios pass,
-  including retained prepare recovery, Raft failover/snapshot catchup and a
-  transaction across Masstree and RocksDB. Process engine selection is wired.
-  All 66 native runtime cases pass, including SIGKILL recovery for both engines
-  with both log modes. Strict Clippy and the RocksDB component/conformance suites
-  pass. Migration, conversion, build separation and final qualification remain.
-
-- The neutral interface and Masstree adapter are connected to the production
-  client/participant/scan path. `Store::with_engine` selects an explicit adapter.
-  Existing migration still uses a checked temporary Masstree bridge.
-- All 55 existing native runtime tests passed in separate processes after the
-  extraction. Shared model/Masstree conformance and affine-worker compile-fail
-  checks pass. No checkpoint or RocksDB distributed support is claimed yet.
-- Masstree nodes now recover from logical checkpoints and the shared log with
-  no RocksDB row mirror. Checkpoints retain bootstrap data, tombstones, logical
-  timestamps, protocol entries, receipts and replay fingerprints; publication
-  overlays saved Complete effects whose affine installation is still pending.
-- Local logs now publish checked snapshots and trim their prefix. The admin
-  checkpoint command works for LocalLog and Raft. Replica restart, failover,
-  snapshot transfer and prepared recovery run through the new path. The native
-  suite passed 58 fresh-process cases; Raft-host passed 10 unit and 15 protocol
-  cases, with its child-process helper intentionally ignored as a direct test.
-- The upper gate passed in 154.264 seconds on 32 CPUs with the recovery policy
-  proofs and five new semantic negative controls. Storage cuts, serialization
-  and filesystem publication remain explicitly trusted adapter obligations.
-- The direct RocksDB adapter, durable migration, old-directory conversion and
-  final build/sanitizer qualification remain open. Existing row-mirror fixtures
-  and the explicit old log constructor remain temporarily for conversion work.
+The [qualification record](../testing/pluggable-engines-2026-11-25/README.md)
+indexes the final and intermediate evidence, trusted adapter obligations and
+operational limits. All stages below were committed locally as reviewable work.
 
 Each stage should produce reviewable commits and pass its checks before the next
 stage expands the supported configuration matrix.
@@ -325,7 +268,7 @@ and cleanup resume against actual committed rows and immutable saved plans.
 A completion receipt is saved only after its row barrier succeeds. Replicated
 migration additionally needs authority checks, actor reconstruction after a
 leader change, and peer discovery through the replica group. These are required
-parts of the remaining milestone, not consequences of the new storage trait.
+parts of durable integration; the storage trait alone does not provide them.
 
 For conversion, quiesce the old shard, resolve or explicitly preserve prepared
 work, and export an exact logical checkpoint from existing rows and journal

@@ -288,7 +288,8 @@ as user rows. Masstree checkpoints and RocksDB checkpoints therefore include
 control state without a second metadata database. Application schemas and
 ordinary data requests cannot access this namespace. Checkpoint identity binds
 the migration format; enabling migration on an existing fixed-placement
-directory requires explicit conversion.
+directory requires a separate migration of authority. Engine conversion alone
+does not enable migration.
 
 Startup and leader changes restore retained transaction locks and epoch pins
 before opening ordinary admission. Recovered prepares can resolve only their
@@ -410,19 +411,22 @@ Use the build container and pinned Rust toolchain:
 ./docker_build.sh ci upper 32
 ```
 
-`NATIVE_RUST` is the default CMake profile. `ROCKSDB_RAFT` is the separate direct
-RocksDB service profile. The retired `MAKO` application profile is rejected.
+`NATIVE_RUST` is the default CMake profile and includes both data adapters.
+`ROCKSDB_RUNTIME` builds the same distributed applications without Masstree.
+`ROCKSDB_RAFT` remains the separate local-transaction RocksDB service profile.
+The retired `MAKO` application profile is rejected.
 Native source and link audits constrain the remaining C++ dependency closure.
 
 The primary programs are `mako_node`, `mako_transactions`, `mako_bench`,
-`mako_client`, `mako_admin` and `mako_redis`. Each has `--help`. JSON/YAML parsing
+`mako_client`, `mako_admin`, `mako_redis` and `mako_convert`. Each has `--help`. JSON/YAML parsing
 and CLI compatibility live under runtime `configuration.rs` and
 `configuration/`. Validation runs before creating databases, listeners or
 workers.
 
 Node configuration specifies owner count, listen addresses, worker counts,
 tables, peer endpoints and optional replica groups. Choose either local
-`persistence` with a data directory or `replication`. Both default to synchronous
+`persistence` with a log directory or `replication`. Select Masstree or a
+separate RocksDB data directory with `engine`. Both default to synchronous
 writes. Omitting both is an error unless `volatile: true` explicitly selects
 development/test mode. Volatile mode cannot be combined with either persistent
 policy. Creating a new durable directory is explicit; use `create: false` when
@@ -436,7 +440,7 @@ Inside the container, a bounded two-shard example is:
 python3 examples/run_native.py transactions --build build --shards 2 --workers 3 --count 50
 ```
 
-The launcher uses local RocksDB by default. Add `--replicas 3` for Raft, or
+The launcher uses Masstree data and a local RocksDB log by default. Add `--replicas 3` for Raft, or
 `--volatile` for an explicitly ephemeral development run. The launcher
 owns its processes, assigns ports and retains failure diagnostics. Consult its
 `--help` for supported combinations.
@@ -457,7 +461,10 @@ the machine. Detailed reports record the source inputs and wall time. The
 checks for that cutover. The later
 [unified-log qualification](testing/unified-rocks-log-2026-11-25/README.md) records
 the shared local/Raft format, crash/refusal tests and explicit backend contract
-checks. The latest upper run completed in 150 seconds.
+checks. The pluggable-engine upper run completed in 176 seconds on 32 CPUs,
+including 25 semantic negative controls. Backend/component, process recovery,
+release, sanitizer and link-audit evidence is recorded separately in the
+[pluggable-engine qualification](testing/pluggable-engines-2026-11-25/README.md).
 
 The 2PC proof covers the lock barrier, participant-specific Yes votes, the saved
 decision requirement, decision immutability, completion acknowledgements and

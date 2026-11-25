@@ -182,8 +182,9 @@ Raft leader to publish a checkpoint. The reply reports its log index and term.
 An interrupted attempt retains the old recovery authority; another attempt uses
 a fresh generation name. Performance tests remain separate from this operation.
 
-The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks the
-final release/sanitizer qualification. Existing row-mirror directories require
+The [pluggable engine plan](../plans/pluggable-distributed-engines.md) is complete.
+Its [qualification record](../testing/pluggable-engines-2026-11-25/README.md) covers
+the engine/log matrix, migration crashes, conversion, release and sanitizers. Existing row-mirror directories require
 `mako_convert`; ordinary startup preserves them and refuses implicit conversion.
 
 ## 1. Introduction

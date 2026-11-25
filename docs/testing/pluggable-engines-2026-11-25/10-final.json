@@ -1,0 +1,57 @@
+{
+  "passed": true,
+  "source_revision": "c79ba2617699263865862933b7d38821d662e130",
+  "native_debug_cases": 83,
+  "native_debug_features": "replication,rocksdb-engine,test-hooks",
+  "native_release_cases": 80,
+  "native_release_features": "replication,rocksdb-engine",
+  "rocks_only_cases": 22,
+  "native_quality": "strict Clippy and doctests passed",
+  "native_source_audit": {
+    "storage_sources": 16,
+    "application_or_generated_cpp": false
+  },
+  "native_link_audit": {
+    "production_programs": 13,
+    "rust_archives": 47
+  },
+  "rocks_only_audit": {
+    "programs": 7,
+    "masstree_dependency": false
+  },
+  "upper": {
+    "seconds": 175.663,
+    "cpus": 32,
+    "semantic_negative_controls": 25,
+    "source_inputs_match_final_revision": true,
+    "note": "Final conversion-only fix changes no input of the upper gate."
+  },
+  "sanitizers": {
+    "address_cases": 18,
+    "thread_cases": 18,
+    "findings": 0,
+    "startup_layout_retries": 0,
+    "scope": "Instrumented Rust and unchanged native storage kernels; ASan uses system RocksDB, TSan uses instrumented RocksDB and existing scoped Masstree suppressions."
+  },
+  "performance": "Weekly/manual campaign remains separate and was not run for this change. Bounded workload correctness tests did run.",
+  "logs": {
+    "build_upper_development/pluggable-final-native-v2.log": "d969cbd695a94871289f0c817ea6c9dcb7759a049e54daf73895f141030a5f49",
+    "build_upper_development/pluggable-final-rocks-v2.log": "1aa132acfa693b40269dc5cd748679ebf63d3c32ee7f93a143dde2c14a2488f7",
+    "build_upper_development/pluggable-final-rocks.log": "0f993d2763179149a3173c0054734c6bee04eed9f4b8a4db08d229be93586f21",
+    "build_upper_development/pluggable-final-asan-v2.log": "c9ea01663e99228eb0f9e48c9baee829aeec3dfc1a505ac453c25c2e4bb1d06a",
+    "build_upper_development/pluggable-final-tsan-v2.log": "299f1a9b1364bdadae25c64f90e993e28212d4fb813e8a3a025dfc0ff26544d3",
+    "build_upper_development/pluggable-final-upper.log": "48ca1034c0db13c510cde0b7c01b48e5941497ff6803567d8b93f9e223f78193"
+  },
+  "local_commits": [
+    "c79ba2617 Preserve shard data identity when converting a Raft replica",
+    "e5e1b1e14 Convert stopped distributed engine directories at their committed log cut",
+    "bc2d1a92b Reclaim local checkpoint artifacts after durable authority publication",
+    "948b6ef0b Recover sharding control and migration through the selected engine log",
+    "78a6aa031 Build distributed RocksDB runtime without Masstree dependencies",
+    "5ca15a620 Use shared storage and transaction contracts for migration effects",
+    "81b044a2b Integrate direct RocksDB with local and replicated transaction logs",
+    "5eb66e745 Add direct RocksDB adapter for distributed STO participants",
+    "2b17a04ab Recover Masstree data from checkpoints and the shared log",
+    "5d75023b3 Extract distributed storage interface and Masstree adapter"
+  ]
+}

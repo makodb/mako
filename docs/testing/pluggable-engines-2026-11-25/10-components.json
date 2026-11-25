@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "qualified_source": "c79ba2617",
+  "components_unchanged_since": "e5e1b1e14",
+  "raft_host": {
+    "unit": 11,
+    "protocol": 15,
+    "ignored": "one subprocess helper, exercised by its parent test"
+  },
+  "sto_rocksdb": {
+    "behavior": 13,
+    "codec": 3,
+    "distributed": 3
+  },
+  "mako_storage_rocksdb": {
+    "conformance_test": 1,
+    "shared_scenarios": 6
+  },
+  "raft_store": "all unit, integration and doc targets passed with rocksdb feature",
+  "log": "build_upper_development/pluggable-final-rocks.log",
+  "log_sha256": "0f993d2763179149a3173c0054734c6bee04eed9f4b8a4db08d229be93586f21"
+}
