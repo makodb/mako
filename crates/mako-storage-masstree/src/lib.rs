@@ -62,6 +62,29 @@ pub fn native_table(table: &api::Table) -> api::Result<&native::Table> {
 }
 struct Worker(native::Worker);
 impl api::WorkerBackend for Worker {
+    fn checkpoint_page(
+        &mut self,
+        table: &api::Table,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> api::Result<api::CheckpointPage> {
+        let page = self
+            .0
+            .checkpoint_page(native_table(table)?, after, limit)
+            .map_err(error)?;
+        Ok(api::CheckpointPage {
+            rows: page
+                .rows
+                .into_iter()
+                .map(|row| api::CheckpointRow {
+                    key: row.key,
+                    value: row.value,
+                    time_term: row.time_term,
+                })
+                .collect(),
+            end: page.end,
+        })
+    }
     fn create_table(&mut self) -> api::Result<Arc<dyn api::TableBackend>> {
         Ok(Arc::new(Table(
             self.0

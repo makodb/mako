@@ -290,7 +290,18 @@ impl RunningNode {
                     store.open(&mut loader, key, schema.log_id(key)?)?;
                 }
             }
-            for chunk in config.initial.chunks(128) {
+            let has_bootstrap = config
+                .persistence
+                .as_ref()
+                .map(|c| c.directory.join("log.bootstrap/MANIFEST"))
+                .or_else(|| {
+                    config
+                        .replication
+                        .as_ref()
+                        .map(|c| c.directory.join("log.bootstrap/MANIFEST"))
+                })
+                .is_some_and(|p| p.exists());
+            for chunk in config.initial.chunks(128).filter(|_| !has_bootstrap) {
                 let mut tx = loader.begin().map_err(engine)?;
                 for row in chunk {
                     let table = store.table(TableKey {
@@ -307,7 +318,7 @@ impl RunningNode {
         }
         #[cfg(feature = "replication")]
         if local_log.is_some() || replicated_log.is_some() {
-            let (directory, group, sync_writes, create, mode) =
+            let (directory, _group, _sync_writes, create, mode) =
                 if let Some(settings) = &config.replication {
                     let mode = crate::log::Mode::Raft(raft_host::Config {
                         group: settings.group,
@@ -349,11 +360,17 @@ impl RunningNode {
                         mode,
                     )
                 };
+            if directory.join("rows").exists() {
+                return Err(Error::new(
+                    ErrorCode::Invalid,
+                    "legacy row mirror requires offline conversion; existing data retained",
+                ));
+            }
             if !create
-                && (!directory.join("rows/CURRENT").is_file()
+                && (!directory.join("log.bootstrap/MANIFEST").is_file()
                     || !directory.join("log/FORMAT").is_file())
             {
-                return Err(Error::new(ErrorCode::Invalid,"durable rows/log missing or legacy format; create must be explicit and existing stores require offline conversion"));
+                return Err(Error::new(ErrorCode::Invalid,"engine checkpoint/log missing or legacy format; create must be explicit and existing stores require offline conversion"));
             }
             if directory.join("raft").exists() {
                 return Err(Error::new(
@@ -369,21 +386,15 @@ impl RunningNode {
                 config.warehouses_per_shard,
                 specs,
             ))?;
-            let rows = crate::durable::DurableRows::open(
-                &directory.join("rows"),
-                group,
-                sync_writes,
-                &identity,
-            )?;
             match mode {
                 crate::log::Mode::Local(settings) => local_log
                     .as_ref()
                     .expect("local log configured")
-                    .start(settings, &store, schema.clone(), rows)?,
+                    .start_engine(settings, &store, schema.clone(), identity)?,
                 crate::log::Mode::Raft(settings) => replicated_log
                     .as_ref()
                     .expect("Raft log configured")
-                    .start(settings, &store, schema.clone(), rows)?,
+                    .start_engine(settings, &store, schema.clone(), identity)?,
             }
         }
         let network = Arc::new(Network::default());

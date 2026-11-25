@@ -30,9 +30,10 @@ ADAPTERS = {
     'crates/mako-runtime/src/rpc.rs': ['impl mako_protocol::contracts::Transport for Network'],
     'crates/mako-runtime/src/client.rs': ['remote::Remotes', 'impl Effects for NativeEffects', 'commit::coordinate(&mut effects)', 'TransactionAction::Lock', 'TransactionAction::Prepare', 'Record::Begin', 'Record::Decide'],
     'crates/mako-runtime/src/gateway.rs': ['client.run(', 'transaction.gateway_receipt('],
-    'crates/mako-runtime/src/log.rs': ['impl<C: Into<Mode>> Journal for Log<C>', 'Mode::Local', 'Mode::Raft', 'journal::transition(', 'binding.host.propose(', 'ProposalStatus::Applied', 'journal::acknowledge('],
+    'crates/mako-runtime/src/log.rs': ['impl<C: Into<Mode>> Journal for Log<C>', 'Mode::Local', 'Mode::Raft', 'journal::transition(', 'binding.host.propose(', 'ProposalStatus::Applied', 'journal::acknowledge(', 'recovery::replay_start(', 'gate.installing', 'self.replay.export('],
+    'crates/mako-runtime/src/checkpoint.rs': ['recovery::checkpoint_ready(', 'index.validate(', 'file.sync_all()', 'fs::rename('],
     'crates/raft-host/src/durable.rs': ['self.log.journal.persist(raw)?'],
-    'crates/raft-host/src/local.rs': ['disk.journal.persist(', 'ProposalStatus::Applied', 'self.0.machine.apply('],
+    'crates/raft-host/src/local.rs': ['disk.journal.persist(', 'ProposalStatus::Applied', 'self.0.machine.apply(', 'recovery::may_trim('],
     'crates/mako-runtime/src/gateway_client.rs': ['mako_protocol::gateway_client::GatewayClient'],
 }
 
@@ -89,6 +90,11 @@ def audit():
 
 # name, source, unique executable mutation, replacement, module, function.
 CONTROLS = [
+    ('checkpoint ignores row cut', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    paused && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', 'recovery', 'checkpoint_ready'),
+    ('checkpoint forgets prepared obligations', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    paused && row_cut == applied && metadata_cut == applied\n}', 'recovery', 'checkpoint_ready'),
+    ('checkpoint runs across publication', 'recovery.rs', '    paused && row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', '    row_cut == applied && metadata_cut == applied\n        && saved_prepares == required_prepares\n}', 'recovery', 'checkpoint_ready'),
+    ('trim precedes checkpoint publication', 'recovery.rs', '    files_validated && files_published && requested <= checkpoint\n}', '    files_validated && requested <= checkpoint\n}', 'recovery', 'may_trim'),
+    ('recovery trusts lost RAM progress', 'recovery.rs', '    checkpoint\n}', '    previous_ram\n}', 'recovery', 'replay_start'),
     ('stale sequence executes', 'admission.rs', 'request.sequence <= prior.sequence', 'request.sequence < prior.sequence', 'admission', 'admit'),
     ('install bypasses validation', 'admission.rs', 'if matches!(operation, Operation::Install) && !matches!(phase, Phase::Sealed)', 'if false && matches!(operation, Operation::Install) && !matches!(phase, Phase::Sealed)', 'admission', 'admit'),
     ('unknown releases migration protection', 'admission.rs', 'matches!(phase, Phase::Committed | Phase::Aborted) }', 'matches!(phase, Phase::Committed | Phase::Aborted | Phase::Unknown) }', 'admission', 'release_protection'),

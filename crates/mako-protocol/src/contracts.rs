@@ -57,6 +57,23 @@ pub trait ParticipantEngine {
 /// Shared transaction-log contract for MemoryLog, LocalLog and ReplicatedLog.
 /// Every backend owns its journal; callers never synthesize a memory fallback.
 pub trait CommitLog: crate::journal::Journal {
+    /// Publish a recoverable engine/protocol checkpoint and compact the log.
+    fn checkpoint(&self) -> Result<(u64, u64)> {
+        Err(crate::wire::Error::new(
+            crate::wire::ErrorCode::Invalid,
+            "this log has no durable checkpoint",
+        ))
+    }
+    /// Serialize physical installation with checkpoint export. The callback
+    /// runs on the participant's affine worker, exactly once. Persistent logs
+    /// retain the saved Complete effect until this publication succeeds.
+    fn publish(
+        &self,
+        _: crate::journal::TransactionId,
+        effect: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<()> {
+        effect()
+    }
     fn ready(&self) -> bool {
         self.health().is_ok()
     }

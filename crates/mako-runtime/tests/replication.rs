@@ -40,8 +40,12 @@ impl Replica {
             let mut loader = store.database.worker().unwrap();
             store.open(&mut loader, target().access.table, 1).unwrap();
         }
-        let durable = DurableRows::open(root, config.group, true, b"one table").unwrap();
-        log.start(config, &store, schema, durable).unwrap();
+        log.start_engine(config, &store, schema, b"one table".to_vec())
+            .unwrap();
+        assert!(
+            !root.exists(),
+            "Masstree must not create a RocksDB row mirror"
+        );
         Self { log, store }
     }
     fn client(&self) -> Client {

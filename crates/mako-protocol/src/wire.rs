@@ -353,6 +353,9 @@ pub enum Message {
         transaction: crate::journal::Transaction,
         resolve: bool,
     },
+    Checkpoint {
+        owner: u32,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
@@ -371,6 +374,10 @@ pub enum Reply {
         id: crate::journal::TransactionId,
         owner: u32,
         outcome: Result<Option<crate::journal::Outcome>>,
+    },
+    Checkpoint {
+        owner: u32,
+        position: Result<(u64, u64)>,
     },
 }
 

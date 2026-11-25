@@ -132,6 +132,20 @@ impl ParticipantService {
                         continue;
                     };
                     match message {
+                        Message::Checkpoint { owner } => {
+                            let position = if owner == store.owner {
+                                store.log.checkpoint()
+                            } else {
+                                Err(Error::new(
+                                    ErrorCode::Invalid,
+                                    "checkpoint sent to another shard",
+                                ))
+                            };
+                            (work.respond)(Reply::Checkpoint {
+                                owner: store.owner,
+                                position,
+                            });
+                        }
                         Message::Participant(request) => service.enqueue(
                             request.stream,
                             Work {

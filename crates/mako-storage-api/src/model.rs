@@ -121,6 +121,35 @@ impl Drop for ModelWorker {
     }
 }
 impl WorkerBackend for ModelWorker {
+    fn checkpoint_page(
+        &mut self,
+        table: &Table,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage> {
+        if self.attempt.is_some() || limit == 0 {
+            return Err(Error::invalid("invalid checkpoint worker/page"));
+        }
+        let id = self.table(table)?;
+        let state = self.state.lock().unwrap();
+        let mut iter = state.tables[&id]
+            .rows
+            .iter()
+            .filter(|(key, _)| after.is_none_or(|a| key.as_slice() > a));
+        let rows = iter
+            .by_ref()
+            .take(limit)
+            .map(|(key, cell)| CheckpointRow {
+                key: key.clone(),
+                value: cell.value.clone(),
+                time_term: cell.time_term,
+            })
+            .collect();
+        Ok(CheckpointPage {
+            rows,
+            end: iter.next().is_none(),
+        })
+    }
     fn create_table(&mut self) -> Result<Arc<dyn TableBackend>> {
         if self.attempt.is_some() {
             return Err(Error::invalid("busy worker"));

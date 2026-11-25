@@ -1,0 +1,26 @@
+{
+  "stage": "Masstree checkpoint and log recovery",
+  "native_runtime_fresh_process_cases": 58,
+  "raft_host_unit_cases": 10,
+  "raft_host_protocol_cases": 15,
+  "raft_host_ignored_child_helper": 1,
+  "sto_masstree_component_cases": 221,
+  "strict_clippy": true,
+  "upper_seconds": 154.264,
+  "upper_tests": 59,
+  "semantic_negative_controls": 25,
+  "additional_checks": [
+    "native/model checkpoint export retains tombstones and excludes prepared intent",
+    "local prefix trim, suffix replay, repeat checkpoint and restart",
+    "checkpoint overlays saved Complete before failed affine install",
+    "corrupt checkpoint rejection before admission",
+    "interrupted checkpoint keeps full log and permits retry at the same cut",
+    "admin checkpoint followed by process kill recovers rows and gateway receipts",
+    "bootstrap data and rejection of legacy installed-row callbacks"
+  ],
+  "notes": [
+    "The upper run precedes the final legacy-append refusal and bootstrap test extension; the local checkpoint case and strict Clippy passed after those changes.",
+    "Native debug qualification; final release, build matrix and sanitizer qualification remain pending.",
+    "The old explicit DurableRows log constructor remains for conversion/compatibility work."
+  ]
+}

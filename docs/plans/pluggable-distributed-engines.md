@@ -215,8 +215,21 @@ Progress on 2026-11-25:
 - All 55 existing native runtime tests passed in separate processes after the
   extraction. Shared model/Masstree conformance and affine-worker compile-fail
   checks pass. No checkpoint or RocksDB distributed support is claimed yet.
-- Checkpoint proofs, application/index separation and subsequent stages remain
-  open. The upper dependency audit now includes the model storage contract.
+- Masstree nodes now recover from logical checkpoints and the shared log with
+  no RocksDB row mirror. Checkpoints retain bootstrap data, tombstones, logical
+  timestamps, protocol entries, receipts and replay fingerprints; publication
+  overlays saved Complete effects whose affine installation is still pending.
+- Local logs now publish checked snapshots and trim their prefix. The admin
+  checkpoint command works for LocalLog and Raft. Replica restart, failover,
+  snapshot transfer and prepared recovery run through the new path. The native
+  suite passed 58 fresh-process cases; Raft-host passed 10 unit and 15 protocol
+  cases, with its child-process helper intentionally ignored as a direct test.
+- The upper gate passed in 154.264 seconds on 32 CPUs with the recovery policy
+  proofs and five new semantic negative controls. Storage cuts, serialization
+  and filesystem publication remain explicitly trusted adapter obligations.
+- The direct RocksDB adapter, durable migration, old-directory conversion and
+  final build/sanitizer qualification remain open. Existing row-mirror fixtures
+  and the explicit old log constructor remain temporarily for conversion work.
 
 Each stage should produce reviewable commits and pass its checks before the next
 stage expands the supported configuration matrix.

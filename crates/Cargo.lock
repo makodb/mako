@@ -709,6 +709,7 @@ name = "raft-host"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "mako-protocol-core",
  "parking_lot",
  "raft-core",
  "raft-store",

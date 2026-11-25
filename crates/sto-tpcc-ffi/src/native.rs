@@ -43,6 +43,19 @@ impl std::error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
 pub type Row = (Vec<u8>, Vec<u8>);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointRow {
+    pub key: Vec<u8>,
+    pub value: Option<Vec<u8>>,
+    /// Zero denotes bootstrap state without a distributed decision.
+    pub time_term: u32,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointPage {
+    pub rows: Vec<CheckpointRow>,
+    pub end: bool,
+}
+
 fn error(code: i32) -> Error {
     let kind = match code {
         3 => ErrorKind::Conflict,
@@ -137,6 +150,40 @@ pub struct Worker {
 }
 
 impl Worker {
+    /// Caller pauses committed publication across all pages and tables. This
+    /// export includes committed tombstones behind retained prepared locks.
+    pub fn checkpoint_page(
+        &mut self,
+        table: &Table,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage> {
+        if self.raw.active.is_some() || self.raw.protocol.is_uncertain() {
+            return Err(invalid("checkpoint export on an active worker"));
+        }
+        self.pin(table)?;
+        let result = table
+            .inner
+            .state
+            .table
+            .checkpoint_page(&self.raw.native_worker, after, limit)
+            .map_err(|failure| error(status_from_access("checkpoint export", failure).code()))
+            .map(|page| CheckpointPage {
+                rows: page
+                    .rows
+                    .into_iter()
+                    .map(|row| CheckpointRow {
+                        key: row.key,
+                        value: row.value.map(|v| v.as_ref().to_vec()),
+                        time_term: row.metadata.map_or(0, |m| m.encode_legacy()),
+                    })
+                    .collect(),
+                end: page.end,
+            });
+        self.pinned.clear();
+        result
+    }
+
     pub fn belongs_to(&self, database: &Database) -> bool {
         Arc::ptr_eq(&self.database.inner, &database.inner)
     }

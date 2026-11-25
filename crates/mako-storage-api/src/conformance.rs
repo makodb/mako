@@ -158,6 +158,60 @@ pub fn run(db: &Database) {
     global_lock_barrier_rejects_write_skew(db);
     prepare_is_private_frozen_and_retained(db);
     replay_preserves_tombstones_and_versions(db);
+    checkpoint_keeps_committed_state_behind_prepare(db);
+}
+
+pub fn checkpoint_keeps_committed_state_behind_prepare(db: &Database) {
+    let t = table(db);
+    let mut exporter = Session::new(db);
+    exporter
+        .replay(&t, b"key", Some(b"committed"), 100)
+        .unwrap();
+    exporter.replay(&t, b"deleted", None, 200).unwrap();
+    let mut owner = Session::new(db);
+    let mut prepared = owner.begin_participant(0).unwrap();
+    prepared
+        .mutate(&t, 1, Mutation::Put, b"key", b"private", false)
+        .unwrap();
+    prepared
+        .mutate(&t, 1, Mutation::Put, b"new", b"private", false)
+        .unwrap();
+    prepared.lock().unwrap();
+    let timestamp = prepared.timestamp().unwrap();
+    prepared.validate().unwrap();
+    prepared.prepared_rows(timestamp * 10).unwrap();
+    prepared.retain();
+    // No installation occurs while this cut is exported. Prepared protection
+    // stays live; snapshot traversal must neither wait for it nor expose intent.
+    let mut rows = Vec::new();
+    let mut after = None;
+    loop {
+        let t = t.clone();
+        let cursor = after.clone();
+        let page = exporter
+            .call(move |w| w.checkpoint_page(&t, cursor.as_deref(), 1))
+            .unwrap();
+        if let Some(last) = page.rows.last() {
+            assert!(after.as_ref().is_none_or(|a| a < &last.key));
+            after = Some(last.key.clone());
+        }
+        assert!(page.end || !page.rows.is_empty());
+        rows.extend(page.rows);
+        if page.end {
+            break;
+        }
+    }
+    let deleted = rows.iter().find(|r| r.key == b"deleted").unwrap();
+    assert_eq!((deleted.value.as_ref(), deleted.time_term), (None, 200));
+    let key = rows.iter().find(|r| r.key == b"key").unwrap();
+    assert_eq!(
+        (key.value.as_deref(), key.time_term),
+        (Some(b"committed".as_slice()), 100)
+    );
+    assert!(rows
+        .iter()
+        .all(|r| r.value.as_deref() != Some(b"private".as_slice())));
+    owner.resume_participant().unwrap().finish(false).unwrap();
 }
 
 // Each worker is created and destroyed on its own OS thread. Masstree permits

@@ -2,7 +2,6 @@
 #[path = "../../mako-protocol/tests/support/log_contract.rs"]
 mod log_contract;
 use mako_runtime::{
-    durable::DurableRows,
     log::{LocalLog, MemoryLog, ReplicatedLog},
     migration::{Kind, Schema, TableSpec},
     storage::{CommitLog, Store},
@@ -28,7 +27,7 @@ fn all_three_backends_obey_the_same_transaction_log_contract() {
     let local = LocalLog::new(Duration::from_secs(5)).unwrap();
     let local_store = Store::new(0, false, local.clone()).unwrap();
     local
-        .start(
+        .start_engine(
             raft_host::LocalConfig {
                 group: 17,
                 directory: root.path().join("local/log"),
@@ -37,7 +36,7 @@ fn all_three_backends_obey_the_same_transaction_log_contract() {
             },
             &local_store,
             schema.clone(),
-            DurableRows::open(&root.path().join("local/rows"), 17, true, b"log-contract").unwrap(),
+            b"log-contract".to_vec(),
         )
         .unwrap();
     log_contract::check(&*local, true);
@@ -49,7 +48,7 @@ fn all_three_backends_obey_the_same_transaction_log_contract() {
     let address = listener.local_addr().unwrap().to_string();
     drop(listener);
     replicated
-        .start(
+        .start_engine(
             raft_host::Config {
                 group: 17,
                 node: 1,
@@ -62,13 +61,7 @@ fn all_three_backends_obey_the_same_transaction_log_contract() {
             },
             &replicated_store,
             schema,
-            DurableRows::open(
-                &root.path().join("replicated/rows"),
-                17,
-                true,
-                b"log-contract",
-            )
-            .unwrap(),
+            b"log-contract".to_vec(),
         )
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);

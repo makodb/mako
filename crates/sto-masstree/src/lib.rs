@@ -29,6 +29,7 @@ mod local_version_tests;
 mod distributed;
 use distributed::{publish_distributed_if_needed, DistributedVersion};
 pub use distributed::{
+    CheckpointPage, CheckpointRecord,
     PinnedLookahead, ReadVisibility, VersionedLookahead, VersionedRead, VersionedScan, VersionedScanRecord,
 };
 use mako_clock::distributed::DistributedTimeTerm;

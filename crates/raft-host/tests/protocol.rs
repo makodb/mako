@@ -1008,3 +1008,76 @@ fn local_and_raft_drivers_write_the_same_rocksdb_entry_format() {
         raft.get(raft_store::journal::KEY_AUTHORITY).unwrap()
     );
 }
+
+#[test]
+fn local_checkpoint_failure_keeps_log_and_retry_uses_another_generation() {
+    use raft_host::{LocalConfig, LocalHost};
+    struct InterruptedCheckpoint {
+        machine: Arc<Machine>,
+        fail: AtomicBool,
+    }
+    impl StateMachine for InterruptedCheckpoint {
+        fn applied_position(&self) -> Result<Position, String> {
+            self.machine.applied_position()
+        }
+        fn apply(&self, p: Position, bytes: Option<&[u8]>) -> Result<(), String> {
+            self.machine.apply(p, bytes)
+        }
+        fn create_checkpoint(&self, path: &Path, p: Position) -> Result<(), String> {
+            self.machine.create_checkpoint(path, p)?;
+            if self.fail.swap(false, Ordering::SeqCst) {
+                Err("injected checkpoint interruption before publication".into())
+            } else {
+                Ok(())
+            }
+        }
+        fn validate_checkpoint(&self, path: &Path, p: Position) -> Result<(), String> {
+            self.machine.validate_checkpoint(path, p)
+        }
+        fn publish_checkpoint(&self, path: &Path, p: Position) -> Result<(), String> {
+            self.machine.publish_checkpoint(path, p)
+        }
+    }
+    let root = Directory::new();
+    let config = LocalConfig {
+        group: 72,
+        directory: root.0.join("log"),
+        create: true,
+        sync_writes: true,
+    };
+    let data = root.0.join("application");
+    let machine = Arc::new(InterruptedCheckpoint {
+        machine: Machine::open(data.clone()),
+        fail: AtomicBool::new(true),
+    });
+    let log = LocalHost::start(config.clone(), machine).unwrap();
+    assert_eq!(
+        log.propose(1, b"committed".to_vec()).unwrap().status(),
+        ProposalStatus::Applied
+    );
+    assert!(log.checkpoint().is_err());
+    drop(log);
+    // Simulate loss of the entire volatile application. No checkpoint reference
+    // was committed; recovery must still find the full authoritative log.
+    fs::remove_dir_all(&data).unwrap();
+    let config = LocalConfig {
+        create: false,
+        ..config
+    };
+    let machine = Machine::open(data.clone());
+    let log = LocalHost::start(config.clone(), machine.clone()).unwrap();
+    assert_eq!(machine.bytes(), b"committed");
+    let cut = log.checkpoint().unwrap();
+    assert_eq!(cut.index, 2);
+    drop(log);
+    drop(machine);
+    fs::remove_dir_all(&data).unwrap();
+    let machine = Machine::open(data);
+    let log = LocalHost::start(config, machine.clone()).unwrap();
+    assert_eq!(machine.bytes(), b"committed");
+    assert_eq!(
+        log.propose(1, b" suffix".to_vec()).unwrap().status(),
+        ProposalStatus::Applied
+    );
+    assert_eq!(machine.bytes(), b"committed suffix");
+}

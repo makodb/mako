@@ -81,6 +81,19 @@ pub struct VersionedScan {
     pub rows: Vec<VersionedRow>,
     pub read_dependency: u32,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointRow {
+    pub key: Vec<u8>,
+    pub value: Option<Vec<u8>>,
+    /// Zero is bootstrap data; nonzero values are distributed application time.
+    pub time_term: u32,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointPage {
+    pub rows: Vec<CheckpointRow>,
+    pub end: bool,
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParticipantReport {
     pub disposition: u32,
@@ -109,6 +122,14 @@ pub trait TableBackend: Any + Send + Sync {
 /// Replay is for decided effects under the caller's publication gate; it must
 /// preserve logical timestamps and tombstones and never revalidate a decision.
 pub trait WorkerBackend {
+    /// The caller holds the publication barrier for the entire multi-page cut.
+    /// Export committed payloads, including tombstones, even behind prepare locks.
+    fn checkpoint_page(
+        &mut self,
+        table: &Table,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage>;
     fn create_table(&mut self) -> Result<Arc<dyn TableBackend>>;
     fn begin(&mut self) -> Result<Box<dyn LocalTransaction + '_>>;
     fn begin_participant(&mut self, term: u32) -> Result<Box<dyn ParticipantBackend + '_>>;
@@ -222,6 +243,17 @@ pub struct Worker {
     affine: PhantomData<Rc<()>>,
 }
 impl Worker {
+    pub fn checkpoint_page(
+        &mut self,
+        table: &Table,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage> {
+        if !table.belongs_to(&self.database) {
+            return Err(Error::invalid("foreign checkpoint table"));
+        }
+        self.inner.checkpoint_page(table, after, limit)
+    }
     pub fn belongs_to(&self, database: &Database) -> bool {
         Arc::ptr_eq(&self.database.0, &database.0)
     }

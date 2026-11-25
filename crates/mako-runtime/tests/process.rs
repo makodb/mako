@@ -603,6 +603,17 @@ fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
     let mut client =
         GatewayClient::connect(server.address.clone(), Duration::from_secs(5)).unwrap();
     client.put(target(0), b"row", b"later value").unwrap();
+    let checkpoint = std::process::Command::new(env!("CARGO_BIN_EXE_mako_admin"))
+        .args(["checkpoint", &server.address, "0"])
+        .output()
+        .unwrap();
+    assert!(
+        checkpoint.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checkpoint.stderr)
+    );
+    assert!(!root.path().join("rows").exists());
+    assert!(root.path().join("log/checkpoints").is_dir());
     server.crash();
     drop(server);
     config.persistence.as_mut().unwrap().create = false;

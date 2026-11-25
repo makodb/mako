@@ -237,21 +237,23 @@ impl NativeEngine {
             outcome,
         })?;
         if current && self.retained {
-            let result = if outcome == Outcome::Commit {
-                let mut participant = self.worker.resume_participant().map_err(engine)?;
-                match participant
-                    .install(transaction.time_term / 10)
-                    .map_err(engine)
-                {
-                    Ok(()) => participant.finish(true).map(|_| ()).map_err(engine),
-                    Err(error) => {
-                        participant.retain();
-                        Err(error)
+            let result = store.log.publish(transaction.id, &mut || {
+                if outcome == Outcome::Commit {
+                    let mut participant = self.worker.resume_participant().map_err(engine)?;
+                    match participant
+                        .install(transaction.time_term / 10)
+                        .map_err(engine)
+                    {
+                        Ok(()) => participant.finish(true).map(|_| ()).map_err(engine),
+                        Err(error) => {
+                            participant.retain();
+                            Err(error)
+                        }
                     }
+                } else {
+                    self.worker.abort().map_err(engine)
                 }
-            } else {
-                self.worker.abort().map_err(engine)
-            };
+            });
             if let Err(error) = result {
                 // A saved completion must never expose a partly installed RAM
                 // image to another transaction. Restart rebuilds durable rows.

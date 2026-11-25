@@ -3,8 +3,12 @@
 //! uses STO. Routing and migration remain in mako-sharding. This crate owns
 //! their process and network lifetimes.
 pub mod admission;
+#[cfg(feature = "replication")]
+mod application;
 #[cfg(feature = "native-storage")]
 pub mod benchmark;
+#[cfg(feature = "replication")]
+mod checkpoint;
 #[cfg(feature = "native-storage")]
 pub mod client;
 #[cfg(feature = "native-storage")]

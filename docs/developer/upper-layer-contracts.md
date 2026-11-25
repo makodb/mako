@@ -94,11 +94,24 @@ specializations of `mako_runtime::log::Log<C>` and share one command codec and
 state machine with either `LocalHost` or Raft authority/read barriers. Both ordering drivers persist the
 same RocksDB log format through `raft_store::journal`; a local append saves its
 commit prefix atomically, while Raft controls that prefix through consensus.
-Applied rows and transaction receipts use the same RocksDB adapter in both modes.
-Recovery replays committed entries above the applied prefix. Synchronous storage
+Masstree rows and the derived protocol index are volatile in both modes. The
+recoverable prefix comes from an exact logical checkpoint; recovery restores
+that state and replays the committed suffix. Checkpoints include prepares,
+decisions, receipts and tombstones. The publication gate includes the interval
+between saving Complete and physically installing it: the checkpoint overlays
+the saved committed rows when installation is still pending. Synchronous storage
 is required to advertise durability. The memory implementation has no process
 restart guarantee and requires development/test opt-in in node configuration.
 A transaction cannot mix these durability policies.
+
+The recovery core verifies checkpoint-cut agreement, preservation of the counted
+prepare obligations, publication before trimming, and replay starting from the
+restored checkpoint rather than lost RAM progress. It assumes that the engine
+exporter supplies the stated committed cut, serialization preserves the supplied
+index, and successful file/reference publication meets the storage policy.
+Checksums, native copies and filesystem behavior are tested adapter obligations,
+not Verus proofs. Local prefix replacement records the snapshot reference and
+log trimming atomically in the existing RocksDB log batch.
 
 The participant service restores unresolved prepares before new foreground
 admission after startup or authority change. Only the coordinator may resolve

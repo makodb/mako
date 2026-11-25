@@ -7,7 +7,7 @@ use mako_sharding::{
     wire as control,
 };
 use std::time::Duration;
-const HELP: &str = "Usage:\n  mako_admin begin ADDRESS CLIENT SEQUENCE TABLE LO_HEX HI_HEX|inf SOURCE DESTINATION\n  mako_admin poll ADDRESS CLIENT SEQUENCE\n  mako_admin abort ADDRESS CLIENT SEQUENCE\n\nADDRESS is the native coordinator's shard listener, without a port offset.\nCLIENT/SEQUENCE identify the intent. Preserve both on every retry.\nTABLE is the canonical catalog name. Bounds are hexadecimal bytes; an empty\nargument is the empty bound, and inf is unbounded. Warehouse coordinates use\nfour big-endian bytes. Poll retains the result. Abort cannot undo publication.";
+const HELP: &str = "Usage:\n  mako_admin checkpoint ADDRESS OWNER\n  mako_admin begin ADDRESS CLIENT SEQUENCE TABLE LO_HEX HI_HEX|inf SOURCE DESTINATION\n  mako_admin poll ADDRESS CLIENT SEQUENCE\n  mako_admin abort ADDRESS CLIENT SEQUENCE\n\nADDRESS is the native coordinator's shard listener, without a port offset.\nCLIENT/SEQUENCE identify the intent. Preserve both on every retry.\nTABLE is the canonical catalog name. Bounds are hexadecimal bytes; an empty\nargument is the empty bound, and inf is unbounded. Warehouse coordinates use\nfour big-endian bytes. Poll retains the result. Abort cannot undo publication.";
 fn hex(text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     if !text.is_ascii() || !text.len().is_multiple_of(2) || text.len() > 2048 {
         return Err("invalid hexadecimal range bound".into());
@@ -31,6 +31,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let action = args.first().map(String::as_str);
+    if action == Some("checkpoint") && args.len() == 3 {
+        let owner = args[2].parse()?;
+        match Network::default().call(
+            &args[1],
+            Message::Checkpoint { owner },
+            Duration::from_secs(60),
+        )? {
+            Reply::Checkpoint {
+                owner: actual,
+                position,
+            } if actual == owner => {
+                let (index, term) = position?;
+                println!("owner={owner} checkpoint={index} term={term}");
+                return Ok(());
+            }
+            Reply::Error(error) => return Err(error.into()),
+            reply => return Err(format!("unexpected checkpoint reply: {reply:?}").into()),
+        }
+    }
     if !matches!(
         (action, args.len()),
         (Some("begin"), 9) | (Some("poll" | "abort"), 4)

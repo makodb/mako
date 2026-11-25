@@ -73,6 +73,104 @@ pub struct VersionedScan {
     pub dependency: Option<DistributedTimestamp>,
 }
 
+/// A committed physical record, including a retained tombstone. Unlike an
+/// application scan, checkpoint export does not hide absence metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointRecord {
+    pub key: Vec<u8>,
+    pub value: Option<Value>,
+    pub metadata: Option<DistributedTimeTerm>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointPage {
+    pub rows: Vec<CheckpointRecord>,
+    pub end: bool,
+}
+
+impl Table {
+    /// Export a bounded physical page while the application has paused all
+    /// committed installation and replay. Prepared transactions may retain
+    /// locks: their private intents are deliberately excluded from this view.
+    ///
+    /// The caller must hold its publication barrier across every table/page
+    /// and capture protocol metadata at that same cut. This method alone does
+    /// not provide a transactionally consistent multi-row snapshot. Payload
+    /// copies are memory-safe even if the caller violates that logical contract.
+    pub fn checkpoint_page(
+        &self,
+        worker: &Worker,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage, AccessError> {
+        self.checkpoint_page_inner(Some(worker), after, limit)
+    }
+
+    fn checkpoint_page_inner(
+        &self,
+        worker: Option<&Worker>,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<CheckpointPage, AccessError> {
+        if limit == 0 || limit > 4096 {
+            return Err(CapacityError::BufferLimit.into());
+        }
+        let shared = self.shared();
+        shared.ensure_healthy()?;
+        let _structure = shared.structural.read()?;
+        let mut scratch = DirectoryScanStorage::default();
+        let mut arena = 65536;
+        loop {
+            let chunk = shared.directory.scan(
+                worker,
+                DirectoryScanRequest {
+                    direction: ScanDirection::Forward,
+                    lower: after.map_or(ScanBound::Unbounded, ScanBound::Excluded),
+                    upper: ScanBound::Unbounded,
+                    entry_capacity: limit,
+                    key_arena_capacity: arena,
+                },
+                &mut scratch,
+                shared.record_token_mode == RecordTokenMode::DirectRecordPointer,
+            )?;
+            if chunk.len() == 0 && matches!(chunk.resume(), DirectoryScanResumeRef::UnchangedInput)
+            {
+                let needed = chunk.next_key_bytes_required();
+                if needed <= arena {
+                    return Err(table_fault("checkpoint directory made no progress"));
+                }
+                arena = needed;
+                continue;
+            }
+            let mut rows = Vec::with_capacity(chunk.len());
+            for copied in chunk.entries() {
+                let access = shared.resolve_directory_access(copied.record_id)?;
+                let history = access.record.state.shared.load_full();
+                let (value, metadata) = if let Some(SharedValue::Distributed(version)) =
+                    history.as_deref()
+                {
+                    (version.state.value().cloned(), version.metadata)
+                } else {
+                    match access.record.state.load(access.stable) {
+                        CommittedStateLoad::Complete { state, .. } => {
+                            (state.value().cloned(), None)
+                        }
+                        CommittedStateLoad::Incomplete(reason) => return Err(table_fault(reason)),
+                    }
+                };
+                rows.push(CheckpointRecord {
+                    key: copied.key.to_vec(),
+                    value,
+                    metadata,
+                });
+            }
+            return Ok(CheckpointPage {
+                rows,
+                end: chunk.stop_reason() == ScanStopReason::End,
+            });
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct DistributedVersion {
     pub(super) state: RecordState,

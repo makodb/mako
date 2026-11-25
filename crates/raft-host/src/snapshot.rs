@@ -93,7 +93,19 @@ pub(crate) fn create(
     if sync_writes {
         sync_dir(root)?;
     }
-    let generation = format!("{}-{}", position.index, position.term);
+    // A failed attempt may leave a complete or partial unpublished directory.
+    // Give every attempt its own name so recovery can retry the same cut without
+    // deleting an artifact that might still be referenced by durable authority.
+    let mut nonce = [0u8; 16];
+    File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut nonce))
+        .map_err(err)?;
+    let generation = format!(
+        "{}-{}-{:x}",
+        position.index,
+        position.term,
+        u128::from_ne_bytes(nonce)
+    );
     let directory = checkpoints.join(&generation);
     if directory.exists() {
         return Err("checkpoint generation already exists".into());

@@ -126,10 +126,30 @@ validation, write skew after the global lock barrier, retained prepares, and
 tombstone replay. They are tests of the storage contract, not a proof of either
 backend. The upper gate runs only the model; native tests remain separate.
 
-The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks
-the remaining direct RocksDB adapter, independent Masstree checkpoint/log
-recovery, durable migration and build qualification. The interface extraction
-alone does not remove the current RocksDB row mirror or make these modes ready.
+Masstree nodes now keep committed user data only in Masstree. Both persistent
+log modes recover a volatile protocol index and rows from a bootstrap checkpoint
+plus committed log entries. Later checkpoints include tombstones, timestamps,
+unresolved prepares, decisions, receipts and replay identities. There is no
+RocksDB user-row database on this node path. The old `DurableRows` reader remains
+temporarily for conversion and compatibility qualification.
+
+Checkpoint export pauses committed publication, while prepared transactions may
+keep their locks. If Complete has been saved but its affine worker has not yet
+installed, the exporter overlays that exact committed effect on the physical
+snapshot. It never overlays an undecided Prepare. Checksummed files and a durable
+manifest precede publication of the log's snapshot reference and prefix trimming.
+Recovery starts at the checkpoint actually restored, never at a previous RAM
+watermark. Failed or corrupt publication fences admission.
+
+Run `mako_admin checkpoint ADDRESS OWNER` against a local-log node or the current
+Raft leader to publish a checkpoint. The reply reports its log index and term.
+An interrupted attempt retains the old recovery authority; another attempt uses
+a fresh generation name. Performance tests remain separate from this operation.
+
+The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks the
+remaining direct RocksDB adapter, durable migration, offline conversion and
+build/verification qualification. Existing row-mirror directories are rejected
+with their data preserved until the conversion stage is available.
 
 ## 1. Introduction
 
