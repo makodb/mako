@@ -1,0 +1,19 @@
+# Start with: mako_node --config examples/native/rocksdb-node.yml
+owner: 0
+nodes: 1
+listen: 127.0.0.1:7810
+workers: 4
+gateway_workers: 4
+engine:
+  kind: rocksdb
+  directory: ./data/rocksdb-node/data
+persistence:
+  directory: ./data/rocksdb-node
+  create: true
+  sync_writes: true
+tables:
+  - id: 1
+    name: rows
+    kind: governed
+    warehouse: false
+    initial_owner: 0

@@ -504,7 +504,6 @@ dependencies = [
  "shard-host-core",
  "srpc",
  "sto-rocksdb",
- "sto-tpcc-ffi",
  "tempfile",
 ]
 

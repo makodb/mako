@@ -94,6 +94,7 @@ pub struct Store {
 }
 type Materializer = dyn Fn(TableKey) -> Result<Table> + Send + Sync;
 impl Store {
+    #[cfg(feature = "masstree-engine")]
     pub fn new(owner: u32, migration: bool, log: Arc<dyn CommitLog>) -> Result<Arc<Self>> {
         Self::with_engine(
             owner,

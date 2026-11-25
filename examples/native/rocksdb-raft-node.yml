@@ -1,0 +1,25 @@
+# One-member Raft example; configure distinct directories and peers for a group.
+owner: 0
+nodes: 1
+listen: 127.0.0.1:7810
+workers: 4
+gateway_workers: 4
+engine:
+  kind: rocksdb
+  directory: ./data/rocksdb-raft-node/data
+replication:
+  group: 1
+  id: 1
+  listen: 127.0.0.1:7821
+  peers:
+    - id: 1
+      address: 127.0.0.1:7821
+  directory: ./data/rocksdb-raft-node
+  create: true
+  sync_writes: true
+tables:
+  - id: 1
+    name: rows
+    kind: governed
+    warehouse: false
+    initial_owner: 0

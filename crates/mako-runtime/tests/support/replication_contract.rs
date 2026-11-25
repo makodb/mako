@@ -33,7 +33,7 @@ impl Replica {
         )
         .unwrap();
         let log = ReplicatedLog::new(Duration::from_secs(5)).unwrap();
-        let store = Store::with_engine(0, false, log.clone(), super::database(root)).unwrap();
+        let store = Store::with_engine(0, false, log.clone(), super::database(root, 0)).unwrap();
         {
             let mut loader = store.database.worker().unwrap();
             store.open(&mut loader, target().access.table, 1).unwrap();
@@ -437,7 +437,13 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         .unwrap()
         .put(b"receipt", b"new value");
     let local_log = LocalLog::new(Duration::from_secs(5)).unwrap();
-    let local = Store::new(1, false, local_log.clone()).unwrap();
+    let local = Store::with_engine(
+        1,
+        false,
+        local_log.clone(),
+        super::database(&root.path().join("coordinator-data"), 1),
+    )
+    .unwrap();
     let mut worker = local.database.worker().unwrap();
     local.open(&mut worker, target().access.table, 1).unwrap();
     let local_target = Target {

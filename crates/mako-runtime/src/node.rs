@@ -256,27 +256,27 @@ pub struct RunningNode {
 impl RunningNode {
     pub fn start(mut config: Config) -> Result<Self> {
         let schema = config.schema()?;
-        #[cfg(not(feature = "replication"))]
+        #[cfg(not(feature = "logging"))]
         if config.replication.is_some() || config.persistence.is_some() {
             return Err(Error::new(
                 ErrorCode::Invalid,
                 "this executable was built without native Raft support",
             ));
         }
-        #[cfg(feature = "replication")]
+        #[cfg(feature = "logging")]
         let local_log = config
             .persistence
             .as_ref()
             .map(|_| crate::log::LocalLog::new(std::time::Duration::from_secs(10)))
             .transpose()?;
-        #[cfg(feature = "replication")]
+        #[cfg(feature = "logging")]
         let replicated_log = config
             .replication
             .as_ref()
             .map(|_| crate::log::ReplicatedLog::new(std::time::Duration::from_secs(10)))
             .transpose()?;
         let log: Arc<dyn CommitLog> = {
-            #[cfg(feature = "replication")]
+            #[cfg(feature = "logging")]
             if let Some(log) = &local_log {
                 log.clone()
             } else if let Some(log) = &replicated_log {
@@ -284,13 +284,25 @@ impl RunningNode {
             } else {
                 Arc::new(MemoryLog::new(config.owner))
             }
-            #[cfg(not(feature = "replication"))]
+            #[cfg(not(feature = "logging"))]
             {
                 Arc::new(MemoryLog::new(config.owner))
             }
         };
         let database = match &config.engine {
-            EngineConfig::Masstree => mako_storage_masstree::database().map_err(engine)?,
+            EngineConfig::Masstree => {
+                #[cfg(feature = "masstree-engine")]
+                {
+                    mako_storage_masstree::database().map_err(engine)?
+                }
+                #[cfg(not(feature = "masstree-engine"))]
+                {
+                    return Err(Error::new(
+                        ErrorCode::Invalid,
+                        "Masstree data engine is not compiled into this executable",
+                    ));
+                }
+            }
             EngineConfig::RocksDb { directory } => {
                 #[cfg(feature = "rocksdb-engine")]
                 {
@@ -375,7 +387,7 @@ impl RunningNode {
         if config.migration {
             schema.install()?;
         }
-        #[cfg(feature = "replication")]
+        #[cfg(feature = "logging")]
         if local_log.is_some() || replicated_log.is_some() {
             let (directory, _group, _sync_writes, create, mode) =
                 if let Some(settings) = &config.replication {

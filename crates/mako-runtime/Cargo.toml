@@ -7,10 +7,14 @@ publish.workspace = true
 
 [features]
 default = []
-native-storage = ["dep:sto-tpcc-ffi", "dep:mako-storage-masstree", "dep:serde-saphyr"]
-rocksdb-engine = ["dep:mako-storage-rocksdb"]
+runtime-storage = ["dep:serde-saphyr"]
+masstree-engine = ["runtime-storage", "dep:mako-storage-masstree"]
+rocksdb-engine = ["runtime-storage", "dep:mako-storage-rocksdb"]
+native-storage = ["masstree-engine"]
 durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
-replication = ["native-storage", "durable-storage", "dep:raft-host"]
+logging = ["runtime-storage", "durable-storage", "dep:raft-host"]
+# Compatibility profile for existing Masstree build commands.
+replication = ["native-storage", "logging"]
 
 [dependencies]
 shard-host-core = { path = "../shard-host-core" }
@@ -19,7 +23,6 @@ mako-storage-api = { path = "../mako-storage-api" }
 mako-storage-masstree = { path = "../mako-storage-masstree", optional = true }
 mako-protocol = { path = "../mako-protocol" }
 mako-protocol-core = { path = "../mako-protocol-core" }
-sto-tpcc-ffi = { path = "../sto-tpcc-ffi", optional = true }
 mako-sharding = { path = "../../src/cluster" }
 srpc = { path = "../../src/srpc" }
 serde = { version = "1", features = ["derive"] }
@@ -43,7 +46,7 @@ path = "src/bin/admin.rs"
 [[bin]]
 name = "mako_redis"
 path = "src/bin/redis.rs"
-required-features = ["native-storage"]
+required-features = ["runtime-storage"]
 
 [[bin]]
 name = "mako_client"
@@ -52,15 +55,15 @@ path = "src/bin/client.rs"
 [[bin]]
 name = "mako_node"
 path = "src/bin/node.rs"
-required-features = ["native-storage"]
+required-features = ["runtime-storage"]
 
 [[bin]]
 name = "mako_transactions"
 path = "src/bin/transactions.rs"
-required-features = ["native-storage"]
+required-features = ["runtime-storage"]
 
 [[bin]]
 name = "mako_bench"
 path = "src/bin/bench.rs"
-required-features = ["native-storage"]
+required-features = ["runtime-storage"]
 

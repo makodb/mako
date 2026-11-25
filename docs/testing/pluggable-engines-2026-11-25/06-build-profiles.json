@@ -1,0 +1,24 @@
+{
+  "stage": "Independent data-engine build profiles",
+  "checks": {
+    "rocks_only_cmake_profile": "passed; LANGUAGES NONE",
+    "dependency_graph_and_symbols": "passed six executables, no Masstree dependency",
+    "rocks_only_runtime_fresh_process_cases": 14,
+    "combined_profile_strict_clippy": "passed",
+    "combined_profile_mixed_engine_transaction": "passed",
+    "upper_gate_seconds": 150.965,
+    "upper_negative_controls": 25
+  },
+  "logs": [
+    "build_upper_development/pluggable-rocks-profile.log",
+    "build_upper_development/pluggable-rocks-only-tests.log",
+    "build_upper_development/pluggable-profile-clippy.log",
+    "build_upper_development/pluggable-profile-mixed.log",
+    "build_upper_development/pluggable-current-upper.log"
+  ],
+  "remaining": [
+    "Durable migration/handoff recovery",
+    "Offline conversion",
+    "Final release, sanitizer and full build qualification"
+  ]
+}

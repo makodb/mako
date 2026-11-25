@@ -209,6 +209,13 @@ fence and cross-participant safety argument.
 
 Progress on 2026-11-25:
 
+- `ROCKSDB_RUNTIME` now builds all six application executables without a C++
+  compiler setup or Masstree. Its dependency/symbol audit and 14 native runtime
+  cases pass. The default native profile includes both adapters; runtime engine
+  selection defaults to Masstree. The current upper gate passed in 151 seconds on
+  32 CPUs with 25 semantic negative controls. Persistent migration recovery,
+  conversion and final release/sanitizer qualification remain.
+
 - Migration storage callbacks are engine-neutral and reuse the shared transaction
   driver. Six migration scenarios pass, covering both directions between engines,
   RocksDB-to-RocksDB, raw and lazy warehouse tables, admission drain, and binary
@@ -267,6 +274,18 @@ Stages 1–5 deliver pluggable distributed transactions with fixed shard placeme
 Stage 6 is a separate completion milestone: current durable/replicated live
 migration is unsupported, and adding an engine trait does not solve its recovery
 protocol. Do not report the full migration integration complete before that gate.
+
+The next recovery step will reuse `DurableParticipant` and `DurableCoordinator`,
+rather than turn the current inspection-only metadata reader into an authority.
+Control metadata must live behind the same selected log as row effects, in a
+reserved internal table/namespace covered by engine checkpoints. The host must
+restore retained transaction protection before reopening ordinary admission;
+a process restart cannot reuse an old in-memory drain epoch as evidence. Copy
+and cleanup resume against actual committed rows and immutable saved plans.
+A completion receipt is saved only after its row barrier succeeds. Replicated
+migration additionally needs authority checks, actor reconstruction after a
+leader change, and peer discovery through the replica group. These are required
+parts of the remaining milestone, not consequences of the new storage trait.
 
 For conversion, quiesce the old shard, resolve or explicitly preserve prepared
 work, and export an exact logical checkpoint from existing rows and journal

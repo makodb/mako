@@ -1,4 +1,4 @@
-#![cfg(all(feature = "replication", feature = "rocksdb-engine"))]
+#![cfg(all(feature = "logging", feature = "rocksdb-engine"))]
 use mako_runtime::{
     client::Client,
     log::LocalLog,

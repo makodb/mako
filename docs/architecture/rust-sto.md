@@ -140,7 +140,18 @@ Node configuration defaults to `engine: {kind: masstree}`. A build with
 The engine directory is separate from the configured log directory. Data and log
 must use the same durability policy. Reopening a missing RocksDB directory
 requires explicit creation; schema/profile mismatches fail before admission.
-RocksDB-only build separation and persistent migration remain pending.
+A fresh CMake build with `-DMAKO_BUILD_PROFILE=ROCKSDB_RUNTIME` builds all Mako
+entry points with `logging,rocksdb-engine`, without configuring a C++ compiler or
+compiling Masstree. `rocks_runtime_audit` checks Cargo dependencies and all six
+executables' symbols. `rust_runtime_tests` runs the direct RocksDB scenarios.
+`NATIVE_RUST` builds both adapters and keeps Masstree as the configuration default.
+Examples are [Masstree with LocalLog](../../examples/native/masstree-node.yml),
+[RocksDB with LocalLog](../../examples/native/rocksdb-node.yml), and
+[RocksDB with ReplicatedLog](../../examples/native/rocksdb-raft-node.yml).
+Run `mako_node --config FILE`; set `create: false` when reopening an existing
+installation. `mako_admin checkpoint ADDRESS OWNER` creates a recovery cut and
+retires its covered log prefix. Persistent migration recovery and offline
+conversion are still pending.
 
 Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
 independently. They check private writes, ordered scans, absence and predicate

@@ -124,7 +124,7 @@ foreach(_program mako_node mako_bench mako_transactions mako_redis)
     add_custom_target(${_program} ALL
         COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
             "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
-            -p mako-runtime --features replication --bin ${_program}
+            -p mako-runtime --features replication,rocksdb-engine --bin ${_program}
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         DEPENDS mako_native_storage
@@ -213,19 +213,19 @@ add_custom_target(rust_shard_integration_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication
+        --package mako-runtime --features replication,rocksdb-engine
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME rust_shard_integration
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication)
+        --package mako-runtime --features replication,rocksdb-engine)
 add_custom_target(rust_runtime_release_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication --release
+        --package mako-runtime --features replication,rocksdb-engine --release
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_native_dependency_audit
