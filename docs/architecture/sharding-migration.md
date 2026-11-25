@@ -1031,7 +1031,41 @@ Permanent failures, indefinitely delayed messages, or transactions that cannot
 settle can block completion. There is no unconditional or bounded-time progress
 guarantee.
 
-## 7. Implemented versus conditional behavior
+## 7. Runtime integration update (2026-11-25)
+
+The current Rust runtime connects `DurableCoordinator` and `DurableParticipant`
+to the pluggable data engine and shared transaction log. See the
+[Mako book](../mako-book.md#sharding-and-migration) for current configuration and
+recovery behavior. The earlier MBTA deployment and inspection-only metadata
+path described below are historical integration baselines, not the current
+application-log-backed path.
+
+Coordinator and participant namespaces occupy a reserved internal engine table.
+Each journal batch is a single OCC + 2PC transaction. Engine checkpoints include
+that table; no separately authoritative metadata RocksDB database is added.
+Captured Raft terms fence namespace handles and row callbacks, and guarded
+journal proposals use the captured term at Raft admission. Recovery settles old
+internal operations, restores ordinary prepared protection, replays the verified
+actors, publishes admission, and takes fresh host epoch cuts. Ordinary transaction
+leases are not fabricated in the migration journal: the runtime retains their
+actual transaction-service guards and epoch pins.
+
+The runtime bridge implements the primitive byte-map and row-effect contracts;
+it is trusted Rust I/O code, not a new Verus axiom about migration correctness.
+The row model's per-cell version is a history counter, distinct from both the
+engine's OCC generation and distributed logical timestamp. A delete of an
+absent row still produces a versioned tombstone effect. Native conformance and
+crash tests exercise these obligations independently of the upper proofs.
+
+The local process tests cover checkpointed ownership, lazy warehouse tables,
+stale grants, and interrupted prepare, freeze, final copy, Commit and cleanup.
+Raft tests kill both owner leaders and exercise copy/terminal recovery through
+replica discovery. Qualification is recorded in the
+[pluggable engine plan](../plans/pluggable-distributed-engines.md); final release
+and sanitizer gates remain separate from the everyday upper gate.
+
+### Historical integration status
+
 
 | Area | Status |
 |---|---|

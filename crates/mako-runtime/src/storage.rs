@@ -191,10 +191,19 @@ impl Store {
             .collect()
     }
     pub fn protect(&self) -> Result<Protection> {
+        self.protect_inner(false)
+    }
+    // Recovered intents have already passed routing admission. They may only
+    // resolve their saved decision, never execute new reads/writes under this
+    // protection. Pin them before publishing migration admission or a drain cut.
+    pub(crate) fn protect_recovered(&self) -> Result<Protection> {
+        self.protect_inner(true)
+    }
+    fn protect_inner(&self, recovered: bool) -> Result<Protection> {
         self.health()?;
         let permit = self.log.admit()?;
         let pin = self.epochs.enter();
-        let snapshot = if self.migration {
+        let snapshot = if self.migration && !recovered {
             Some(
                 runtime()
                     .node(self.owner)
@@ -361,6 +370,9 @@ impl Protection {
     }
     fn route(&self, access: &Access) -> Result<Option<RoutedGrant>> {
         self.check()?;
+        if access.table.table == crate::migration::CONTROL_TABLE.table {
+            return Err(Error::new(ErrorCode::Invalid, "reserved control table"));
+        }
         let governed = if self.snapshot.is_some() {
             self.coordinates(access)?;
             runtime()

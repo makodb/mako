@@ -45,12 +45,13 @@ pub struct HostAbi {
 #[derive(Clone)]
 pub struct Host {
     _owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
+    recovery: Option<crate::runtime_durability::Recovery>,
     context: usize, enter: Enter, leave: Leave, open: Open, scan: Scan,
     put: Put, remove: Remove, peer: Peer, epoch_cut: EpochCut, epoch_drained: EpochDrained,
 }
 impl Host {
     pub unsafe fn from_abi(abi: &HostAbi) -> Result<Self, Status> {
-        Ok(Self { _owner: None, context: abi.context as usize,
+        Ok(Self { _owner: None, recovery: None, context: abi.context as usize,
             enter: abi.thread_enter.ok_or(Status::Invalid)?, leave: abi.thread_leave.ok_or(Status::Invalid)?,
             open: abi.open.ok_or(Status::Invalid)?, scan: abi.scan_next.ok_or(Status::Invalid)?,
             put: abi.put.ok_or(Status::Invalid)?, remove: abi.remove.ok_or(Status::Invalid)?,
@@ -66,6 +67,10 @@ impl Host {
         host._owner = Some(owner);
         Ok(host)
     }
+    pub fn with_recovery(mut self, recovery: crate::runtime_durability::Recovery) -> Self {
+        self.recovery = Some(recovery); self
+    }
+    pub(crate) fn recovery(&self) -> Option<&crate::runtime_durability::Recovery> {self.recovery.as_ref()}
     pub fn enter(&self, owner: u32) -> Result<(), Status> {
         checked(status(unsafe { (self.enter)(self.context as *mut c_void,owner) }))
     }

@@ -57,6 +57,20 @@ pub trait ParticipantEngine {
 /// Shared transaction-log contract for MemoryLog, LocalLog and ReplicatedLog.
 /// Every backend owns its journal; callers never synthesize a memory fallback.
 pub trait CommitLog: crate::journal::Journal {
+    /// Has restart recovery, independently of whether acknowledgements are
+    /// synchronously durable. MemoryLog must never advertise this capability.
+    fn persistent(&self) -> bool {
+        false
+    }
+    /// Submit only under the authority that admitted an internal operation.
+    /// The implementation must bind the proposal itself to this term, not just
+    /// inspect leadership before calling an unqualified append.
+    fn apply_at(&self, _: &crate::journal::Record, _: u64) -> Result<crate::journal::Entry> {
+        Err(crate::wire::Error::new(
+            crate::wire::ErrorCode::Invalid,
+            "log cannot bind proposal authority",
+        ))
+    }
     /// Publish a recoverable engine/protocol checkpoint and compact the log.
     fn checkpoint(&self) -> Result<(u64, u64)> {
         Err(crate::wire::Error::new(
@@ -108,6 +122,9 @@ pub trait CommitLog: crate::journal::Journal {
     fn append(&self, bytes: &[u8], time_term: u32) -> Result<()>;
 }
 pub trait CommitPermit: Send + Sync {
+    fn authority(&self) -> Option<u64> {
+        None
+    }
     fn check(&self) -> Result<()>;
 }
 impl CommitPermit for () {

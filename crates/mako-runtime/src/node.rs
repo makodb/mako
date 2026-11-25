@@ -146,16 +146,13 @@ impl Config {
                 "configure local persistence or Raft, not both",
             ));
         }
-        if self.persistence.is_some() && self.migration {
+        if self.migration
+            && (self.persistence.as_ref().is_some_and(|c| !c.sync_writes)
+                || self.replication.as_ref().is_some_and(|c| !c.sync_writes))
+        {
             return Err(Error::new(
                 ErrorCode::Invalid,
-                "durable restart of live migration is unsupported by the sharding runtime",
-            ));
-        }
-        if self.replication.is_some() && self.migration {
-            return Err(Error::new(
-                ErrorCode::Invalid,
-                "live migration with replication replay is unsupported by the sharding runtime",
+                "persistent migration requires synchronous log durability",
             ));
         }
         if (self.replication.is_some() || self.persistence.is_some()) && !self.initial.is_empty() {
@@ -361,6 +358,13 @@ impl RunningNode {
                     store.open(&mut loader, key, schema.log_id(key)?)?;
                 }
             }
+            if config.migration && (config.persistence.is_some() || config.replication.is_some()) {
+                store.open(
+                    &mut loader,
+                    crate::migration::CONTROL_TABLE,
+                    crate::migration::CONTROL_LOG_ID,
+                )?;
+            }
             let has_bootstrap = config
                 .persistence
                 .as_ref()
@@ -452,12 +456,17 @@ impl RunningNode {
             }
             let mut specs = config.tables.clone();
             specs.sort_by_key(|spec| spec.id);
-            let identity = crate::wire::encode(&(
+            let mut identity = crate::wire::encode(&(
                 config.owner,
                 config.nodes,
                 config.warehouses_per_shard,
                 specs,
             ))?;
+            // Migration control rows are a versioned, reserved part of this
+            // schema. A fixed-placement directory cannot silently acquire it.
+            if config.migration {
+                identity.extend_from_slice(b"MAKO-MIGRATION-CONTROL-01");
+            }
             match mode {
                 crate::log::Mode::Local(settings) => local_log
                     .as_ref()
@@ -495,11 +504,12 @@ impl RunningNode {
             network,
         };
         if config.migration {
-            node.migration = Some(RunningMigration::start(
+            node.migration = Some(RunningMigration::start_with_replicas(
                 node.store.clone(),
                 node.schema.clone(),
                 node.network.clone(),
                 config.peers,
+                config.replica_groups,
             )?);
         }
         Ok(node)

@@ -10,6 +10,7 @@ path = "lib.rs"
 crate-type = ["rlib", "staticlib"]
 
 [features]
+test-hooks = []
 default = ["engine-host"]
 protocol = []
 engine-host = ["protocol", "dep:parking_lot"]

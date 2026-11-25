@@ -150,8 +150,8 @@ Examples are [Masstree with LocalLog](../../examples/native/masstree-node.yml),
 [RocksDB with ReplicatedLog](../../examples/native/rocksdb-raft-node.yml).
 Run `mako_node --config FILE`; set `create: false` when reopening an existing
 installation. `mako_admin checkpoint ADDRESS OWNER` creates a recovery cut and
-retires its covered log prefix. Persistent migration recovery and offline
-conversion are still pending.
+retires its covered log prefix. Durable migration uses the same engine and log;
+its control rows are included in checkpoints. Offline conversion remains pending.
 
 Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
 independently. They check private writes, ordered scans, absence and predicate
@@ -180,8 +180,7 @@ An interrupted attempt retains the old recovery authority; another attempt uses
 a fresh generation name. Performance tests remain separate from this operation.
 
 The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks the
-remaining direct RocksDB adapter, durable migration, offline conversion and
-build/verification qualification. Existing row-mirror directories are rejected
+remaining offline conversion and final release/sanitizer qualification. Existing row-mirror directories are rejected
 with their data preserved until the conversion stage is available.
 
 ## 1. Introduction

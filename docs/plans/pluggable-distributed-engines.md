@@ -209,6 +209,28 @@ fence and cross-participant safety argument.
 
 Progress on 2026-11-25:
 
+- Durable migration is now wired through the verified durable actors and the
+  same selected engine/log. Control namespaces use a reserved internal table;
+  startup restores prepared locks and pins before publishing routing admission,
+  and reconstructs fresh source drain cuts. Raft metadata and row work retain
+  captured authority through proposal admission. The old configuration rejection
+  is replaced with a synchronous-durability requirement. Legacy standalone
+  metadata mode remains separate and inspection-only.
+- Local RocksDB checkpoint/restart, both cross-engine directions, and local
+  crash boundaries (prepare, freeze, partial final copy, saved Commit, partial
+  cleanup) pass. Raft leader replacement and interrupted copy/Commit/cleanup
+  pass; temporary peer recovery failures now retry the saved coordinator phase.
+  The upper proof gate passed in 151.69 seconds on 32 CPUs after adding the
+  admitted actor/plan accessors. The final stage rerun passed all 78 native
+  runtime cases, the stale-grant/authority regressions and strict Clippy. The
+  upper gate passed again in 149.363 seconds with all 25 semantic negative
+  controls. Evidence: `docs/testing/pluggable-engines-2026-11-25/07-*.json`.
+  Conversion, local checkpoint artifact retention, and final release/sanitizer
+  work remain open.
+
+Earlier stage evidence (the status statements below describe those commits):
+
+
 - `ROCKSDB_RUNTIME` now builds all six application executables without a C++
   compiler setup or Masstree. Its dependency/symbol audit and 14 native runtime
   cases pass. The default native profile includes both adapters; runtime engine
@@ -271,12 +293,11 @@ stage expands the supported configuration matrix.
 | 7. Conversion and release | Add explicit engine/log configuration, build profiles, offline data conversion, book/API examples and qualification evidence. Remove the temporary persistence bridge from production selection. | Both engine modes are usable through one application API, with documented recovery and no hidden data-engine fallback. |
 
 Stages 1–5 deliver pluggable distributed transactions with fixed shard placement.
-Stage 6 is a separate completion milestone: current durable/replicated live
-migration is unsupported, and adding an engine trait does not solve its recovery
-protocol. Do not report the full migration integration complete before that gate.
+Stage 6 adds durable/replicated migration and has its own recovery and crash gate.
+Do not report the full plan complete before conversion and release qualification.
 
-The next recovery step will reuse `DurableParticipant` and `DurableCoordinator`,
-rather than turn the current inspection-only metadata reader into an authority.
+The recovery implementation reuses `DurableParticipant` and `DurableCoordinator`.
+The older inspection-only metadata reader does not become an authority.
 Control metadata must live behind the same selected log as row effects, in a
 reserved internal table/namespace covered by engine checkpoints. The host must
 restore retained transaction protection before reopening ordinary admission;

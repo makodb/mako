@@ -265,11 +265,41 @@ listener closure. Migration must wait for their authoritative decision and
 physical completion. It must not interpret a missing client or an expired RPC
 as permission to drain them.
 
-Live migration currently supports volatile, unreplicated shards. Combining it
-with local persistence or Raft is rejected by configuration validation. The
-conditional durable sharding models do not establish production support for
-that combination. See [sharding and range migration](architecture/sharding-migration.md)
-for the transfer protocol and its proof boundary.
+Migration uses the selected data engine and transaction log. Durable mode
+requires `sync_writes: true`; Masstree and direct RocksDB work with LocalLog or
+ReplicatedLog, including transfers between engines. Every replica within one
+Raft group uses the same engine. Volatile fixtures still use MemoryLog and have
+no restart guarantee.
+
+The durable coordinator and participant journals live in a reserved internal
+table in the selected engine. Their atomic batches use the same OCC + 2PC log
+as user rows. Masstree checkpoints and RocksDB checkpoints therefore include
+control state without a second metadata database. Application schemas and
+ordinary data requests cannot access this namespace. Checkpoint identity binds
+the migration format; enabling migration on an existing fixed-placement
+directory requires explicit conversion.
+
+Startup and leader changes restore retained transaction locks and epoch pins
+before opening ordinary admission. Recovered prepares can resolve only their
+saved decisions; they cannot execute fresh operations using recovery admission.
+The migration actor rebuilds new drain cuts after publishing recovered Frozen
+state. No pre-crash epoch number proves that work has drained. Recovery settles
+old internal row operations before examining migration journals, then resumes
+the coordinator's saved phase and any required copy or cleanup. A saved Commit
+is never changed to Abort. Temporary peer recovery failures are retried.
+
+Control handles and row callbacks retain the admitting log term. Metadata
+reads and source scans confirm quorum authority; writes bind the log proposal
+itself to the captured term. Replica-group discovery finds the current owner
+leader. Unknown physical outcomes fence or stop the process until recovery.
+The older `MAKO_SHARD_METADATA_DIR` inspection path is separate and cannot be
+combined with application-log-backed recovery.
+
+The [migration chapter](architecture/sharding-migration.md) gives the protocol
+proofs. Actual engine effects, serialization, filesystem durability, the Rust
+runtime authority scopes and RPC delivery remain adapter obligations. Crash
+qualification and the remaining conversion/release work are tracked in the
+[pluggable engine plan](plans/pluggable-distributed-engines.md).
 
 ## Workers, RPC and ownership
 

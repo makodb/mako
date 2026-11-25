@@ -50,6 +50,23 @@ pub(crate) struct Change {
     receipt: Option<GatewayReceipt>,
     duplicate: bool,
 }
+impl Change {
+    pub fn table_ids(&self) -> Vec<u16> {
+        self.rows
+            .iter()
+            .map(|row| row.table)
+            .chain(
+                self.entry
+                    .iter()
+                    .flat_map(|entry| entry.participant.iter())
+                    .flat_map(|p| p.rows.iter().flatten())
+                    .map(|row| row.table),
+            )
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+}
 impl Index {
     fn next(&self, position: Position, source: &[u8]) -> Result<Change> {
         let fingerprint = Sha256::digest(source).into();

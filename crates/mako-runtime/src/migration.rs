@@ -45,6 +45,12 @@ pub struct TableSpec {
     pub warehouse: bool,
     pub initial_owner: u32,
 }
+// Reserved from every application schema and ordinary wire access.
+pub(crate) const CONTROL_TABLE: TableKey = TableKey {
+    table: u64::MAX,
+    warehouse: 0,
+};
+pub(crate) const CONTROL_LOG_ID: u16 = 0x7fff;
 pub struct Schema {
     tables: BTreeMap<u64, (TableSpec, u16)>,
     pub nodes: u32,
@@ -65,6 +71,7 @@ impl Schema {
         let mut next = 1u32;
         for table in tables {
             if table.id == 0
+                || table.id == CONTROL_TABLE.table
                 || table.name.is_empty()
                 || !names.insert(table.name.clone())
                 || table.initial_owner >= nodes
@@ -81,7 +88,7 @@ impl Schema {
             next = next
                 .checked_add(if table.warehouse { total } else { 1 })
                 // The retained log format reserves the high bit for deletes.
-                .filter(|next| *next <= 0x8000)
+                .filter(|next| *next <= u32::from(CONTROL_LOG_ID))
                 .ok_or_else(|| {
                     Error::new(ErrorCode::Capacity, "physical table log ID exhausted")
                 })?;
@@ -132,6 +139,9 @@ impl Schema {
             .ok_or_else(|| Error::new(ErrorCode::Invalid, "unknown table name"))
     }
     pub fn log_id(&self, key: TableKey) -> Result<u16> {
+        if key == CONTROL_TABLE {
+            return Ok(CONTROL_LOG_ID);
+        }
         let (table, base) = self
             .tables
             .get(&key.table)
@@ -152,6 +162,9 @@ impl Schema {
         }
     }
     pub fn key_for_log(&self, log_id: u16) -> Result<TableKey> {
+        if log_id == CONTROL_LOG_ID {
+            return Ok(CONTROL_TABLE);
+        }
         for (table, base) in self.tables.values() {
             let width = if table.warehouse { self.total } else { 1 };
             if u32::from(log_id) >= u32::from(*base) && u32::from(log_id) < u32::from(*base) + width
@@ -313,6 +326,7 @@ struct State {
     schema: Arc<Schema>,
     network: Arc<Network>,
     endpoints: BTreeMap<u32, String>,
+    replicas: BTreeMap<u32, crate::wire::ReplicaSet>,
     factory: Factory,
     tokens: Mutex<BTreeMap<(TableKey, bool), usize>>,
 }
@@ -361,6 +375,15 @@ impl RunningMigration {
         network: Arc<Network>,
         endpoints: BTreeMap<u32, String>,
     ) -> Result<Self> {
+        Self::start_with_replicas(store, schema, network, endpoints, BTreeMap::new())
+    }
+    pub fn start_with_replicas(
+        store: Arc<Store>,
+        schema: Arc<Schema>,
+        network: Arc<Network>,
+        endpoints: BTreeMap<u32, String>,
+        replicas: BTreeMap<u32, crate::wire::ReplicaSet>,
+    ) -> Result<Self> {
         if !store.migration || store.owner >= schema.nodes {
             return Err(Error::new(
                 ErrorCode::Invalid,
@@ -373,6 +396,7 @@ impl RunningMigration {
             schema,
             network,
             endpoints,
+            replicas,
             factory,
             tokens: Mutex::new(BTreeMap::new()),
         });
@@ -414,6 +438,17 @@ impl RunningMigration {
             )
         }
         .map_err(shard_error)?;
+        let host = if state.store.log.persistent() {
+            if !state.store.log.durable() {
+                return Err(Error::new(
+                    ErrorCode::Invalid,
+                    "persistent migration requires synchronous log durability",
+                ));
+            }
+            host.with_recovery(crate::migration_metadata::Recovery::new(&state.store))
+        } else {
+            host
+        };
         if state.schema.total > 0 {
             // SAFETY: same retained State lifetime and owner checks as Host.
             runtime()
@@ -687,12 +722,19 @@ unsafe extern "C" fn peer(
     boundary(|| {
         let state = unsafe { state(context) }?;
         let payload = unsafe { payload.slice() }.map_err(shard_error)?.to_vec();
-        let endpoint = state
-            .endpoints
-            .get(&owner)
-            .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing migration peer"))?;
+        let endpoint = if let Some(replicas) = state.replicas.get(&owner) {
+            state
+                .network
+                .find_leader(owner, replicas, Duration::from_secs(3))?
+        } else {
+            state
+                .endpoints
+                .get(&owner)
+                .cloned()
+                .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing migration peer"))?
+        };
         match state.network.call(
-            endpoint,
+            &endpoint,
             Message::Migration {
                 owner,
                 operation,

@@ -1,0 +1,45 @@
+{
+  "stage": "Durable migration with pluggable engines and shared logs",
+  "checks": {
+    "combined_native_fresh_process_cases": 78,
+    "upper_gate_seconds": 149.363,
+    "upper_cpus": 32,
+    "upper_semantic_negative_controls": 25,
+    "strict_clippy": "passed",
+    "local_crash_boundaries": [
+      "prepared row",
+      "published freeze",
+      "partial final copy",
+      "saved Commit",
+      "partial cleanup"
+    ],
+    "raft_crash_boundaries": [
+      "partial final copy",
+      "saved Commit",
+      "partial cleanup"
+    ],
+    "cross_engine_local_restart": "passed both directions",
+    "mixed_engine_raft_leader_failure": "passed",
+    "stale_ownership_after_restart": "rejected",
+    "wrong_log_authority": "rejected before append",
+    "sharding_component_cases": 69
+  },
+  "logs": {
+    "build_upper_development/pluggable-durable-native.log": "f7458def06cd34af9dbd9c9542036db495ff63b7e11651cc8d3b6cd141ddce56",
+    "build_upper_development/pluggable-durable-clippy.log": "eb28caca47ab08b4dd110e4e7a0a8d76b6aadf6bd04bb959abd9a57aecce8f59",
+    "build_upper_development/pluggable-durable-migration-crashes.log": "cda0399edbd8583ad0dbe6ad1b0f7f9275f25a37ecee578ac27751b4699cbb3f",
+    "build_upper_development/pluggable-durable-migration-raft-crashes.log": "3a6e846656ef1d85104c391e3a7646571d61eb76b23e7608017767d57a3ba84e",
+    "build_upper_development/pluggable-durable-sharding.log": "81ed639a6910397eca4d99e6c149e6f173c497e25b7893ca789cf3b280ba6d90"
+  },
+  "remaining": [
+    "Offline old-row-mirror and engine conversion",
+    "Local checkpoint artifact retention",
+    "Final release, sanitizers and build audits"
+  ],
+  "limitations": [
+    "Physical storage, serialization, filesystem durability and runtime authority scopes remain trusted adapter obligations.",
+    "No power-loss claim is inferred solely from SIGKILL tests.",
+    "Persistent migration requires synchronous durability.",
+    "Standalone legacy metadata remains inspection-only."
+  ]
+}

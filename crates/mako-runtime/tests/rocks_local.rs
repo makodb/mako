@@ -146,3 +146,43 @@ fn rocks_local_checkpoint_reopens_atomic_data_and_metadata() {
     );
     stop(log, store);
 }
+
+#[test]
+fn persistent_log_rejects_a_proposal_from_another_admission_term() {
+    use mako_protocol::{
+        contracts::CommitLog,
+        journal::{Journal, Member, Record, Transaction, TransactionId, VERSION},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let (log, store) = start(root.path(), true);
+    let permit = log.admit().unwrap();
+    let term = permit.authority().unwrap();
+    let transaction = Transaction {
+        version: VERSION,
+        id: TransactionId {
+            coordinator: 0,
+            worker: 0,
+            incarnation: 99,
+            attempt: 1,
+        },
+        time_term: 20,
+        durable: true,
+        members: vec![Member {
+            owner: 0,
+            endpoints: vec!["127.0.0.1:1".into()],
+            lease: 1,
+        }],
+    };
+    assert_eq!(
+        log.apply_at(&Record::Begin(transaction.clone()), term + 1)
+            .unwrap_err()
+            .code,
+        ErrorCode::RouteChanged
+    );
+    assert!(log.lookup(transaction.id).unwrap().is_none());
+    log.apply_at(&Record::Begin(transaction.clone()), term)
+        .unwrap();
+    assert!(log.lookup(transaction.id).unwrap().is_some());
+    drop(permit);
+    stop(log, store);
+}

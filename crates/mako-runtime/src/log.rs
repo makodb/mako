@@ -60,6 +60,7 @@ fn host_position(p: sto_rocksdb::Position) -> Position {
 }
 
 enum ReplayWork {
+    Tables(Vec<u16>, mpsc::SyncSender<Result<()>>),
     Apply(Vec<redo::Row>, mpsc::SyncSender<Result<()>>),
     Export {
         path: std::path::PathBuf,
@@ -93,6 +94,19 @@ impl Replay {
                 let _ = ready.send(Ok(()));
                 while let Ok(work) = recv.recv() {
                     let (rows, reply) = match work {
+                        ReplayWork::Tables(ids, reply) => {
+                            let result = (|| {
+                                let store = weak
+                                    .upgrade()
+                                    .ok_or_else(|| storage("shard store stopped"))?;
+                                for id in ids {
+                                    store.open(&mut worker, schema.key_for_log(id)?, id)?;
+                                }
+                                Ok(())
+                            })();
+                            let _ = reply.send(result);
+                            continue;
+                        }
                         ReplayWork::Apply(rows, reply) => (rows, reply),
                         ReplayWork::Export {
                             path,
@@ -223,6 +237,18 @@ impl Replay {
         }
         Ok(replay)
     }
+    fn tables(&self, ids: Vec<u16>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let (send, receive) = mpsc::sync_channel(1);
+        self.sender
+            .as_ref()
+            .expect("live replay")
+            .send(ReplayWork::Tables(ids, send))
+            .map_err(storage)?;
+        receive.recv().map_err(storage)?
+    }
     fn export(
         &self,
         path: &Path,
@@ -304,6 +330,7 @@ impl State {
         Ok(())
     }
     fn persist(&self, change: &crate::application::Change) -> Result<()> {
+        self.replay.tables(change.table_ids())?;
         if let Some(application) = &self.persistent {
             application
                 .apply(
@@ -318,12 +345,20 @@ impl State {
     }
     fn load_persistent(&self) -> Result<()> {
         if let Some(application) = &self.persistent {
-            *self.index.lock() = Index::from_metadata(
+            let index = Index::from_metadata(
                 application.metadata().map_err(engine)?,
                 application.position().map_err(engine)?,
                 self.owner,
                 self.durable_transactions,
             )?;
+            let ids = application
+                .table_ids()
+                .map_err(engine)?
+                .into_iter()
+                .map(|id| u16::try_from(id).map_err(storage))
+                .collect::<Result<Vec<_>>>()?;
+            self.replay.tables(ids)?;
+            *self.index.lock() = index;
         }
         Ok(())
     }
@@ -912,6 +947,9 @@ struct Permit {
     term: u64,
 }
 impl CommitPermit for Permit {
+    fn authority(&self) -> Option<u64> {
+        Some(self.term)
+    }
     fn check(&self) -> Result<()> {
         State::ensure(&self.state.gate.lock())?;
         let status = self.host.status();
@@ -931,6 +969,12 @@ impl Drop for Permit {
     }
 }
 impl<C: Into<Mode>> CommitLog for Log<C> {
+    fn apply_at(&self, record: &Record, term: u64) -> Result<Entry> {
+        self.apply_record(record, Some(term))
+    }
+    fn persistent(&self) -> bool {
+        true
+    }
     fn checkpoint(&self) -> Result<(u64, u64)> {
         Log::checkpoint(self).map(|p| (p.index, p.term))
     }
@@ -1086,14 +1130,16 @@ impl<C: Into<Mode>> CommitLog for Log<C> {
     }
 }
 
-impl<C: Into<Mode>> Journal for Log<C> {
-    fn durable(&self) -> bool {
-        self.binding
-            .get()
-            .is_some_and(|binding| binding.state.durable_transactions)
-    }
-    fn apply(&self, record: &Record) -> Result<Entry> {
-        let _permit = <Self as CommitLog>::admit(self)?;
+impl<C: Into<Mode>> Log<C> {
+    fn apply_record(&self, record: &Record, expected: Option<u64>) -> Result<Entry> {
+        let permit = <Self as CommitLog>::admit(self)?;
+        let authority = permit.authority().expect("persistent log permit");
+        if expected.is_some_and(|term| term != authority) {
+            return Err(Error::new(
+                ErrorCode::RouteChanged,
+                "journal operation authority changed",
+            ));
+        }
         let binding = self
             .binding
             .get()
@@ -1118,7 +1164,7 @@ impl<C: Into<Mode>> Journal for Log<C> {
             record: record.clone(),
         })?;
         let status = binding.host.status();
-        if !status.is_leader || status.failure.is_some() {
+        if !status.is_leader || status.term != authority || status.failure.is_some() {
             return Err(Error::new(
                 ErrorCode::RouteChanged,
                 "journal authority changed",
@@ -1130,12 +1176,9 @@ impl<C: Into<Mode>> Journal for Log<C> {
             gate.pending
                 .insert((self.incarnation, sequence), command.clone());
         }
-        let proposal = binding
-            .host
-            .propose(status.term, command)
-            .map_err(|error| {
-                Error::new(ErrorCode::Unknown, format!("journal admission: {error:?}"))
-            })?;
+        let proposal = binding.host.propose(authority, command).map_err(|error| {
+            Error::new(ErrorCode::Unknown, format!("journal admission: {error:?}"))
+        })?;
         match proposal.wait(self.timeout) {
             ProposalStatus::Applied => {
                 binding
@@ -1156,6 +1199,17 @@ impl<C: Into<Mode>> Journal for Log<C> {
                 format!("journal completion: {outcome:?}"),
             )),
         }
+    }
+}
+
+impl<C: Into<Mode>> Journal for Log<C> {
+    fn durable(&self) -> bool {
+        self.binding
+            .get()
+            .is_some_and(|binding| binding.state.durable_transactions)
+    }
+    fn apply(&self, record: &Record) -> Result<Entry> {
+        self.apply_record(record, None)
     }
     fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
         let _permit = <Self as CommitLog>::admit(self)?;

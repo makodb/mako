@@ -55,6 +55,10 @@ pub mod rocks_metadata;
 pub mod metadata;
 #[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
 pub mod metadata_coordinator;
+#[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
+pub mod runtime_durability;
+#[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
+mod runtime_participant;
 
 #[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
 pub mod host;

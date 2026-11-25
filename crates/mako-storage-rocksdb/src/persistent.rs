@@ -22,6 +22,12 @@ impl api::PersistentApplication for Application {
     fn position(&self) -> api::Result<api::LogPosition> {
         self.0.applied().map(external).map_err(error)
     }
+    fn table_ids(&self) -> api::Result<Vec<u64>> {
+        self.0
+            .list_tables()
+            .map(|tables| tables.into_iter().map(|t| t.id).collect())
+            .map_err(error)
+    }
     fn metadata(&self) -> api::Result<api::Metadata> {
         self.0.distributed_metadata().map_err(error)
     }

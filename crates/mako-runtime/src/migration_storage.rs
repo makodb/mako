@@ -2,7 +2,7 @@
 //! fencing; every mutation still uses the shared OCC + 2PC journal driver.
 use crate::{
     migration::Schema,
-    storage::{engine, Store},
+    storage::{engine, CommitPermit, Store},
     wire::{Error, ErrorCode, Result, TableKey},
 };
 use mako_protocol::{
@@ -50,6 +50,15 @@ impl Worker {
         after: Option<(&[u8], &[u8])>,
     ) -> Result<Option<Row>> {
         self.store.health()?;
+        let permit = self.store.log.admit()?;
+        if crate::migration_metadata::row_authority()
+            .is_some_and(|term| permit.authority() != Some(term))
+        {
+            return Err(Error::new(
+                ErrorCode::RouteChanged,
+                "migration row authority changed",
+            ));
+        }
         if hi.is_some_and(|hi| hi <= lo) {
             return Err(Error::new(ErrorCode::Invalid, "empty migration range"));
         }
@@ -111,6 +120,7 @@ impl Worker {
             participant.lock().map_err(engine)?;
             participant.validate().map_err(engine)?;
             participant.finish(true).map_err(engine)?;
+            permit.check()?;
             if let Some(row) = rows.rows.into_iter().next() {
                 return Ok(Some(Row {
                     coordinate: if warehouse {
@@ -123,6 +133,7 @@ impl Worker {
                 }));
             }
         }
+        permit.check()?;
         Ok(None)
     }
     pub fn put(&mut self, table: u64, coordinate: &[u8], key: &[u8], value: &[u8]) -> Result<()> {
@@ -155,13 +166,21 @@ impl Worker {
             0
         };
         let table = self.store.table(TableKey { table, warehouse })?;
-        let _permit = self.store.log.admit()?;
+        let permit = self.store.log.admit()?;
+        if crate::migration_metadata::row_authority()
+            .is_some_and(|term| permit.authority() != Some(term))
+        {
+            return Err(Error::new(
+                ErrorCode::RouteChanged,
+                "migration row authority changed",
+            ));
+        }
         self.attempt = self.attempt.checked_add(1).ok_or_else(|| {
             Error::new(ErrorCode::Capacity, "migration transaction IDs exhausted")
         })?;
         let term = self.store.term.load(Ordering::Acquire);
         let mut participant = self.worker.begin_participant(term).map_err(engine)?;
-        participant
+        let changed = participant
             .mutate(
                 &table.tree,
                 table.log_id,
@@ -175,60 +194,110 @@ impl Worker {
                 false,
             )
             .map_err(engine)?;
-        let mut effects = One {
-            participant: Some(participant),
-            store: &self.store,
+        if !changed && value.is_none() {
+            participant
+                .mutate(
+                    &table.tree,
+                    table.log_id,
+                    api::Mutation::Put,
+                    key,
+                    &[],
+                    false,
+                )
+                .map_err(engine)?;
+            participant
+                .mutate(
+                    &table.tree,
+                    table.log_id,
+                    api::Mutation::Remove,
+                    key,
+                    &[],
+                    false,
+                )
+                .map_err(engine)?;
+        }
+        commit_participant(
+            participant,
+            &self.store,
             term,
-            id: TransactionId {
+            TransactionId {
                 coordinator: self.store.owner,
                 worker: u32::MAX,
                 incarnation: self.incarnation,
                 attempt: self.attempt,
             },
-        };
-        let result = commit::coordinate(&mut effects);
-        match result {
-            Ok(completion) if completion.acknowledged && completion.outcome == Outcome::Commit => {
-                Ok(())
-            }
-            Ok(completion) if completion.acknowledged && completion.outcome == Outcome::Abort => {
-                Err(completion
-                    .failure
-                    .unwrap_or_else(|| Error::new(ErrorCode::Conflict, "migration write aborted")))
-            }
-            Ok(_)
-            | Err(Error {
-                code: ErrorCode::Unknown,
-                ..
-            }) => {
-                if let Some(participant) = effects.participant.take() {
-                    participant.retain();
-                }
-                let error = Error::new(
-                    ErrorCode::Unknown,
-                    "migration storage outcome requires recovery",
-                );
-                self.store.fence(error.clone());
-                Err(error)
-            }
-            Err(error) => Err(error),
-        }
+            &*permit,
+        )
     }
 }
+
+pub(crate) fn commit_participant(
+    participant: api::Participant<'_>,
+    store: &Arc<Store>,
+    term: u32,
+    id: TransactionId,
+    permit: &dyn CommitPermit,
+) -> Result<()> {
+    let mut effects = One {
+        participant: Some(participant),
+        store,
+        term,
+        id,
+        permit,
+    };
+    match commit::coordinate(&mut effects) {
+        Ok(completion) if completion.acknowledged && completion.outcome == Outcome::Commit => {
+            Ok(())
+        }
+        Ok(completion) if completion.acknowledged && completion.outcome == Outcome::Abort => {
+            Err(completion
+                .failure
+                .unwrap_or_else(|| Error::new(ErrorCode::Conflict, "internal transaction aborted")))
+        }
+        Ok(_)
+        | Err(Error {
+            code: ErrorCode::Unknown,
+            ..
+        }) => {
+            if let Some(participant) = effects.participant.take() {
+                participant.retain();
+            }
+            let error = Error::new(
+                ErrorCode::Unknown,
+                "internal storage outcome requires recovery",
+            );
+            store.fence(error.clone());
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 struct One<'a, 'worker> {
     participant: Option<api::Participant<'worker>>,
     store: &'a Arc<Store>,
     term: u32,
     id: TransactionId,
+    permit: &'a dyn CommitPermit,
+}
+impl One<'_, '_> {
+    fn apply(&self, record: &Record) -> Result<journal::Entry> {
+        match self.permit.authority() {
+            Some(term) => self.store.log.apply_at(record, term),
+            None => self.store.journal.apply(record),
+        }
+    }
 }
 impl Effects for One<'_, '_> {
     fn participants(&self) -> usize {
         1
     }
     fn lock(&mut self, _: usize) -> Result<()> {
+        self.permit.check()?;
         self.participant.as_mut().unwrap().lock().map_err(engine)
     }
     fn register(&mut self) -> Result<Transaction> {
+        self.permit.check()?;
         let timestamp = self
             .participant
             .as_mut()
@@ -255,36 +324,39 @@ impl Effects for One<'_, '_> {
                 lease: self.id.attempt,
             }],
         };
-        self.store
-            .journal
-            .apply(&Record::Begin(transaction.clone()))?;
+        self.apply(&Record::Begin(transaction.clone()))?;
         Ok(transaction)
     }
     fn prepare(&mut self, _: usize, transaction: &Transaction) -> Result<()> {
+        self.permit.check()?;
         let participant = self.participant.as_mut().unwrap();
         participant.validate().map_err(engine)?;
         let rows = participant
             .prepared_rows(transaction.time_term)
             .map_err(engine)?;
-        self.store.journal.apply(&Record::Prepare {
+        self.apply(&Record::Prepare {
             transaction: transaction.clone(),
             rows,
             receipt: None,
         })?;
+        #[cfg(feature = "test-hooks")]
+        if self.id.worker == u32::MAX {
+            mako_sharding::runtime_durability::test_pause("row-prepared");
+        }
         Ok(())
     }
     fn decide(&mut self, transaction: &Transaction, outcome: Outcome) -> Result<Outcome> {
-        self.store
-            .journal
-            .apply(&Record::Decide {
-                transaction: transaction.clone(),
-                outcome,
-            })?
-            .decision
-            .ok_or_else(|| Error::new(ErrorCode::Unknown, "migration decision not saved"))
+        self.permit.check()?;
+        self.apply(&Record::Decide {
+            transaction: transaction.clone(),
+            outcome,
+        })?
+        .decision
+        .ok_or_else(|| Error::new(ErrorCode::Unknown, "migration decision not saved"))
     }
     fn complete(&mut self, _: usize, transaction: &Transaction, outcome: Outcome) -> Result<()> {
-        self.store.journal.apply(&Record::Complete {
+        self.permit.check()?;
+        self.apply(&Record::Complete {
             transaction: transaction.clone(),
             outcome,
         })?;

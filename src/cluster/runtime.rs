@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, mpsc};
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use crate::catalog::{Catalog, Coordinates, TableKind, warehouse_coordinate};
@@ -16,7 +16,8 @@ use crate::durable_coordinator::{Operation, Response};
 use crate::coordinator_publication::encode_publication;
 use crate::metadata::{Configuration as MetadataConfiguration, Event as MetadataEvent, ParticipantLog};
 use crate::metadata_coordinator::CoordinatorState;
-use crate::participant::{Cleanup, ControlResult, Participant};
+use crate::participant::{Cleanup, ControlResult};
+use crate::runtime_participant::ParticipantState;
 use crate::routing::{RoutingCache, Snapshot};
 use crate::routing_codec::{self, Writer};
 use crate::storage::Source;
@@ -28,7 +29,7 @@ use crate::wire::{self, checked};
 type RawHandle = (u64,u32,bool);
 struct Master { actor: CoordinatorState }
 struct Local {
-    participant: Participant,
+    participant: ParticipantState,
     // Controller-owned routing provenance, separate from immutable reader views.
     snapshot: Arc<Snapshot>,
     store: EngineStore,
@@ -53,6 +54,8 @@ pub struct Node {
     quiescing: AtomicBool,
     metadata_recovered: bool,
     metadata_fenced: AtomicBool,
+    recovery: Option<crate::runtime_durability::Recovery>,
+    authority: AtomicU64,
 }
 pub struct Runtime {
     pub catalog: RwLock<Catalog>,
@@ -337,7 +340,7 @@ impl Runtime {
     pub fn start(&self, owner: u32, count: u32, migration: bool, host: Host) -> Result<(),Status> {
         let _lifecycle = self.lifecycle.lock();
         if count == 0 || owner >= count || !self.configured.load(Ordering::Acquire) { return Err(Status::Invalid); }
-        if migration && self.replication_replay.load(Ordering::Acquire) { return Err(Status::Invalid); }
+        if migration && host.recovery().is_none() && self.replication_replay.load(Ordering::Acquire) { return Err(Status::Invalid); }
         {
             let nodes = self.nodes.read();
             if nodes.contains_key(&owner) || nodes.values().any(|n|n.nodes != count || n.migration != migration) {
@@ -369,8 +372,10 @@ impl Runtime {
             }
         }
         let metadata = MetadataConfiguration::load(owner)?;
-        let identity = self.deployment_identity(count,migration,metadata.directory.is_some())?;
-        let participant = Participant::new(owner,self.initial_tables(count)?)?;
+        let recovery = host.recovery().cloned();
+        if recovery.is_some() && metadata.directory.is_some() {return Err(Status::Invalid);}
+        let identity = self.deployment_identity(count,migration,metadata.directory.is_some() || recovery.is_some())?;
+        let participant = ParticipantState::live(owner,self.initial_tables(count)?)?;
         let participant_log = ParticipantLog::new(owner,count,&identity,
             metadata.path("participant").as_deref(),metadata.initialize)?;
         let master = if owner == 0 && count > 1 {
@@ -382,11 +387,12 @@ impl Runtime {
         // Persistent identity format stays unchanged. The live handshake also
         // binds the new paired-routing request ABI, rejecting mixed old peers.
         let mut hello = identity;
-        hello.extend_from_slice(&4u32.to_le_bytes());
+        hello.extend_from_slice(&5u32.to_le_bytes());
+        hello.push(u8::from(recovery.is_some()));
         let (tx,rx) = mpsc::channel();
         let (migration_tx,migration_rx) = mpsc::channel();
         let snapshot = self.snapshot()?;
-        let admission = Arc::new(AdmissionSnapshot::capture(&participant,Arc::clone(&snapshot)));
+        let admission = Arc::new(AdmissionSnapshot::capture(participant.actor()?,Arc::clone(&snapshot)));
         let node = Arc::new(Node { owner, nodes: count, migration, host: host.clone(), hello,
             local: Mutex::new(Local { participant,snapshot,
                 store: EngineStore {owner,host},plans: HashMap::new(),cuts: HashMap::new(),
@@ -396,6 +402,7 @@ impl Runtime {
             threads: Mutex::new(Vec::new()), stopping: AtomicBool::new(false),
             shutdown: Mutex::new(None), quiescing: AtomicBool::new(false),
             metadata_recovered, metadata_fenced: AtomicBool::new(false),
+            recovery, authority: AtomicU64::new(u64::MAX),
             data_ready: std::sync::atomic::AtomicU32::new(Status::Retry as u32) });
         let (ready_tx,ready_rx) = mpsc::sync_channel(1);
         let worker = Arc::clone(&node);
@@ -411,6 +418,9 @@ impl Runtime {
                     if !matches!(error, Status::Retry | Status::Busy) {
                         eprintln!("Native sharding owner {owner}: operation {} failed: {error:?}", job.operation);
                     }
+                }
+                if worker.recovery.is_some() && worker.local.lock().participant.actor().is_err() {
+                    worker.fence_metadata();
                 }
                 job.completion.complete(result);
             }
@@ -430,21 +440,29 @@ impl Runtime {
                 running.data_ready.store(status as u32,Ordering::Release);
                 return;
             }
-            if running.metadata_fenced.load(Ordering::Acquire) { return; }
-            {
+            if running.recovery.is_none() {
                 let local = running.local.lock();
-                if running.metadata_gate().is_err() { return; }
-                running.publish_admission(&local);
+                if running.metadata_gate().is_err() {return;}
+                if running.publish_admission(&local).is_err() {running.fence_metadata(); return;}
+                running.data_ready.store(Status::Ok as u32,Ordering::Release);
             }
-            running.data_ready.store(Status::Ok as u32,Ordering::Release);
-            if running.master.is_some() {
-                while let Ok(generation) = migration_rx.recv() {
-                    if !running.stopping.load(Ordering::Acquire) { running.drive(generation); }
+            while !running.stopping.load(Ordering::Acquire) {
+                if running.recovery.is_some() {
+                    match running.refresh_authority() {
+                        Ok(Some(generation)) => running.drive(generation),
+                        Ok(None) => {},
+                        Err(_) => {thread::sleep(Duration::from_millis(100)); continue;},
+                    }
                 }
-            } else {
-                while !running.stopping.load(Ordering::Acquire) {
+                if running.master.is_some() {
+                    match migration_rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(generation) => if !running.stopping.load(Ordering::Acquire) {running.drive(generation);},
+                        Err(mpsc::RecvTimeoutError::Timeout) => {},
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                } else {
                     if !runtime().nodes.read().contains_key(&0) {
-                        if let Ok(bytes) = running.host.peer(0,wire::SNAPSHOT,&[]) { let _ = runtime().install(&bytes); }
+                        if let Ok(bytes) = running.host.peer(0,wire::SNAPSHOT,&[]) {let _ = runtime().install(&bytes);}
                     }
                     thread::sleep(Duration::from_millis(100));
                 }
@@ -487,24 +505,80 @@ impl Node {
         self.admission_ready()?;
         Ok(view)
     }
-    fn publish_admission(&self, local: &Local) {
-        let view = AdmissionSnapshot::capture(&local.participant,Arc::clone(&local.snapshot));
+    fn publish_admission(&self, local: &Local) -> Result<(),Status> {
+        let view = AdmissionSnapshot::capture(local.participant.actor()?,Arc::clone(&local.snapshot));
         *self.admission.write() = Arc::new(view);
+        Ok(())
     }
     fn install_snapshot(&self, snapshot: &Arc<Snapshot>) {
         let mut local = self.local.lock();
         if self.metadata_gate().is_err() || snapshot.version < local.snapshot.version { return; }
         local.snapshot = Arc::clone(snapshot);
-        self.publish_admission(&local);
+        if self.publish_admission(&local).is_err() {self.fence_metadata();}
+    }
+    fn refresh_authority(&self) -> Result<Option<u64>,Status> {
+        let recovery = self.recovery.as_ref().ok_or(Status::Invalid)?;
+        let authority = match recovery.authority() {
+            Ok(authority) => authority,
+            Err(error) => {
+                self.authority.store(u64::MAX,Ordering::Release);
+                self.data_ready.store(Status::Retry as u32,Ordering::Release);
+                return Err(error);
+            },
+        };
+        if self.authority.load(Ordering::Acquire) == authority && !self.metadata_fenced.load(Ordering::Acquire) {return Ok(None);}
+        self.authority.store(u64::MAX,Ordering::Release);
+        self.data_ready.store(Status::Retry as u32,Ordering::Release);
+        // No old actor can mutate while replacement owns these two mutexes.
+        // Drop its namespace handle before asking for a new incarnation.
+        let mut local = self.local.lock();
+        local.participant = ParticipantState::live(self.owner,runtime().initial_tables(self.nodes)?)?;
+        local.plans.clear(); local.cuts.clear(); local.ready.clear();
+        let mut master = self.master.as_ref().map(|master|master.lock());
+        if let Some(master) = &mut master {
+            master.actor = CoordinatorState::new((0..self.nodes).collect(),runtime().initial_tables(self.nodes)?,None,false,&[])?;
+        }
+        recovery.row_barrier(authority)?;
+        local.participant = ParticipantState::recover(self.owner,runtime().initial_tables(self.nodes)?,
+            self.host.clone(),recovery.clone(),authority)?;
+        let mut publication = None;
+        let mut active = None;
+        if let Some(master) = &mut master {
+            // The checkpoint schema already binds the deployment identity.
+            master.actor = CoordinatorState::from_application((0..self.nodes).collect(),runtime().initial_tables(self.nodes)?,
+                &self.hello,recovery,authority)?;
+            publication = Some(encode_publication(master.actor.actor()?)?);
+            active = master.actor.actor()?.active_plan().map(|plan|plan.generation);
+        }
+        self.publish_admission(&local)?;
+        for encoded in local.participant.plans()? {
+            let plan = wire::decode_plan(&encoded,self.nodes)?;
+            if local.participant.actor()?.frozen_source(&plan) {
+                local.cuts.insert(plan.generation,SourceCut {epoch:self.host.epoch_cut()?,completed:false});
+            }
+            local.plans.insert(plan.generation,encoded);
+        }
+        // Recovery pins precede every reconstructed cut and admission publication.
+        if !recovery.transactions_restored()? || recovery.authority()? != authority {return Err(Status::Retry);}
+        drop(master); drop(local);
+        self.metadata_fenced.store(false,Ordering::Release);
+        self.authority.store(authority,Ordering::Release);
+        if let Some(publication) = publication {runtime().install(&publication)?;}
+        self.data_ready.store(Status::Ok as u32,Ordering::Release);
+        Ok(active)
     }
     fn metadata_gate(&self) -> Result<(),Status> {
-        if self.metadata_fenced.load(Ordering::Acquire) { return Err(Status::Io); }
+        if self.metadata_fenced.load(Ordering::Acquire) {return Err(if self.recovery.is_some() {Status::Retry} else {Status::Io});}
+        if let Some(recovery) = &self.recovery {
+            if self.authority.load(Ordering::Acquire) != recovery.authority()? {return Err(Status::Retry);}
+        }
         if self.metadata_recovered { return Err(Status::Retry); }
         Ok(())
     }
     fn fence_metadata(&self) {
         self.metadata_fenced.store(true,Ordering::Release);
         self.data_ready.store(Status::Io as u32,Ordering::Release);
+        if self.recovery.is_some() {self.authority.store(u64::MAX,Ordering::Release);}
     }
     fn record(&self, local: &mut Local, event: MetadataEvent<'_>) -> Result<(),Status> {
         let result = local.metadata.record(event);
@@ -534,7 +608,9 @@ impl Node {
     }
     pub fn wait_ready(&self) -> Result<(),Status> {
         loop {
-            self.metadata_gate()?;
+            if let Err(error) = self.metadata_gate() {
+                if self.recovery.is_none() || error != Status::Retry {return Err(error);}
+            }
             if self.stopping.load(Ordering::Acquire) {return Err(Status::Retry);}
             let status = wire::status(self.data_ready.load(Ordering::Acquire));
             if status != Status::Retry {return checked(status);}
@@ -633,7 +709,7 @@ impl Node {
         wait_for_shutdown_marker(&control_done)
     }
     fn complete_source_cut(&self, local: &mut Local, plan: &MigrationPlan) -> Result<(),Status> {
-        if !local.participant.frozen_source(plan) { return Err(Status::Retry); }
+        if !local.participant.actor()?.frozen_source(plan) { return Err(Status::Retry); }
         let cut = local.cuts.get_mut(&plan.generation).ok_or(Status::Retry)?;
         if !cut.completed {
             if !self.host.epoch_drained(cut.epoch)? { return Err(Status::Busy); }
@@ -646,7 +722,11 @@ impl Node {
     // duplicate late jobs must pass the current generation + Stage/round-0 gate.
     // This source is deliberately NOT storage::Source: observations may differ.
     fn precopy(&self, local: &mut Local, plan: &MigrationPlan, encoded: &[u8]) -> Result<(),Status> {
-        if !local.participant.background_destination(plan) { return Err(Status::Retry); }
+        // Advisory precopy may legally do no work. Crash fixtures use that
+        // case to force physical effects in the final reconciliation pass.
+        #[cfg(feature = "test-hooks")]
+        if std::env::var_os("MAKO_TEST_SKIP_PRECOPY").is_some() {return Ok(());}
+        if !local.participant.actor()?.background_destination(plan) { return Err(Status::Retry); }
         local.store.materialize(plan.range.table)?;
         let mut after = None;
         loop {
@@ -664,7 +744,7 @@ impl Node {
             };
             let (rows,eof) = wire::decode_rows(&bytes,plan,after.as_ref())?;
             for row in rows {
-                match transfer::precopy_put(&local.participant,&mut local.store,plan,&row) {
+                match transfer::precopy_put(local.participant.actor()?,&mut local.store,plan,&row) {
                     Status::Ok => {},
                     Status::Retry | Status::Busy => return Ok(()),
                     error => return Err(error),
@@ -676,7 +756,9 @@ impl Node {
     }
     fn handle(&self, operation: u32, payload: Vec<u8>) -> Result<Vec<u8>,Status> {
         if operation == wire::HELLO {
-            self.metadata_gate()?;
+            // A loading handshake must not wait on recovered data admission.
+            self.check_live()?;
+            if self.recovery.is_none() {self.metadata_gate()?;}
             return if payload.is_empty() {Ok(self.hello.clone())} else {Err(Status::Invalid)};
         }
         if operation == wire::SHUTDOWN_TOKEN {
@@ -692,6 +774,10 @@ impl Node {
         }
         if matches!(operation,wire::ADMIN_BEGIN | wire::ADMIN_POLL | wire::ADMIN_ABORT) { return self.admin(operation,payload); }
         self.metadata_gate()?;
+        let _rows = match &self.recovery {
+            Some(recovery) => Some(recovery.rows(self.authority.load(Ordering::Acquire))?),
+            None => None,
+        };
         if !self.migration { return Err(Status::Invalid); }
         if matches!(operation,wire::CAPTURE | wire::LIVE_CAPTURE) {
             let (plan,after,encoded) = wire::decode_capture(&payload,self.nodes)?;
@@ -700,7 +786,7 @@ impl Node {
                 return Err(Status::Invalid);
             }
             if operation == wire::LIVE_CAPTURE {
-                if !local.participant.background_source(&plan) { return Err(Status::Retry); }
+                if !local.participant.actor()?.background_source(&plan) { return Err(Status::Retry); }
                 local.plans.entry(plan.generation).or_insert_with(||encoded.to_vec());
             } else {
                 if local.plans.get(&plan.generation).map(Vec::as_slice) != Some(encoded) {
@@ -719,7 +805,7 @@ impl Node {
                 } else {
                     // The real generation-bound STO cut completed above, with
                     // Frozen metadata held unchanged through this exact scan.
-                    transfer::capture_frozen(&local.participant,&local.store,&plan,after)?
+                    local.participant.capture(&local.store,&plan,after)?
                 };
                 match row {
                     None => {eof=true;break;},
@@ -733,15 +819,16 @@ impl Node {
         let plan = wire::decode_plan(&payload,self.nodes)?;
         let mut local = self.local.lock();
         if local.plans.get(&plan.generation).is_some_and(|old|old != &payload) { return Err(Status::Invalid); }
+        local.participant.bind(wire::decode_plan(&payload,self.nodes)?)?;
         if operation == wire::PRECOPY {
             self.precopy(&mut local,&plan,&payload)?;
             return wire::encode_control(plan.generation,&wire::failure(Status::Ok));
         }
         let mut result = if let Some(command) = wire::command(operation) {
-            if command == Command::Retire && !local.cuts.get(&plan.generation).is_some_and(|cut|cut.completed) {
-                return Err(Status::Retry);
+            if command == Command::Retire && local.participant.actor()?.frozen_source(&plan) {
+                self.complete_source_cut(&mut local,&plan)?;
             }
-            local.participant.deliver(&plan,command)
+            local.participant.deliver(&plan,command)?
         } else if operation == wire::DRAIN {
             self.complete_source_cut(&mut local,&plan)?;
             ControlResult { status: Status::Ok, certificate: Some(Certificate::Drained),cleanup: Cleanup::None }
@@ -752,7 +839,7 @@ impl Node {
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:None})?;
                 let source = RemoteSource::new(self.host.clone(),&payload);
                 let Local {participant,store,..} = &mut *local;
-                let result = transfer::execute_final(participant,store,&plan,&source);
+                let result = participant.final_copy(store,&plan,&source)?;
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:Some(&result)})?;
                 result
             }
@@ -763,11 +850,13 @@ impl Node {
             }
             if result.certificate == Some(Certificate::Ready) {local.ready.insert(plan.generation);}
             if operation != wire::DRAIN {
-                self.publish_admission(&local);
+                self.publish_admission(&local)?;
             }
             if wire::command(operation) == Some(Command::Freeze)
-                && local.participant.frozen_source(&plan)
+                && local.participant.actor()?.frozen_source(&plan)
                 && !local.cuts.contains_key(&plan.generation) {
+                #[cfg(feature = "test-hooks")]
+                crate::runtime_durability::test_pause("freeze-published");
                 // Publication above is ordered before this SAME engine clock cut.
                 let epoch = self.host.epoch_cut()?;
                 local.cuts.insert(plan.generation,SourceCut {epoch,completed:false});
@@ -777,7 +866,7 @@ impl Node {
                 // a whole-handler stutter; its retained cleanup is resumed later.
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:None})?;
                 let Local {participant,store,..} = &mut *local;
-                result = transfer::execute_cleanup(participant,store,&plan);
+                result = participant.cleanup(store,&plan)?;
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:Some(&result)})?;
             }
             local.plans.entry(plan.generation).or_insert(payload);
@@ -876,35 +965,55 @@ impl Node {
         }
         Ok(())
     }
+    fn phase(&self, generation: u64) -> Result<Phase,Status> {
+        self.metadata_gate()?;
+        let master = self.master.as_ref().ok_or(Status::Invalid)?.lock();
+        let actor = master.actor.actor()?;
+        if !actor.active_plan().is_some_and(|plan|plan.generation == generation) {return Err(Status::NotFound);}
+        actor.current_phase().ok_or(Status::Invalid)
+    }
     fn drive_before_commit(&self, generation: u64, source: u32, destination: u32, encoded: &[u8]) -> Result<(),Status> {
-        let master = self.master.as_ref().ok_or(Status::Invalid)?;
         if self.abort_requested() {return Err(Status::Retry);}
-        self.control(generation,destination,Command::Start,wire::command_operation(Command::Start),encoded,None)?;
-        match self.control(generation,destination,Command::Start,wire::PRECOPY,encoded,None) {
-            Ok(()) => {},
-            // Concurrent source OCC can end this advisory pass early. Its reply
-            // still joins every accepted effect; final reconciliation is exact.
-            Err(Status::Retry | Status::Busy) => {},
-            Err(error) => return Err(error),
-        }
-        if self.abort_requested() { return Err(Status::Retry); }
-        self.request(Request::Freeze)?;
-        self.control(generation,source,Command::Freeze,wire::command_operation(Command::Freeze),encoded,None)?;
-        loop {
-            if self.abort_requested() {return Err(Status::Retry);}
-            match self.control(generation,source,Command::Freeze,wire::DRAIN,encoded,Some(Certificate::Drained)) {
-                Ok(()) => break,
-                Err(Status::Busy | Status::Retry) => thread::sleep(Duration::from_millis(10)),
+        if matches!(self.phase(generation)?,Phase::Copy) {
+            self.control(generation,destination,Command::Start,wire::command_operation(Command::Start),encoded,None)?;
+            match self.control(generation,destination,Command::Start,wire::PRECOPY,encoded,None) {
+                Ok(()) | Err(Status::Retry | Status::Busy) => {},
                 Err(error) => return Err(error),
             }
+            if self.abort_requested() {return Err(Status::Retry);}
+            self.request(Request::Freeze)?;
         }
-        self.request(Request::Final)?;
-        self.control(generation,destination,Command::Final,wire::command_operation(Command::Final),encoded,None)?;
-        self.control(generation,destination,Command::Final,wire::FINAL_COPY,encoded,Some(Certificate::Ready))?;
-        self.request(Request::Retire)?;
-        self.control(generation,source,Command::Retire,wire::command_operation(Command::Retire),encoded,Some(Certificate::Retired))?;
-        let mut master = master.lock();
-        self.execute_master(&mut master,Operation::Request(Request::Commit))?;
+        if matches!(self.phase(generation)?,Phase::Freezing) {
+            self.control(generation,source,Command::Freeze,wire::command_operation(Command::Freeze),encoded,None)?;
+            loop {
+                if self.abort_requested() {return Err(Status::Retry);}
+                match self.control(generation,source,Command::Freeze,wire::DRAIN,encoded,Some(Certificate::Drained)) {
+                    Ok(()) => break,
+                    Err(Status::Busy | Status::Retry) => thread::sleep(Duration::from_millis(10)),
+                    Err(error) => return Err(error),
+                }
+            }
+            self.request(Request::Final)?;
+        }
+        if matches!(self.phase(generation)?,Phase::Final) {
+            self.control(generation,destination,Command::Final,wire::command_operation(Command::Final),encoded,None)?;
+            self.control(generation,destination,Command::Final,wire::FINAL_COPY,encoded,Some(Certificate::Ready))?;
+            self.request(Request::Retire)?;
+        }
+        if matches!(self.phase(generation)?,Phase::Retiring) {
+            loop {
+                if self.abort_requested() {return Err(Status::Retry);}
+                match self.control(generation,source,Command::Retire,wire::command_operation(Command::Retire),encoded,Some(Certificate::Retired)) {
+                    Ok(()) => break,
+                    Err(Status::Busy | Status::Retry) => thread::sleep(Duration::from_millis(10)),
+                    Err(error) => return Err(error),
+                }
+            }
+            self.request(Request::Commit)?;
+            #[cfg(feature = "test-hooks")]
+            crate::runtime_durability::test_pause("decision-committed");
+        }
+        let master = self.master.as_ref().ok_or(Status::Invalid)?.lock();
         runtime().install(&encode_publication(master.actor.actor()?)?)
     }
     fn drive(&self, generation: u64) {
@@ -915,7 +1024,15 @@ impl Node {
             Ok::<_,Status>((plan.source,plan.destination,wire::encode_plan(plan)?))
         })();
         let Ok((source,destination,encoded)) = prepared else {return;};
-        let result = self.drive_before_commit(generation,source,destination,&encoded);
+        let result = loop {
+            let result = self.drive_before_commit(generation,source,destination,&encoded);
+            if self.recovery.is_some() && matches!(result,Err(Status::Retry | Status::Busy | Status::Io))
+                && !self.abort_requested() {
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            break result;
+        };
         if let Err(error) = &result {
             eprintln!("Native sharding generation {generation} ({source} -> {destination}) failed before commit: {error:?}");
         }

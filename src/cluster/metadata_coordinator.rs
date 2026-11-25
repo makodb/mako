@@ -21,6 +21,7 @@ const NAMESPACE: Namespace = Namespace { owner: 0, coordinator: true };
 
 enum State {
     Live(Coordinator),
+    External {actor: DurableCoordinator, kv: crate::runtime_durability::Kv, admission: Admission},
     Persistent {
         actor: DurableCoordinator,
         kv: RocksKv,
@@ -98,6 +99,32 @@ impl CoordinatorState {
         })
     }
 
+    /// Application-log-backed control state. This namespace is exclusively
+    /// owned under the captured authority token, including recovery activation.
+    pub(crate) fn from_application(
+        nodes: Vec<u32>, tables: Vec<RouteTable>, identity: &[u8],
+        host: &crate::runtime_durability::Recovery, authority: u64,
+    ) -> Result<Self, Status> {
+        let mut kv = crate::runtime_durability::Kv::new(host.metadata(true, authority)?);
+        let initialize = match kv.read(&crate::durable_kv::journal_key(NAMESPACE, false, 0)) {
+            ReadResult::Absent => true,
+            ReadResult::Found(_) => false,
+            ReadResult::Io => return Err(Status::Io),
+        };
+        let mut expected = IDENTITY_VERSION.to_vec(); expected.extend_from_slice(identity);
+        match kv.read(IDENTITY_KEY) {
+            ReadResult::Found(value) if value == expected => {},
+            ReadResult::Absent if initialize => {
+                if !matches!(kv.submit(vec![WriteOp {key: IDENTITY_KEY.to_vec(), value: Some(expected)}]), CommitResult::Committed) {return Err(Status::Io);}
+            },
+            _ => return Err(Status::Invalid),
+        }
+        let mut actor = if initialize {DurableCoordinator::create(&mut kv, NAMESPACE, nodes, tables)}
+            else {DurableCoordinator::recover(&mut kv, NAMESPACE)}.map_err(error_status)?;
+        let admission = actor.activate(&mut kv).map_err(error_status)?;
+        Ok(Self {state: State::External {actor, kv, admission}, recovered: false, failed: false})
+    }
+
     /// Inspect only the admitted, sound actor. Failed private append candidates
     /// remain inaccessible even if their in-memory native operation succeeded.
     pub fn actor(&self) -> Result<&Coordinator, Status> {
@@ -106,7 +133,7 @@ impl CoordinatorState {
         }
         match &self.state {
             State::Live(actor) => Ok(actor),
-            State::Persistent { actor, admission, .. } => {
+            State::Persistent { actor, admission, .. } | State::External {actor, admission, ..} => {
                 actor.actor(admission).map_err(error_status)
             },
         }
@@ -122,6 +149,13 @@ impl CoordinatorState {
         }
         match &mut self.state {
             State::Live(actor) => execute_live(actor, op),
+            State::External {actor, kv, admission} => {
+                match actor.execute(kv, admission, op) {
+                    Ok(response) => Ok(response),
+                    Err(Error::Native(status)) => Err(status),
+                    Err(Error::Journal(_)) | Err(Error::Inactive) => {self.failed = true; Err(Status::Io)},
+                }
+            },
             State::Persistent { actor, kv, admission } => {
                 match actor.execute(kv, admission, op) {
                     Ok(response) => Ok(response),

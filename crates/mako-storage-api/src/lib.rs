@@ -130,6 +130,8 @@ pub trait PersistentApplication: Send + Sync {
     fn bind_identity(&self, identity: &[u8]) -> Result<()>;
     fn position(&self) -> Result<LogPosition>;
     fn metadata(&self) -> Result<Metadata>;
+    /// Stable physical IDs in the currently published durable generation.
+    fn table_ids(&self) -> Result<Vec<u64>>;
     fn apply(
         &self,
         position: LogPosition,

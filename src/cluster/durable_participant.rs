@@ -135,6 +135,7 @@ impl DurableParticipant {
     pub closed spec fn active(&self)->bool {self.journal.active() && !self.candidate}
     pub closed spec fn records(&self)->Seq<Seq<u8>>{self.journal.records()}
     pub closed spec fn native(&self)->Participant{self.actor}
+    pub closed spec fn plans_view(&self)->Seq<MigrationPlan>{self.plans@}
     pub closed spec fn namespace(&self)->Namespace{self.journal.namespace_spec()}
     pub closed spec fn completion_facts(&self)->Map<int,CompletionFact>{self.facts@}
     pub closed spec fn replay_equivalent(&self)->bool {
@@ -999,6 +1000,24 @@ impl DurableParticipant {
             }
         }
         if let Err(e)=publication{return Err(e);}Ok(result)
+    }
+
+    /// Read-only access to admitted metadata for epoch-based application admission.
+    pub fn actor(&self,a:&Admission)->(out:Result<&Participant,ParticipantError>)
+        requires self.wf(),
+        ensures out is Ok ==> self.accepts(*a) && *out->Ok_0 == self.native() && out->Ok_0.wf(),
+    {
+        if !self.check(a){return Err(ParticipantError::Fenced);}
+        Ok(&self.actor)
+    }
+    /// Immutable plan bindings are sufficient to reconstruct runtime cursor and
+    /// drain bookkeeping; old in-memory epoch numbers are deliberately absent.
+    pub fn retained_plans(&self,a:&Admission)->(out:Result<&Vec<MigrationPlan>,ParticipantError>)
+        requires self.wf(),
+        ensures out is Ok ==> self.accepts(*a) && out->Ok_0@ == self.plans_view(),
+    {
+        if !self.check(a){return Err(ParticipantError::Fenced);}
+        Ok(&self.plans)
     }
 
     pub fn drain(&self,a:&Admission,generation:u64)->Result<ControlResult,ParticipantError>{

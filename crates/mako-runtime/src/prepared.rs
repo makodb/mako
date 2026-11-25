@@ -281,12 +281,12 @@ impl NativeEngine {
         if self.retained {
             if self.transaction.as_ref() == Some(&transaction) {
                 // Reacquire authority for a new term without dropping locks.
-                self.protection = Some(store.protect()?);
+                self.protection = Some(store.protect_recovered()?);
                 return Ok(());
             }
             self.abort_unprepared()?;
         }
-        self.protection = Some(store.protect()?);
+        self.protection = Some(store.protect_recovered()?);
         let prepared = entry.participant.expect("unresolved participant");
         let rows = prepared.rows.expect("unresolved intent");
         let mut participant = self
