@@ -120,7 +120,15 @@ rows is inside that adapter. `Store::with_engine` accepts an explicit engine;
 the existing default constructor selects Masstree. The migration host still
 uses a checked Masstree bridge during the ongoing extraction.
 
-Shared conformance scenarios exercise an in-memory model and Masstree
+`mako-storage-rocksdb` implements the same interface using the existing direct
+RocksDB STO datatype. A worker owns a message lane where borrowed transactions
+remain alive through retained prepare. Logical distributed times are stored
+separately from local conflict generations. An externally decided batch applies
+rows, tombstones, protocol metadata and the applied log prefix atomically. The
+distributed storage profile rejects the older local-service format, and native
+checkpoints retain this profile identity. Runtime log wiring is still in progress.
+
+Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
 independently. They check private writes, ordered scans, absence and predicate
 validation, write skew after the global lock barrier, retained prepares, and
 tombstone replay. They are tests of the storage contract, not a proof of either

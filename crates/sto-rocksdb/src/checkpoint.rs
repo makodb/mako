@@ -24,7 +24,13 @@ impl Database {
         let rocks = self.rocks();
         let position = read_position(&rocks)?;
         rocks.checkpoint(destination)?;
-        write_identity(destination, self.group, position, self.sync_writes)?;
+        write_identity(
+            destination,
+            self.group,
+            position,
+            self.sync_writes,
+            self.distributed,
+        )?;
         sync_tree(destination)?;
         self.reclaim_generations_locked()?;
         Ok(Checkpoint {
@@ -41,7 +47,13 @@ impl Database {
             return Err(Error::InvalidState("checkpoint position changed"));
         }
         rocks.checkpoint(destination)?;
-        write_identity(destination, self.group, expected, self.sync_writes)?;
+        write_identity(
+            destination,
+            self.group,
+            expected,
+            self.sync_writes,
+            self.distributed,
+        )?;
         sync_tree(destination)?;
         self.reclaim_generations_locked().map(|_| ())
     }
@@ -52,7 +64,13 @@ impl Database {
         self.stage_checkpoint_locked(source, expected).map(|_| ())
     }
     fn stage_checkpoint_locked(&self, source: &Path, expected: Position) -> Result<String> {
-        validate_identity(source, self.group, expected, self.sync_writes)?;
+        validate_identity(
+            source,
+            self.group,
+            expected,
+            self.sync_writes,
+            self.distributed,
+        )?;
         let name = format!("install-{}-{}", expected.index, expected.term);
         let target = self.root.join(&name);
         if target.exists() {
@@ -72,7 +90,13 @@ impl Database {
                 ));
             }
             drop(current);
-            validate_native(&target, self.group, expected, self.sync_writes)?;
+            validate_native(
+                &target,
+                self.group,
+                expected,
+                self.sync_writes,
+                self.distributed,
+            )?;
             return Ok(name);
         }
         let temporary = self
@@ -84,7 +108,13 @@ impl Database {
             fs::remove_dir_all(&temporary)?;
         }
         copy_tree(source, &temporary)?;
-        validate_native(&temporary, self.group, expected, self.sync_writes)?;
+        validate_native(
+            &temporary,
+            self.group,
+            expected,
+            self.sync_writes,
+            self.distributed,
+        )?;
         sync_tree(&temporary)?;
         fs::rename(&temporary, &target)?;
         sync_directory(&self.root)?;
@@ -95,7 +125,13 @@ impl Database {
     pub fn publish_checkpoint(&self, source: &Path, expected: Position) -> Result<()> {
         let _gate = mutex(&self.apply_gate);
         let result = (|| {
-            validate_identity(source, self.group, expected, self.sync_writes)?;
+            validate_identity(
+                source,
+                self.group,
+                expected,
+                self.sync_writes,
+                self.distributed,
+            )?;
             let current = self.applied()?;
             if current.index > expected.index {
                 return Ok(());
@@ -206,36 +242,58 @@ pub(crate) fn publish_manifest(root: &Path, name: &str) -> Result<()> {
     fs::rename(&temporary, root.join("CURRENT"))?;
     sync_directory(root)
 }
-fn identity(group: u64, position: Position, sync_writes: bool) -> Vec<u8> {
+fn identity(group: u64, position: Position, sync_writes: bool, distributed: bool) -> Vec<u8> {
     let mut bytes = if sync_writes {
         b"STO-CHECKPOINT-01".to_vec()
     } else {
         b"STO-CHECKPOINT-A1".to_vec()
     };
+    if distributed {
+        bytes.extend_from_slice(b"DISTRIBUTED-01");
+    }
     bytes.extend_from_slice(&group.to_be_bytes());
     bytes.extend_from_slice(&position.index.to_be_bytes());
     bytes.extend_from_slice(&position.term.to_be_bytes());
     bytes
 }
-fn write_identity(path: &Path, group: u64, position: Position, sync_writes: bool) -> Result<()> {
+fn write_identity(
+    path: &Path,
+    group: u64,
+    position: Position,
+    sync_writes: bool,
+    distributed: bool,
+) -> Result<()> {
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(path.join("STO-CHECKPOINT"))?;
-    file.write_all(&identity(group, position, sync_writes))?;
+    file.write_all(&identity(group, position, sync_writes, distributed))?;
     file.sync_all()?;
     Ok(())
 }
-fn validate_identity(path: &Path, group: u64, position: Position, sync_writes: bool) -> Result<()> {
-    if fs::read(path.join("STO-CHECKPOINT"))? != identity(group, position, sync_writes) {
+fn validate_identity(
+    path: &Path,
+    group: u64,
+    position: Position,
+    sync_writes: bool,
+    distributed: bool,
+) -> Result<()> {
+    if fs::read(path.join("STO-CHECKPOINT"))? != identity(group, position, sync_writes, distributed)
+    {
         return Err(Error::Corruption(
             "checkpoint identity or durability mode mismatch".into(),
         ));
     }
     Ok(())
 }
-fn validate_native(path: &Path, group: u64, position: Position, sync_writes: bool) -> Result<()> {
-    validate_identity(path, group, position, sync_writes)?;
+fn validate_native(
+    path: &Path,
+    group: u64,
+    position: Position,
+    sync_writes: bool,
+    distributed: bool,
+) -> Result<()> {
+    validate_identity(path, group, position, sync_writes, distributed)?;
     if !path.join("CURRENT").is_file() {
         return Err(Error::Corruption(
             "missing native checkpoint CURRENT".into(),
@@ -243,6 +301,8 @@ fn validate_native(path: &Path, group: u64, position: Position, sync_writes: boo
     }
     let rocks = RocksBlobs::open_strict(path, durability(sync_writes))?;
     if rocks.get(FORMAT)?.as_deref() != Some(format_bytes(group, sync_writes).as_slice())
+        || rocks.get(crate::distributed::PROFILE)?.as_deref()
+            != distributed.then_some(crate::distributed::PROFILE_VALUE)
         || read_position(&rocks)? != position
     {
         return Err(Error::Corruption(

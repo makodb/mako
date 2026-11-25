@@ -25,6 +25,7 @@ members = [
     "mako-protocol-core",
     "mako-storage-api",
     "mako-storage-masstree",
+    "mako-storage-rocksdb",
     "masstree",
     "mrx",
     "mrx-ffi",

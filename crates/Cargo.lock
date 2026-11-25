@@ -531,6 +531,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-storage-rocksdb"
+version = "0.1.0"
+dependencies = [
+ "mako-storage-api",
+ "sto-rocksdb",
+ "tempfile",
+]
+
+[[package]]
 name = "masstree"
 version = "0.0.0"
 dependencies = [

@@ -40,6 +40,7 @@ pub struct Database {
     pub(crate) root: PathBuf,
     pub(crate) group: u64,
     pub(crate) sync_writes: bool,
+    pub(crate) distributed: bool,
     pub(crate) generation: RwLock<Generation>,
     pub(crate) retired: Mutex<Vec<Generation>>,
     pub(crate) apply_gate: Mutex<()>,
@@ -51,7 +52,7 @@ pub struct Database {
     pub(crate) next_lock: AtomicU64,
     pub(crate) range: Arc<RangeState>,
     #[cfg(feature = "test-hooks")]
-    apply_fault: std::sync::atomic::AtomicU8,
+    pub(crate) apply_fault: std::sync::atomic::AtomicU8,
     // The logical DB root, not a replaceable native generation, owns the lease.
     _root_lock: std::fs::File,
 }
@@ -61,6 +62,22 @@ impl Database {
     /// writes on power/machine crash; reopening or installing the opposite mode
     /// is rejected rather than upgrading weak history to durable history.
     pub fn open(path: impl AsRef<Path>, group: u64, sync_writes: bool) -> Result<Arc<Self>> {
+        Self::open_mode(path.as_ref(), group, sync_writes, false)
+    }
+    /// Separate format profile for externally decided distributed STO effects.
+    pub fn open_distributed(
+        path: impl AsRef<Path>,
+        group: u64,
+        sync_writes: bool,
+    ) -> Result<Arc<Self>> {
+        Self::open_mode(path.as_ref(), group, sync_writes, true)
+    }
+    fn open_mode(
+        path: &Path,
+        group: u64,
+        sync_writes: bool,
+        distributed: bool,
+    ) -> Result<Arc<Self>> {
         let root = std::path::absolute(path)?;
         std::fs::create_dir_all(&root)?;
         let root_lock = std::fs::OpenOptions::new()
@@ -90,6 +107,13 @@ impl Database {
             RocksBlobs::open_strict(&root.join(&name), durability(sync_writes))?
         });
         if let Some(format) = rocks.get(FORMAT)? {
+            if rocks.get(crate::distributed::PROFILE)?.as_deref()
+                != distributed.then_some(crate::distributed::PROFILE_VALUE)
+            {
+                return Err(Error::Corruption(
+                    "storage application profile mismatch".into(),
+                ));
+            }
             if format == format_bytes(group, !sync_writes) {
                 return Err(Error::Corruption(
                     "database durability mode mismatch".into(),
@@ -114,7 +138,8 @@ impl Database {
             }
             let format = format_bytes(group, sync_writes);
             let position = position_bytes(Position::default());
-            rocks.write_batch(&[
+            let zero_generation = 0u64.to_be_bytes();
+            let mut initial = vec![
                 BlobOp::Put {
                     key: FORMAT,
                     val: &format,
@@ -125,9 +150,16 @@ impl Database {
                 },
                 BlobOp::Put {
                     key: GENERATION,
-                    val: &0u64.to_be_bytes(),
+                    val: &zero_generation,
                 },
-            ])?;
+            ];
+            if distributed {
+                initial.push(BlobOp::Put {
+                    key: crate::distributed::PROFILE,
+                    val: crate::distributed::PROFILE_VALUE,
+                });
+            }
+            rocks.write_batch(&initial)?;
         }
         let position = read_position(&rocks)?;
         if (position.index == 0) != (position.term == 0) {
@@ -173,6 +205,7 @@ impl Database {
             root,
             group,
             sync_writes,
+            distributed,
             generation: RwLock::new(Generation { name, rocks }),
             retired: Mutex::new(Vec::new()),
             apply_gate: Mutex::new(()),
@@ -339,6 +372,11 @@ impl Database {
             .transpose()
     }
     pub fn apply(&self, position: Position, bytes: &[u8]) -> Result<ApplyOutcome> {
+        if self.distributed {
+            return Err(Error::InvalidState(
+                "distributed profile requires external apply",
+            ));
+        }
         let command = match Command::decode(bytes) {
             Ok(command) => command,
             Err(error) => {
@@ -353,6 +391,11 @@ impl Database {
         self.apply_record(position, Some((&command, bytes)))
     }
     pub fn advance_applied(&self, position: Position) -> Result<ApplyOutcome> {
+        if self.distributed {
+            return Err(Error::InvalidState(
+                "distributed profile requires external apply",
+            ));
+        }
         self.apply_record(position, None)
     }
     fn apply_record(
@@ -565,12 +608,12 @@ pub(crate) fn table_key(table: u64) -> Vec<u8> {
     put_u64(&mut bytes, table);
     bytes
 }
-fn count_key(table: u64) -> Vec<u8> {
+pub(crate) fn count_key(table: u64) -> Vec<u8> {
     let mut bytes = vec![0, 5];
     put_u64(&mut bytes, table);
     bytes
 }
-fn catalog_key(name: &str) -> Vec<u8> {
+pub(crate) fn catalog_key(name: &str) -> Vec<u8> {
     let mut bytes = vec![0, 2];
     bytes.extend_from_slice(name.as_bytes());
     bytes
@@ -581,7 +624,7 @@ fn outcome_key(request: RequestId) -> Vec<u8> {
     put_u64(&mut bytes, request.sequence);
     bytes
 }
-fn entry_key(index: u64) -> Vec<u8> {
+pub(crate) fn entry_key(index: u64) -> Vec<u8> {
     let mut bytes = vec![0, 8];
     put_u64(&mut bytes, index);
     bytes

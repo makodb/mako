@@ -150,7 +150,7 @@ impl WorkerBackend for ModelWorker {
             end: iter.next().is_none(),
         })
     }
-    fn create_table(&mut self) -> Result<Arc<dyn TableBackend>> {
+    fn create_table(&mut self, _: TableConfig) -> Result<Arc<dyn TableBackend>> {
         if self.attempt.is_some() {
             return Err(Error::invalid("busy worker"));
         }

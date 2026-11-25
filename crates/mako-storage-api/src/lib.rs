@@ -103,7 +103,10 @@ pub struct ParticipantReport {
     pub empty: bool,
 }
 #[derive(Clone, Copy, Default)]
-pub struct TableConfig;
+pub struct TableConfig {
+    /// Stable schema ID for persistent engines. Zero allocates a test/local ID.
+    pub id: u64,
+}
 
 /// Shared engine factory. `worker` constructs affine state on the calling thread.
 pub trait Backend: Any + Send + Sync {
@@ -130,7 +133,7 @@ pub trait WorkerBackend {
         after: Option<&[u8]>,
         limit: usize,
     ) -> Result<CheckpointPage>;
-    fn create_table(&mut self) -> Result<Arc<dyn TableBackend>>;
+    fn create_table(&mut self, config: TableConfig) -> Result<Arc<dyn TableBackend>>;
     fn begin(&mut self) -> Result<Box<dyn LocalTransaction + '_>>;
     fn begin_participant(&mut self, term: u32) -> Result<Box<dyn ParticipantBackend + '_>>;
     fn resume_participant(&mut self) -> Result<Box<dyn ParticipantBackend + '_>>;
@@ -257,9 +260,9 @@ impl Worker {
     pub fn belongs_to(&self, database: &Database) -> bool {
         Arc::ptr_eq(&self.database.0, &database.0)
     }
-    pub fn create_table(&mut self, _: TableConfig) -> Result<Table> {
+    pub fn create_table(&mut self, config: TableConfig) -> Result<Table> {
         Ok(Table {
-            inner: self.inner.create_table()?,
+            inner: self.inner.create_table(config)?,
             database: self.database.clone(),
         })
     }

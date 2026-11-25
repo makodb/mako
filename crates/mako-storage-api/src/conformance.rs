@@ -4,7 +4,9 @@ use super::*;
 use std::ops::Bound::Unbounded;
 
 fn table(db: &Database) -> Table {
-    Session::new(db).create_table(TableConfig).unwrap()
+    Session::new(db)
+        .create_table(TableConfig::default())
+        .unwrap()
 }
 fn commit(mut p: SessionParticipant<'_>) -> u32 {
     p.lock().unwrap();

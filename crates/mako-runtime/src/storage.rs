@@ -145,7 +145,11 @@ impl Store {
             ));
         }
         let table = Table {
-            tree: worker.create_table(sto::TableConfig).map_err(engine)?,
+            tree: worker
+                .create_table(sto::TableConfig {
+                    id: u64::from(log_id),
+                })
+                .map_err(engine)?,
             log_id,
         };
         tables.insert(key, table.clone());

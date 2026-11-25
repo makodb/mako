@@ -5,6 +5,7 @@
 mod checkpoint;
 mod command;
 mod database;
+pub mod distributed;
 mod transaction;
 
 pub use checkpoint::Checkpoint;

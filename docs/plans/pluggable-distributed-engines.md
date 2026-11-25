@@ -196,7 +196,7 @@ log prefix only after a durable checkpoint covers all state and references
 needed for recovery, and after satisfying the Raft snapshot rules where applicable.
 This also supplies the missing local-log checkpoint/compaction path.
 
-RocksDB's native checkpoint can be an optimized backend artifact later, but it
+RocksDB's existing native checkpoint will be reused as its backend artifact; it
 does not by itself coordinate separate application and log databases.
 [RocksDB checkpoint documentation](https://github.com/meta/rocksdb/wiki/Checkpoints).
 
@@ -208,6 +208,13 @@ fence and cross-participant safety argument.
 ## Implementation stages
 
 Progress on 2026-11-25:
+
+- The direct RocksDB adapter passes the shared conformance scenarios. Its native
+  extension separates logical time from STO generation, retains tombstones,
+  applies rows and protocol metadata in one batch, and distinguishes distributed
+  storage from the existing local-service format. New atomic-failure, reopen and
+  checkpoint cases pass with the existing 16 component cases. Connecting this
+  capability to both runtime log modes is still in progress.
 
 - The neutral interface and Masstree adapter are connected to the production
   client/participant/scan path. `Store::with_engine` selects an explicit adapter.

@@ -85,7 +85,7 @@ impl api::WorkerBackend for Worker {
             end: page.end,
         })
     }
-    fn create_table(&mut self) -> api::Result<Arc<dyn api::TableBackend>> {
+    fn create_table(&mut self, _: api::TableConfig) -> api::Result<Arc<dyn api::TableBackend>> {
         Ok(Arc::new(Table(
             self.0
                 .create_table(native::TableConfig::default())

@@ -1,6 +1,7 @@
 use crate::command::{encode_transaction, MutationRef};
 use crate::database::{data_key, optional_u64, required_u64, table_key, version_key, GENERATION};
 use crate::{core, Database, Error, Position, RequestId, Result, MAX_COMMAND_BYTES, MAX_KEY_BYTES};
+use mrx_core::Blobs;
 use mrx_rocks::Snapshot;
 use std::collections::BTreeMap;
 use std::sync::{
@@ -494,6 +495,53 @@ impl<'worker> Transaction<'worker> {
             })
             .map_err(core)
     }
+    /// Logical time comes from the same snapshot as the STO observation.
+    pub fn distributed_time(&mut self, table: u64, key: &[u8]) -> Result<u32> {
+        self.db.ensure_distributed()?;
+        self.ensure_row(table, key)?;
+        crate::distributed::decode_time(
+            self.snapshot
+                .get(&crate::distributed::time_key(table, key))?,
+        )
+    }
+    /// Conservative predicate dependency includes tombstones and omitted rows.
+    pub fn distributed_range_dependency(
+        &mut self,
+        table: u64,
+        start: &[u8],
+        end: Option<&[u8]>,
+    ) -> Result<u32> {
+        self.db.ensure_distributed()?;
+        self.range(true, false)?;
+        let start = crate::distributed::time_key(table, start);
+        let end = end
+            .map(|key| crate::distributed::time_key(table, key))
+            .unwrap_or_else(|| {
+                if table == u64::MAX {
+                    vec![0, 10]
+                } else {
+                    crate::distributed::time_key(table + 1, b"")
+                }
+            });
+        let mut dependency = 0;
+        let mut failure = None;
+        self.snapshot
+            .scan(&start, Some(&end), false, usize::MAX, &mut |_, value| {
+                match crate::distributed::decode_time(Some(value.to_vec())) {
+                    Ok(time) => dependency = dependency.max(time / 10),
+                    Err(error) => {
+                        failure = Some(error);
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })?;
+        if let Some(error) = failure {
+            self.failed = true;
+            return Err(error);
+        }
+        Ok(dependency)
+    }
     pub fn exists(&mut self, table: u64, key: &[u8]) -> Result<bool> {
         let logical = self.ensure_row(table, key)?;
         self.core
@@ -764,6 +812,59 @@ impl Prepared<'_> {
         }
         self.core.complete_read_only().map_err(core)?;
         Ok(self.position)
+    }
+    /// Finish a certified distributed write after the caller atomically applied
+    /// the authoritative decision. This checks installation, never recertifies.
+    pub fn complete_distributed(&mut self, time_term: u32) -> Result<()> {
+        self.db.ensure_distributed()?;
+        if !self.certified || self.read_only {
+            return Err(Error::InvalidState("not a certified distributed write"));
+        }
+        let result = (|| {
+            let _gate = crate::mutex(&self.db.apply_gate);
+            let rocks = self.db.rocks();
+            let mut failure = None;
+            self.core
+                .visit_sealed(&self.db.resource, |item| {
+                    if let (Key::Row(table, key), Some(Intent::Row { value, generation })) =
+                        (item.key, item.intent)
+                    {
+                        let check = (|| {
+                            if rocks.get(&data_key(*table, key))? != *value
+                                || crate::distributed::decode_time(
+                                    rocks.get(&crate::distributed::time_key(*table, key))?,
+                                )? != time_term
+                                || optional_u64(
+                                    rocks.get(&version_key(*table, key))?,
+                                    "installed generation",
+                                )? != *generation
+                            {
+                                return Err(Error::Corruption(
+                                    "distributed installation mismatch".into(),
+                                ));
+                            }
+                            Ok(())
+                        })();
+                        if let Err(error) = check {
+                            failure = Some(error);
+                        }
+                    }
+                })
+                .map_err(core)?;
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            self.core.mark_submitted().map_err(core)?;
+            self.submitted = true;
+            self.core.mark_committed().map_err(core)?;
+            self.core.complete_applied().map_err(core)?;
+            self.submitted = false;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.db.fence();
+        }
+        result
     }
     pub fn complete_applied(&mut self) -> Result<Position> {
         let hash = self
