@@ -348,15 +348,7 @@ fn validate(handle: &mut StoTpccThread) -> FfiResult<()> {
 
 fn install(handle: &mut StoTpccThread, decision: DistributedTimeTerm) -> FfiResult<()> {
     require_phase(handle, ParticipantPhase::Validated)?;
-    global_distributed().observe(decision.timestamp());
-    handle.protocol.decision = Some(decision);
-    handle.protocol.report.time_term = decision.encode_legacy();
-    if !handle.protocol.log.is_empty() {
-        let encoded = decision.encode_legacy().to_ne_bytes();
-        let footer = handle.protocol.log.len() - 8;
-        handle.protocol.log[..4].copy_from_slice(&encoded);
-        handle.protocol.log[footer..footer + 4].copy_from_slice(&encoded);
-    }
+    choose_prepared_decision(handle, decision)?;
     handle.protocol.report.disposition = 3;
     handle
         .sto_worker
@@ -380,6 +372,39 @@ fn install(handle: &mut StoTpccThread, decision: DistributedTimeTerm) -> FfiResu
         handle.protocol.sizes_published = true;
     }
     Ok(())
+}
+
+fn choose_prepared_decision(handle: &mut StoTpccThread, decision: DistributedTimeTerm) -> FfiResult<()> {
+    if handle.protocol.decision.is_some_and(|chosen| chosen != decision) {
+        return Err(fatal(format_args!("prepared transaction decision timestamp changed")));
+    }
+    global_distributed().observe(decision.timestamp());
+    handle.protocol.decision = Some(decision);
+    handle.protocol.report.time_term = decision.encode_legacy();
+    if !handle.protocol.log.is_empty() {
+        let encoded = decision.encode_legacy().to_ne_bytes();
+        let footer = handle.protocol.log.len() - 8;
+        handle.protocol.log[..4].copy_from_slice(&encoded);
+        handle.protocol.log[footer..footer + 4].copy_from_slice(&encoded);
+    }
+    Ok(())
+}
+
+/// Own the frozen redo before voting Yes. This does not install any row, release
+/// a lock, or acknowledge a durable record; the 2PC journal owns that boundary.
+pub(super) fn prepared_redo(handle: &mut StoTpccThread, base: u32) -> FfiResult<Vec<u8>> {
+    require_phase(handle, ParticipantPhase::Validated)?;
+    let timestamp = DistributedTimestamp::new(base)
+        .map_err(|error| fatal(format_args!("prepare timestamp: {error}")))?;
+    if handle.protocol.dependency.is_some_and(|dependency| timestamp.get() <= dependency.get()) {
+        return Err(fatal(format_args!("prepare timestamp does not exceed read dependency")));
+    }
+    choose_prepared_decision(handle, DistributedTimeTerm::new(timestamp, handle.protocol.term))?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(handle.protocol.log.len())
+        .map_err(|_| resource_exhausted(format_args!("prepared redo capacity")))?;
+    bytes.extend_from_slice(&handle.protocol.log);
+    Ok(bytes)
 }
 
 pub(super) fn finish(handle: &mut StoTpccThread, committed: bool) -> FfiResult<Status> {

@@ -337,6 +337,13 @@ impl Participant<'_> {
         checked(unsafe { sto_tpcc_protocol_install(&mut *self.worker.raw, timestamp) })
     }
 
+    /// Snapshot immutable redo for a prepared transaction without installing it.
+    /// Call after validation and persist these bytes before returning a Yes vote.
+    pub fn prepared_redo(&mut self, timestamp: u32) -> Result<Vec<u8>> {
+        super::super::protocol::prepared_redo(&mut self.worker.raw, timestamp)
+            .map_err(|status| error(status.code()))
+    }
+
     pub fn flush_remote(&mut self, callbacks: &mut dyn ProtocolCallbacks) -> Result<()> {
         let mut context = CallbackContext {
             callbacks,

@@ -10,6 +10,7 @@ use crate::{
     wire::{self, Error, ErrorCode, Result},
 };
 use parking_lot::Mutex;
+use mako_protocol::journal::{self, Entry, Journal, Record, TransactionId};
 use raft_host::{Host, Position, ProposalStatus, StateMachine};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,6 +32,14 @@ struct Command {
     sequence: u64,
     rows: Vec<redo::Row>,
     receipt: Option<wire::GatewayReceipt>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct JournalCommand {
+    version: u32,
+    incarnation: u64,
+    sequence: u64,
+    record: Record,
 }
 fn storage(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorCode::Fatal, error.to_string())
@@ -123,6 +132,8 @@ struct Gate {
     pending: BTreeMap<(u64, u64), Vec<u8>>,
 }
 struct State {
+    owner: u32,
+    durable_transactions: bool,
     gate: Mutex<Gate>,
     durable: Arc<DurableRows>,
     replay: Replay,
@@ -165,6 +176,26 @@ impl StateMachine for State {
             let Some(bytes) = bytes else {
                 return self.durable.advance(position(p));
             };
+            // wire::encode prefixes its own u32 version; the application
+            // command version follows it. Keep old row-command bytes readable.
+            if bytes.get(4..8) == Some(2u32.to_le_bytes().as_slice()) {
+                let command: JournalCommand = wire::decode(bytes)?;
+                if command.version != 2 || command.incarnation == 0 || command.sequence == 0
+                    || command.record.transaction().durable != self.durable_transactions {
+                    return Err(storage("invalid replicated transaction record"));
+                }
+                if let Record::Prepare { rows, .. } = &command.record {
+                    for row in rows { self.schema.key_for_log(row.table)?; }
+                }
+                let local = gate.pending.get(&(command.incarnation, command.sequence))
+                    .is_some_and(|pending| pending == bytes);
+                if !local && gate.active != 0 {
+                    return Err(storage("leadership changed with active prepared transactions; recovery required"));
+                }
+                let (rows, _) = self.durable.apply_journal(position(p), bytes, self.owner, &command.record)?;
+                if !local && !rows.is_empty() { self.replay.apply(rows)?; }
+                return Ok(());
+            }
             let command: Command = wire::decode(bytes)?;
             if command.version != 1
                 || command.incarnation == 0
@@ -276,6 +307,8 @@ impl ReplicatedLog {
         }
         let replay = Replay::start(store, schema.clone())?;
         let state = Arc::new(State {
+            owner: store.owner,
+            durable_transactions: config.sync_writes && durable.durable(),
             gate: Mutex::new(Gate::default()),
             durable,
             replay,
@@ -391,6 +424,7 @@ impl Drop for Permit {
     }
 }
 impl CommitLog for ReplicatedLog {
+    fn transaction_journal(&self) -> Option<&dyn Journal> { Some(self) }
     fn health(&self) -> Result<()> {
         ReplicatedLog::health(self)
     }
@@ -498,6 +532,55 @@ impl CommitLog for ReplicatedLog {
     }
 }
 
+impl Journal for ReplicatedLog {
+    fn durable(&self) -> bool {
+        self.binding.get().is_some_and(|binding| binding.state.durable_transactions)
+    }
+    fn apply(&self, record: &Record) -> Result<Entry> {
+        let _permit = <Self as CommitLog>::admit(self)?;
+        let binding = self.binding.get().ok_or_else(|| storage("replication not started"))?;
+        let prior = binding.state.durable.transaction(record.transaction().id)?;
+        journal::transition(binding.state.owner, self.durable(), prior.as_ref(), record)?;
+        if let Record::Prepare { rows, .. } = record {
+            for row in rows { binding.state.schema.key_for_log(row.table)?; }
+        }
+        let sequence = self.next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
+            .map_err(|_| storage("replication identity exhausted"))?;
+        let command = wire::encode(&JournalCommand {
+            version: 2, incarnation: self.incarnation, sequence, record: record.clone(),
+        })?;
+        let status = binding.host.status();
+        if !status.is_leader || status.failure.is_some() {
+            return Err(Error::new(ErrorCode::RouteChanged, "journal authority changed"));
+        }
+        {
+            let mut gate = binding.state.gate.lock();
+            State::ensure(&gate)?;
+            gate.pending.insert((self.incarnation, sequence), command.clone());
+        }
+        let proposal = binding.host.propose(status.term, command)
+            .map_err(|error| Error::new(ErrorCode::Unknown, format!("journal admission: {error:?}")))?;
+        match proposal.wait(self.timeout) {
+            ProposalStatus::Applied => {
+                binding.state.gate.lock().pending.remove(&(self.incarnation, sequence));
+                let entry = binding.state.durable.transaction(record.transaction().id)?
+                    .ok_or_else(|| storage("applied journal record has no transaction"))?;
+                journal::acknowledge(record, &entry)?;
+                Ok(entry)
+            }
+            outcome => Err(Error::new(ErrorCode::Unknown, format!("journal completion: {outcome:?}"))),
+        }
+    }
+    fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
+        let _permit = <Self as CommitLog>::admit(self)?;
+        self.binding.get().ok_or_else(|| storage("replication not started"))?.state.durable.transaction(id)
+    }
+    fn entries(&self) -> Result<Vec<Entry>> {
+        let _permit = <Self as CommitLog>::admit(self)?;
+        self.binding.get().ok_or_else(|| storage("replication not started"))?.state.durable.transactions()
+    }
+}
+
 /// Local disk persistence uses the same atomic row/receipt store and recovery
 /// path, without a consensus host or replication thread.
 pub struct LocalLog {
@@ -520,6 +603,8 @@ impl LocalLog {
         }
         let replay = Replay::start(store, schema.clone())?;
         let state = Arc::new(State {
+            owner: store.owner,
+            durable_transactions: durable.durable(),
             gate: Mutex::new(Gate::default()),
             durable,
             replay,
@@ -591,6 +676,7 @@ impl Drop for LocalPermit {
     }
 }
 impl CommitLog for LocalLog {
+    fn transaction_journal(&self) -> Option<&dyn Journal> { Some(self) }
     fn health(&self) -> Result<()> {
         State::ensure(&self.state()?.gate.lock())
     }
@@ -625,5 +711,37 @@ impl CommitLog for LocalLog {
         receipt: &wire::GatewayReceipt,
     ) -> Result<()> {
         self.publish(bytes, time_term, Some(receipt))
+    }
+}
+
+impl Journal for LocalLog {
+    fn durable(&self) -> bool { self.state.get().is_some_and(|state| state.durable_transactions) }
+    fn apply(&self, record: &Record) -> Result<Entry> {
+        let state = self.state()?;
+        let gate = state.gate.lock();
+        State::ensure(&gate)?;
+        let prior = state.durable.transaction(record.transaction().id)?;
+        journal::transition(state.owner, self.durable(), prior.as_ref(), record)?;
+        if let Record::Prepare { rows, .. } = record {
+            for row in rows { state.schema.key_for_log(row.table)?; }
+        }
+        let index = state.durable.position()?.index.checked_add(1)
+            .ok_or_else(|| storage("local journal position exhausted"))?;
+        let source = wire::encode(&(2u32, index, record))?;
+        let (_, entry) = state.durable.apply_journal(sto_rocksdb::Position { index, term: 1 }, &source, state.owner, record)?;
+        journal::acknowledge(record, &entry)?;
+        Ok(entry)
+    }
+    fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
+        let state = self.state()?;
+        let gate = state.gate.lock();
+        State::ensure(&gate)?;
+        state.durable.transaction(id)
+    }
+    fn entries(&self) -> Result<Vec<Entry>> {
+        let state = self.state()?;
+        let gate = state.gate.lock();
+        State::ensure(&gate)?;
+        state.durable.transactions()
     }
 }

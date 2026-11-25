@@ -7,6 +7,7 @@ use crate::{
     wire::{self, Error, ErrorCode, Result},
 };
 use parking_lot::Mutex;
+use mako_protocol::journal::{self, Entry, Record, TransactionId};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io::Write, path::Path, sync::Arc};
 use sto_rocksdb::{Command, Database, Position, RequestId};
@@ -15,6 +16,7 @@ pub struct DurableRows {
     db: Arc<Database>,
     table_name: String,
     gate: Mutex<()>,
+    sync_writes: bool,
 }
 fn storage(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorCode::Fatal, format!("durable rows: {error}"))
@@ -34,6 +36,14 @@ fn receipt_key(client: u64, sequence: u64) -> Vec<u8> {
     let mut key = vec![2];
     key.extend_from_slice(&client.to_be_bytes());
     key.extend_from_slice(&sequence.to_be_bytes());
+    key
+}
+fn transaction_key(id: TransactionId) -> Vec<u8> {
+    let mut key = vec![3];
+    key.extend_from_slice(&id.coordinator.to_be_bytes());
+    key.extend_from_slice(&id.worker.to_be_bytes());
+    key.extend_from_slice(&id.incarnation.to_be_bytes());
+    key.extend_from_slice(&id.attempt.to_be_bytes());
     key
 }
 fn request(position: Position) -> RequestId {
@@ -60,8 +70,10 @@ impl DurableRows {
             db,
             table_name,
             gate: Mutex::new(()),
+            sync_writes,
         }))
     }
+    pub fn durable(&self) -> bool { self.sync_writes }
     pub fn position(&self) -> Result<Position> {
         self.db.applied().map_err(storage)
     }
@@ -222,6 +234,109 @@ impl DurableRows {
         }
         tx.rollback();
         Ok(())
+    }
+
+    /// Save a 2PC transition and its committed rows in the same RocksDB command.
+    /// Prepare saves intent only. Applied-position replay checks the exact input
+    /// fingerprint, even when the transaction subsequently reached a later state.
+    pub fn apply_journal(&self, position: Position, source: &[u8], owner: u32, record: &Record)
+        -> Result<(Vec<Row>, Entry)>
+    {
+        let _gate = self.gate.lock();
+        if source.len() > wire::MAX_BYTES { return Err(storage("journal envelope too large")); }
+        let table = self.table()?;
+        let mut fingerprint = position.term.to_be_bytes().to_vec();
+        fingerprint.extend_from_slice(&Sha256::digest(source));
+        fingerprint.extend_from_slice(&Sha256::digest(wire::encode(&(owner, record))?));
+        let mut worker = self.db.attach_worker().map_err(storage)?;
+        let mut tx = worker.begin().map_err(storage)?;
+        let entry_key = entry_key(position.index);
+        let key = transaction_key(record.transaction().id);
+        let prior: Option<Entry> = tx.get(table, &key).map_err(storage)?
+            .map(|bytes| wire::decode(&bytes)).transpose()?;
+        if position.index <= self.position()?.index {
+            if tx.get(table, &entry_key).map_err(storage)?.as_deref() != Some(&fingerprint) {
+                return Err(storage("conflicting journal replay position"));
+            }
+            let entry = prior.ok_or_else(|| storage("journal replay lost its transaction"))?;
+            if entry.transaction != *record.transaction() { return Err(storage("journal replay descriptor changed")); }
+            tx.rollback();
+            return Ok((Vec::new(), entry));
+        }
+        if record.transaction().durable && !self.sync_writes {
+            return Err(storage("durable prepare requires synchronous storage"));
+        }
+        let next = match journal::transition(owner, record.transaction().durable, prior.as_ref(), record) {
+            Ok(next) => next,
+            // Competing decisions are normal CAS refusals, not corruption of
+            // the Raft state machine. Persist the refused command's position
+            // and fingerprint while retaining the first transaction record.
+            Err(_) if prior.is_some() => journal::Transition {
+                entry: prior.expect("checked existing transaction"), rows: Vec::new(), changed: false,
+            },
+            Err(error) => return Err(error),
+        };
+        let mut published = Vec::new();
+        for row in &next.rows {
+            let key = row_key(row);
+            let old: Option<Row> = tx.get(table, &key).map_err(storage)?
+                .map(|bytes| wire::decode(&bytes)).transpose()?;
+            if old.as_ref().is_none_or(|old| row.supersedes(old.time_term)) {
+                tx.put(table, &key, &wire::encode(row)?).map_err(storage)?;
+                published.push(row.clone());
+            } else if old.as_ref() != Some(row) {
+                // A prepared transaction owns its write locks. A newer or
+                // different committed value is a violated adapter contract,
+                // not permission to acknowledge a silently skipped commit.
+                return Err(storage("prepared write conflicts with durable row"));
+            }
+        }
+        tx.put(table, &key, &wire::encode(&next.entry)?).map_err(storage)?;
+        tx.put(table, &entry_key, &fingerprint).map_err(storage)?;
+        let mut prepared = tx.prepare(request(position)).map_err(storage)?;
+        prepared.certify().map_err(storage)?;
+        prepared.mark_submitted().map_err(storage)?;
+        prepared.mark_committed().map_err(storage)?;
+        self.db.apply(position, prepared.bytes().map_err(storage)?).map_err(storage)?;
+        prepared.complete_applied().map_err(storage)?;
+        Ok((published, next.entry))
+    }
+
+    pub fn transaction(&self, id: TransactionId) -> Result<Option<Entry>> {
+        let _gate = self.gate.lock();
+        if self.position()?.index == 0 { return Ok(None); }
+        let table = self.table()?;
+        let mut worker = self.db.attach_worker().map_err(storage)?;
+        let mut tx = worker.begin().map_err(storage)?;
+        let bytes = tx.get(table, &transaction_key(id)).map_err(storage)?;
+        tx.rollback();
+        bytes.map(|bytes| wire::decode(&bytes)).transpose()
+    }
+
+    pub fn transactions(&self) -> Result<Vec<Entry>> {
+        let _gate = self.gate.lock();
+        if self.position()?.index == 0 { return Ok(Vec::new()); }
+        let table = self.table()?;
+        let mut worker = self.db.attach_worker().map_err(storage)?;
+        let mut tx = worker.begin().map_err(storage)?;
+        let mut lower = vec![3];
+        let mut entries = Vec::new();
+        loop {
+            let rows = tx.scan(table, &lower, Some(&[4]), 256).map_err(storage)?;
+            if rows.is_empty() { break; }
+            for (key, bytes) in rows {
+                let entry: Entry = wire::decode(&bytes)?;
+                entry.transaction.validate()?;
+                if transaction_key(entry.transaction.id) != key {
+                    return Err(storage("durable transaction identity mismatch"));
+                }
+                entries.push(entry);
+                lower = key;
+                lower.push(0);
+            }
+        }
+        tx.rollback();
+        Ok(entries)
     }
     pub fn gateway_receipt(
         &self,

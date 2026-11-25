@@ -48,6 +48,36 @@ fn check(status: Status) -> Result<()> {
 }
 
 pub use mako_protocol::contracts::{CommitLog, CommitPermit, VolatileLog};
+use mako_protocol::journal::{Entry, Journal, MemoryJournal, Record, TransactionId};
+
+struct StoreJournal {
+    log: Arc<dyn CommitLog>,
+    memory: MemoryJournal,
+}
+impl Journal for StoreJournal {
+    fn durable(&self) -> bool { self.log.transaction_journal().is_some_and(Journal::durable) }
+    fn apply(&self, record: &Record) -> Result<Entry> {
+        self.log.health()?;
+        match self.log.transaction_journal() {
+            Some(journal) => journal.apply(record),
+            None => self.memory.apply(record),
+        }
+    }
+    fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
+        self.log.health()?;
+        match self.log.transaction_journal() {
+            Some(journal) => journal.lookup(id),
+            None => self.memory.lookup(id),
+        }
+    }
+    fn entries(&self) -> Result<Vec<Entry>> {
+        self.log.health()?;
+        match self.log.transaction_journal() {
+            Some(journal) => journal.entries(),
+            None => self.memory.entries(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Table {
@@ -61,6 +91,7 @@ pub struct Store {
     pub epochs: Arc<EpochDomain>,
     pub term: AtomicU32,
     pub log: Arc<dyn CommitLog>,
+    pub journal: Arc<dyn Journal>,
     tables: RwLock<BTreeMap<TableKey, Table>>,
     quarantine: parking_lot::Mutex<Vec<Protection>>,
     materializer: RwLock<Option<Arc<Materializer>>>,
@@ -74,6 +105,7 @@ impl Store {
             migration,
             epochs: Arc::new(EpochDomain::default()),
             term: AtomicU32::new(0),
+            journal: Arc::new(StoreJournal { log: log.clone(), memory: MemoryJournal::new(owner) }),
             log,
             tables: RwLock::new(BTreeMap::new()),
             quarantine: parking_lot::Mutex::new(Vec::new()),

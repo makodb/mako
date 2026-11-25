@@ -90,6 +90,14 @@ CONTROLS = [
     ('local install failure permits retry', 'coordinator.rs', 'if effects.install_local() != OK {\n        effects.quarantine();\n        return UNKNOWN;', 'if effects.install_local() != OK {\n        effects.quarantine();\n        return RETRY;', 'coordinator', 'coordinate'),
     ('remote validation omitted', 'coordinator.rs', '    effects.validate_remote()\n}', '    OK\n}', 'coordinator', 'prepare'),
     ('coordinator rejects all available attempts', 'coordinator.rs', '    let prepared = prepare(effects);', '    return RETRY;\n    let prepared = prepare(effects);', 'coordinator', 'coordinate'),
+    ('2PC skips global lock barrier', 'two_phase.rs', '|| !self.all_locked() { return false; }', '|| false { return false; }', 'two_phase', 'Coordinator::record_prepared'),
+    ('2PC commits without every Yes vote', 'two_phase.rs', 'if matches!(decision, Decision::Commit) && (self.refused || !self.all_prepared()) { return false; }', 'if false { return false; }', 'two_phase', 'Coordinator::record_decision'),
+    ('2PC treats unsaved decision as authoritative', 'two_phase.rs', 'if !saved || matches!(decision, Decision::Pending) { return false; }', 'if matches!(decision, Decision::Pending) { return false; }', 'two_phase', 'Coordinator::record_decision'),
+    ('2PC changes a saved decision', 'two_phase.rs', 'if !matches!(self.decision, Decision::Pending) { return same_decision(self.decision, decision); }', 'if false { return same_decision(self.decision, decision); }', 'two_phase', 'Coordinator::record_decision'),
+    ('2PC releases prepared protection', 'two_phase.rs', '{ !matches!(phase, Phase::Committed) && !matches!(phase, Phase::Aborted) }', '{ !matches!(phase, Phase::Committed | Phase::Prepared) && !matches!(phase, Phase::Aborted) }', 'two_phase', 'retains_protection'),
+    ('2PC permits autonomous prepared abort', 'two_phase.rs', '{ matches!(phase, Phase::Executing) || matches!(phase, Phase::Locked) }', '{ matches!(phase, Phase::Executing | Phase::Prepared) || matches!(phase, Phase::Locked) }', 'two_phase', 'may_abort_locally'),
+    ('2PC acknowledges unsaved prepare', 'two_phase.rs', '{ if matches!(phase, Phase::Preparing) && saved { Phase::Prepared } else { phase } }', '{ if matches!(phase, Phase::Preparing) { Phase::Prepared } else { phase } }', 'two_phase', 'prepared'),
+    ('2PC rejects every prepared transaction', 'two_phase.rs', 'if !self.refused && self.all_prepared() { Decision::Commit } else { Decision::Abort }', 'Decision::Abort', 'two_phase', 'Coordinator::proposed'),
 ]
 
 def controls(run_proof):

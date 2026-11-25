@@ -194,7 +194,7 @@ def main():
             print(SUMMARY.search(result.stdout)[0],flush=True)
         proof('production-sharding','src/cluster/lib.rs',minimum=1495)
         proof('storage-host-core',host.ENTRY,minimum=40)
-        proof('transaction-protocol-core',core.ENTRY,minimum=22)
+        proof('transaction-protocol-core',core.ENTRY,minimum=46)
         core.controls(proof)
         # Reuse existing semantic mutants, with full positives already checked.
         tree=ast.parse((ROOT/'tla/mako/scripts/verify_controls.py').read_text())

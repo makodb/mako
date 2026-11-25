@@ -7,6 +7,28 @@ use std::{ops::Bound, sync::Arc};
 use sto_tpcc_ffi::native::*;
 
 #[test]
+fn prepared_redo_freezes_payload_without_installing_or_releasing_the_participant() {
+    let db = Database::new(DatabaseConfig::default()).unwrap();
+    let mut worker = db.worker().unwrap();
+    let table = worker.create_table(TableConfig::default()).unwrap();
+    worker.replay(&table, b"key", Some(b"before"), 100).unwrap();
+    let mut participant = worker.begin_participant(0).unwrap();
+    assert_eq!(participant.get(&table, b"key").unwrap().value.as_deref(), Some(b"before".as_slice()));
+    participant.mutate(&table, 1, Mutation::Put, b"key", b"prepared", false).unwrap();
+    participant.lock().unwrap();
+    let timestamp = participant.timestamp().unwrap();
+    participant.validate().unwrap();
+    let redo = participant.prepared_redo(timestamp).unwrap();
+    assert_eq!(redo, participant.prepared_redo(timestamp).unwrap());
+    assert!(redo.windows(b"prepared".len()).any(|bytes| bytes == b"prepared"));
+    assert_eq!(participant.report().unwrap().phase, 2);
+    participant.finish(false).unwrap();
+    let mut read = worker.begin_participant(0).unwrap();
+    assert_eq!(read.get(&table, b"key").unwrap().value.as_deref(), Some(b"before".as_slice()));
+    read.finish(false).unwrap();
+}
+
+#[test]
 fn owned_replay_preserves_source_metadata_tombstones_and_clock() {
     let db = Database::new(DatabaseConfig::default()).unwrap();
     let mut worker = db.worker().unwrap();

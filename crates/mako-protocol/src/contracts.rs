@@ -51,6 +51,11 @@ pub trait ParticipantEngine {
 }
 
 pub trait CommitLog: Send + Sync {
+    /// None selects the store's explicit in-memory transaction journal. A
+    /// persistence/replication adapter exposes its authoritative journal here.
+    fn transaction_journal(&self) -> Option<&dyn crate::journal::Journal> {
+        None
+    }
     fn health(&self) -> Result<()> {
         Ok(())
     }
