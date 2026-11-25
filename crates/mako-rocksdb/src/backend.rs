@@ -4,6 +4,11 @@ use crate::{Outcome, Result, TransactionId, WriteOptions};
 use mako_protocol::wire::{Bound, Row};
 
 pub trait Backend: Send + Sync {
+    /// Authority and recovery are ready. Occupied transaction lanes may still
+    /// return Busy. A replicated follower can stay open while this is false.
+    fn ready(&self) -> bool {
+        true
+    }
     fn column_families(&self) -> Vec<(String, u64)>;
     fn validate_write(&self, options: &WriteOptions) -> Result<()>;
     /// Either return one exclusively owned attempt or fail without starting work.

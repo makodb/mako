@@ -67,7 +67,7 @@ impl DB {
                 initial_owner: 0,
             })
             .collect();
-        Self::open_config(Config {
+        let db = Self::open_config(Config {
             engine: EngineConfig::RocksDb {
                 directory: path.join("data"),
                 masstree: options.masstree,
@@ -91,10 +91,27 @@ impl DB {
             }),
             volatile: false,
             replica_groups: BTreeMap::new(),
-        })
+        })?;
+        db.wait_ready(TIMEOUT)?;
+        Ok(db)
+    }
+    /// Wait for this replica to become a recovered coordinator. Followers remain
+    /// open and replicate even if this deadline expires. Do not retry unknown bodies.
+    pub fn wait_ready(&self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| Error::invalid("readiness deadline overflow"))?;
+        while !self.ready() {
+            if Instant::now() >= deadline {
+                return Err(Error::new(ErrorKind::TryAgain, "coordinator is not ready"));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
     }
     /// Start one distributed shard. Every raw schema table is a column family.
     /// All shards use the same schema and worker count; peers supply routing.
+    /// Returns after listener startup, without waiting for a Raft quorum.
     /// The returned DB owns listeners, workers and orderly shutdown.
     pub fn open_config(config: Config) -> Result<Self> {
         config.schema().map_err(convert)?;
@@ -118,22 +135,13 @@ impl DB {
             return Err(Error::invalid("RocksDB API requires durable synchronous logging, raw tables including default, and complete peer routing"));
         }
         let (owner, node) = NodeOwner::start(config.clone())?;
-        let mut lanes = vec![Lane::Free; config.workers as usize];
-        // Existing unresolved ownership is reserved until explicit resolution.
-        for entry in node.store.journal.entries().map_err(convert)? {
-            if entry.unresolved() && entry.transaction.id.coordinator == config.owner {
-                let id = entry.transaction.id;
-                let lane = lanes
-                    .get_mut(id.worker as usize)
-                    .ok_or_else(|| Error::invalid("recovered stream exceeds configured workers"))?;
-                *lane = Lane::Pending(id);
-            }
-        }
+        let lanes = vec![Lane::Free; config.workers as usize];
         let shared = Arc::new(Shared {
             node,
             _owner: owner,
             config,
             lanes: Mutex::new(lanes),
+            recovered_term: Mutex::new(None),
         });
         Self::from_backend(Arc::new(Native(shared)))
     }
@@ -152,52 +160,87 @@ struct Shared {
     _owner: NodeOwner,
     config: Config,
     lanes: Mutex<Vec<Lane>>,
+    recovered_term: Mutex<Option<u64>>,
+}
+impl Shared {
+    fn reserve_recovered_streams(&self) -> Result<()> {
+        let status = self.node.store.log.replica_status(self.config.owner);
+        if !status.leader {
+            return Err(Error::new(
+                ErrorKind::TryAgain,
+                "replica is not coordinator authority",
+            ));
+        }
+        let mut recovered = self
+            .recovered_term
+            .lock()
+            .expect("coordinator recovery term");
+        if *recovered == Some(status.term) {
+            return Ok(());
+        }
+        // Defer the authoritative journal read until this replica has authority.
+        // Opening followers must not depend on a quorum already being present.
+        let entries = self.node.store.journal.entries().map_err(convert)?;
+        let mut lanes = self.lanes.lock().expect("coordinator lanes");
+        for entry in entries {
+            if entry.unresolved() && entry.transaction.id.coordinator == self.config.owner {
+                let id = entry.transaction.id;
+                let lane = lanes
+                    .get_mut(id.worker as usize)
+                    .ok_or_else(|| Error::invalid("recovered stream exceeds configured workers"))?;
+                if matches!(lane, Lane::Free) {
+                    *lane = Lane::Pending(id);
+                }
+            }
+        }
+        *recovered = Some(status.term);
+        Ok(())
+    }
 }
 // SRPC's listener is affine as well. Construct and destroy RunningNode on its
 // owner thread; only its already thread-safe Handle crosses that boundary.
 struct NodeOwner {
+    ready: Arc<std::sync::atomic::AtomicBool>,
     stop: SyncSender<()>,
     thread: Option<JoinHandle<()>>,
 }
 impl NodeOwner {
     fn start(config: Config) -> Result<(Self, mako_runtime::node::Handle)> {
+        use std::sync::atomic::{AtomicBool, Ordering};
         let (stop, stopped) = mpsc::sync_channel(1);
         let (ready, wait) = mpsc::sync_channel(1);
+        let status = Arc::new(AtomicBool::new(false));
+        let published = status.clone();
         let thread = thread::Builder::new()
             .name("rocks-api-node".into())
-            .spawn(move || {
-                let start = (|| {
-                    let node = RunningNode::start(config).map_err(convert)?;
-                    let deadline = Instant::now() + TIMEOUT;
-                    while !node.ready() {
-                        node.health().map_err(convert)?;
-                        if Instant::now() >= deadline {
-                            return Err(Error::new(
-                                ErrorKind::TryAgain,
-                                "coordinator did not become ready",
-                            ));
+            .spawn(move || match RunningNode::start(config).map_err(convert) {
+                Ok(node) => {
+                    if ready
+                        .send(Ok(mako_runtime::node::Handle::from(&node)))
+                        .is_ok()
+                    {
+                        loop {
+                            published.store(
+                                node.ready()
+                                    && node.store.log.replica_status(node.store.owner).leader,
+                                Ordering::Release,
+                            );
+                            match stopped.recv_timeout(Duration::from_millis(20)) {
+                                Err(mpsc::RecvTimeoutError::Timeout) => (),
+                                _ => break,
+                            }
                         }
-                        thread::sleep(Duration::from_millis(10));
                     }
-                    Ok(node)
-                })();
-                match start {
-                    Ok(node) => {
-                        if ready
-                            .send(Ok(mako_runtime::node::Handle::from(&node)))
-                            .is_ok()
-                        {
-                            let _ = stopped.recv();
-                        }
-                        drop(node);
-                    }
-                    Err(error) => {
-                        let _ = ready.send(Err(error));
-                    }
+                    published.store(false, Ordering::Release);
+                    drop(node);
+                }
+                Err(error) => {
+                    let _ = ready.send(Err(error));
                 }
             })
             .map_err(io_error)?;
         let owner = Self {
+            ready: status,
             stop,
             thread: Some(thread),
         };
@@ -217,6 +260,12 @@ impl Drop for NodeOwner {
 }
 struct Native(Arc<Shared>);
 impl Backend for Native {
+    fn ready(&self) -> bool {
+        self.0
+            ._owner
+            .ready
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
     fn column_families(&self) -> Vec<(String, u64)> {
         self.0
             .config
@@ -229,6 +278,7 @@ impl Backend for Native {
         Ok(())
     } // All configured logs sync.
     fn begin(&self) -> Result<Box<dyn Session>> {
+        self.0.reserve_recovered_streams()?;
         let index = {
             let mut lanes = self.0.lanes.lock().expect("coordinator lanes");
             let index = lanes

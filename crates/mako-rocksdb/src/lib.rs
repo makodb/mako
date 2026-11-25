@@ -58,6 +58,11 @@ pub struct OptimisticTransactionDB {
 pub type DB = OptimisticTransactionDB;
 
 impl OptimisticTransactionDB {
+    /// Mako extension: this handle currently has recovered coordinator authority.
+    /// Open replicated followers remain available for replication while false.
+    pub fn ready(&self) -> bool {
+        self.backend.ready()
+    }
     /// Adapter entry point, primarily for isolated contract tests. Production
     /// callers use `open`, `open_cf` or `open_config` with the native feature.
     pub fn from_backend(backend: Arc<dyn backend::Backend>) -> Result<Self> {

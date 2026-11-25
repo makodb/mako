@@ -50,6 +50,12 @@ fn open(root: &Path, masstree: bool) -> DB {
     DB::open_cf(&options(masstree), root, ["other", "default"]).unwrap()
 }
 
+fn open_config(cfg: Config) -> DB {
+    let db = DB::open_config(cfg).unwrap();
+    db.wait_ready(Duration::from_secs(20)).unwrap();
+    db
+}
+
 #[test]
 fn rocks_crud_conflicts_ranges_and_reopen() {
     basics(false);
@@ -303,7 +309,7 @@ fn peer_child() {
         serde_json::from_str(&std::env::var("MAKO_ROCKS_API_CONFIG").unwrap()).unwrap();
     let ready = std::env::var("MAKO_ROCKS_API_READY").unwrap();
     if mode == "facade" {
-        let db = DB::open_config(cfg).unwrap();
+        let db = open_config(cfg);
         let tx = db.transaction();
         tx.put(b"crash", b"committed").unwrap();
         tx.put_cf(db.cf_handle("other").unwrap(), b"other", b"durable")
@@ -349,7 +355,7 @@ fn distributed(masstree: bool, raft: bool) {
         .collect();
     let remote = config(&root.0, 1, &peers, false, raft);
     let _peer = Peer::start(&remote, &root.0, "node");
-    let db = DB::open_config(config(&root.0, 0, &peers, masstree, raft)).unwrap();
+    let db = open_config(config(&root.0, 0, &peers, masstree, raft));
     let cf = db.cf_handle("other").unwrap();
     let tx = db.transaction();
     tx.put(b"local", b"one").unwrap();
@@ -398,7 +404,7 @@ fn crash(masstree: bool, raft: bool) {
     if let Some(p) = cfg.replication.as_mut() {
         p.create = false;
     }
-    let db = DB::open_config(cfg).unwrap();
+    let db = open_config(cfg);
     assert_eq!(db.resolve(id).unwrap(), Outcome::Commit);
     assert_eq!(db.get(b"crash").unwrap(), Some(b"committed".to_vec()));
     assert_eq!(
@@ -426,7 +432,7 @@ fn migration_routes_points_and_scans_through_the_same_api() {
     let mut peer = Peer::spawn(&remote, &root.0, "node");
     let mut local = config(&root.0, 0, &peers, false, false);
     local.migration = true;
-    let db = DB::open_config(local).unwrap();
+    let db = open_config(local);
     peer.wait_ready();
     db.put(b"a", b"stays").unwrap();
     db.put(b"z", b"moves").unwrap();
@@ -495,4 +501,77 @@ fn migration_routes_points_and_scans_through_the_same_api() {
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(reverse, rows.into_iter().rev().collect::<Vec<_>>());
+}
+
+#[test]
+fn replicated_facade_keeps_followers_open_and_resolves_after_failover() {
+    let root = Directory::new();
+    let apps = addresses(3);
+    let rafts = addresses(3);
+    let members: Vec<_> = rafts
+        .iter()
+        .enumerate()
+        .map(|(i, a)| ReplicaPeer {
+            id: i as u16 + 1,
+            address: a.clone(),
+        })
+        .collect();
+    let mut replicas = Vec::new();
+    for i in 0..3 {
+        let mut cfg = config(
+            &root.0,
+            0,
+            &BTreeMap::from([(0, apps[i].clone())]),
+            false,
+            false,
+        );
+        let directory = root.0.join(format!("replica-{i}"));
+        cfg.engine = EngineConfig::RocksDb {
+            directory: directory.join("data"),
+            masstree: false,
+        };
+        cfg.persistence = None;
+        cfg.replication = Some(ReplicaConfig {
+            group: 777,
+            id: i as u16 + 1,
+            listen: rafts[i].clone(),
+            peers: members.clone(),
+            directory,
+            create: true,
+            sync_writes: true,
+        });
+        cfg.replica_groups.insert(
+            0,
+            mako_runtime::wire::ReplicaSet {
+                group: 777,
+                endpoints: apps.clone(),
+            },
+        );
+        replicas.push(Some(DB::open_config(cfg).unwrap()));
+    }
+    let leader = |replicas: &Vec<Option<DB>>| {
+        let end = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(i) = replicas
+                .iter()
+                .position(|db| db.as_ref().is_some_and(DB::ready))
+            {
+                return i;
+            }
+            assert!(Instant::now() < end, "leader readiness deadline");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let first = leader(&replicas);
+    let db = replicas[first].as_ref().unwrap();
+    let tx = db.transaction();
+    tx.put(b"failover", b"saved").unwrap();
+    let id = tx.transaction_id().unwrap();
+    tx.commit().unwrap();
+    drop(replicas[first].take());
+    let next = leader(&replicas);
+    assert_ne!(first, next);
+    let db = replicas[next].as_ref().unwrap();
+    assert_eq!(db.resolve(id).unwrap(), Outcome::Commit);
+    assert_eq!(db.get(b"failover").unwrap(), Some(b"saved".to_vec()));
 }
