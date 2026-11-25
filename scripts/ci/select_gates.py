@@ -11,7 +11,7 @@ import os
 import subprocess
 
 NAMES = ('upper','components','replication','srpc','integration','extended','miri')
-CONTRACTS = ('crates/mako-protocol/src/contracts.rs', 'crates/mako-protocol-core/',
+CONTRACTS = ('crates/mako-protocol/src/contracts.rs', 'crates/mako-protocol/src/wire.rs', 'crates/mako-protocol-core/',
              'crates/mako-engine-api/', 'crates/shard-host-core/',
              'src/cluster/storage.rs','src/cluster/transfer.rs','src/cluster/types.rs')
 
@@ -20,7 +20,15 @@ def select(paths, event='pull_request'):
     for path in paths:
         if path.startswith(('docs/','.claude/')) or path.endswith('.md'):
             continue
-        if path.startswith(CONTRACTS):
+        if path.startswith(('crates/mako-protocol-core/tests/',)):
+            gates['upper']=True
+        elif path.startswith(('scripts/ci/weekly_performance.py','scripts/ci/test_weekly_performance.py')):
+            # The selector job runs these small driver unit tests; benchmarks
+            # remain weekly/manual even when their driver changes.
+            continue
+        elif path.startswith('tla/mako/'):
+            gates['upper']=gates['extended']=True
+        elif path.startswith(CONTRACTS):
             for name in ('upper','components','replication','srpc','integration'): gates[name]=True
         elif path.startswith(('src/cluster/runtime', 'src/cluster/host', 'src/cluster/ffi',
                               'src/cluster/wire', 'src/cluster/metadata', 'src/cluster/rocks_metadata',

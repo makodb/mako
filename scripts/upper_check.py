@@ -84,21 +84,21 @@ def main():
     env = {k:v for k,v in os.environ.items() if not k.startswith('MAKO_MTREE')}
     env.update(CC='/bin/false',CXX='/bin/false',CARGO_BUILD_JOBS='4', CARGO_TARGET_DIR=str(BUILD/'upper/target'))
 
-    def run(name, command, cwd=ROOT, expected=0):
+    def run(name, command, cwd=ROOT, expected=0, machine=False):
         begin=time.monotonic(); print(f'upper: {name}',flush=True)
         remaining=budget-(begin-started)
         if remaining<=0: raise TimeoutError('upper wall deadline exhausted')
-        process=subprocess.Popen(command,cwd=cwd,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
+        process=subprocess.Popen(command,cwd=cwd,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE if machine else subprocess.STDOUT,start_new_session=True)
         try:
-            stdout,_=process.communicate(timeout=remaining)
+            stdout,stderr=process.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid,signal.SIGKILL)
-            stdout,_=process.communicate()
-            (output/'timeout.log').write_text(stdout)
+            stdout,stderr=process.communicate()
+            (output/'timeout.log').write_text(stdout+(stderr or ''))
             raise TimeoutError(f'{name}: upper wall deadline exhausted')
         result=subprocess.CompletedProcess(command,process.returncode,stdout)
         log=output/(str(len(report['stages']))+'-'+re.sub('[^a-zA-Z0-9_-]+','-',name)+'.log')
-        log.write_text(result.stdout)
+        log.write_text(result.stdout+(stderr or ''))
         report['stages'].append({'name':name,'seconds':round(time.monotonic()-begin,3),'exit':result.returncode,'log':log.name})
         print(f"upper: {name}: {report['stages'][-1]['seconds']}s",flush=True)
         if expected is not None and result.returncode!=expected:
@@ -149,7 +149,7 @@ def main():
         manifests=[('workspace',['--manifest-path','crates/Cargo.toml',*PACKAGES]),
                    ('sharding',['--manifest-path','src/cluster/Cargo.toml','--no-default-features','--features','protocol'])]
         for name,selection in manifests:
-            tree=run(name+'-dependencies',['cargo','tree','--locked',*selection,'-e','normal,build,dev','--prefix','none','--format','{p} [{f}]'])
+            tree=run(name+'-dependencies',['cargo','tree','--locked',*selection,'-e','normal,build,dev','--prefix','none','--format','{p} [{f}]'],machine=True)
             report[name+'_dependencies']=audit_tree(tree.stdout)
             artifacts=run(name+'-compile',['cargo','test','--locked',*selection,'--no-run','--message-format=json'])
             tests=[]

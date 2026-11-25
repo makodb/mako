@@ -48,10 +48,10 @@ hardware. Plain compilation does not run these suites.
 | --- | --- | --- |
 | 1 | Inventory current gates, establish baseline, define dependency/contracts map | Complete |
 | 2 | Separate production upper-layer code from lower implementations | Complete |
-| 3 | Prove protocol decisions and add deterministic executable scenarios and negative controls | In progress |
+| 3 | Prove protocol decisions and add deterministic executable scenarios and negative controls | Complete |
 | 4 | Build the fast command and qualify its dependency closure and runtime budget | In progress |
 | 5 | Separate component/integration/extended CI and weekly/manual performance | In progress |
-| 6 | Run production adapter regressions, repeat timing measurements, document and commit | Pending |
+| 6 | Run production adapter regressions, repeat timing measurements, document and commit | In progress |
 
 ## Initial findings
 
@@ -99,3 +99,21 @@ timings, failures and fixes below.
   five-minute wall deadline. Bootstrap from an empty upper target directory,
   with downloaded packages/verifier already cached: 40.942 seconds. This is
   cached-download bootstrap evidence, not a measurement of network downloads.
+
+- Committed the production split, bounded gate, scenarios and CI organization as
+  `806379424`. Initial complete gate: 227.343 seconds on logical CPUs 0–3,
+  all 1495 sharding + 40 host + 22 transaction proof obligations checked;
+  all 12 selected controls rejected semantically. Added gateway delivery test
+  brings the small executable suite to 45 cases.
+- First timing qualification sample: 229.136 seconds. Its next invocation
+  failed because the dependency parser received Cargo's package-cache waiting
+  message on merged stderr. Separated machine-readable stdout from diagnostics
+  and reproduced the warning through a Cargo shim; bootstrap and dependency
+  checks pass. Restarting the complete five-sample qualification after this fix.
+- Ordinary-Rust protocol Clippy, native runtime/adapter Clippy and API doctests
+  pass. The moved `Transport` implementation initially followed a test module;
+  moved it before that module to satisfy the existing Clippy policy.
+- CI selector unit tests cover isolated test edits, both sides of contracts,
+  component ownership, unknown build files, schedules, performance-only edits
+  and documentation. Eight selector and three baseline-comparison tests pass;
+  workflow YAML/job references validate.

@@ -30,7 +30,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Validate selector
-        run: python3 -m unittest discover -s scripts/ci -p test_select_gates.py
+        run: |
+          python3 -m unittest discover -s scripts/ci -p test_select_gates.py
+          python3 -m unittest discover -s scripts/ci -p test_weekly_performance.py
       - id: select
         env:
           EVENT: ${{ github.event_name }}

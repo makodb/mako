@@ -18,6 +18,7 @@ CASES=[('unchanged',None),('transaction-core','crates/mako-protocol-core/src/adm
 
 def main():
     reports=[]
+    (BUILD/'upper/qualification.json').write_text('[]\n')
     for name,relative in CASES:
         before=set((BUILD/'upper/runs').glob('*/report.json'))
         path=ROOT/relative if relative else None
