@@ -288,6 +288,19 @@ impl Change {
     }
 }
 impl Index {
+    pub fn metadata(&self) -> Result<mako_storage_api::Metadata> {
+        let mut result = vec![(vec![0], crate::wire::encode(&self.position)?)];
+        for (id, value) in &self.fingerprints {
+            result.push((metadata_key(1, id)?, crate::wire::encode(value)?));
+        }
+        for (id, value) in &self.transactions {
+            result.push((metadata_key(2, id)?, crate::wire::encode(value)?));
+        }
+        for (id, value) in &self.receipts {
+            result.push((metadata_key(3, id)?, crate::wire::encode(value)?));
+        }
+        Ok(result)
+    }
     pub fn from_metadata(
         metadata: mako_storage_api::Metadata,
         position: mako_storage_api::LogPosition,

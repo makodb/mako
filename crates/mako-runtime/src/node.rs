@@ -100,6 +100,19 @@ pub struct Config {
     pub replica_groups: BTreeMap<u32, ReplicaSet>,
 }
 impl Config {
+    #[cfg(feature = "logging")]
+    pub(crate) fn storage_identity(&self) -> Result<Vec<u8>> {
+        let mut specs = self.tables.clone();
+        specs.sort_by_key(|spec| spec.id);
+        let mut identity =
+            crate::wire::encode(&(self.owner, self.nodes, self.warehouses_per_shard, specs))?;
+        // Migration control rows are a versioned, reserved part of this
+        // schema. A fixed-placement directory cannot silently acquire it.
+        if self.migration {
+            identity.extend_from_slice(b"MAKO-MIGRATION-CONTROL-01");
+        }
+        Ok(identity)
+    }
     pub fn schema(&self) -> Result<Arc<Schema>> {
         if let EngineConfig::RocksDb { directory } = &self.engine {
             if directory.as_os_str().is_empty() {
@@ -454,19 +467,7 @@ impl RunningNode {
                     "legacy Raft directory requires offline format conversion",
                 ));
             }
-            let mut specs = config.tables.clone();
-            specs.sort_by_key(|spec| spec.id);
-            let mut identity = crate::wire::encode(&(
-                config.owner,
-                config.nodes,
-                config.warehouses_per_shard,
-                specs,
-            ))?;
-            // Migration control rows are a versioned, reserved part of this
-            // schema. A fixed-placement directory cannot silently acquire it.
-            if config.migration {
-                identity.extend_from_slice(b"MAKO-MIGRATION-CONTROL-01");
-            }
+            let identity = config.storage_identity()?;
             match mode {
                 crate::log::Mode::Local(settings) => local_log
                     .as_ref()

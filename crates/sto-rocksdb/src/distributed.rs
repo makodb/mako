@@ -283,6 +283,57 @@ impl Database {
         }
         Ok(())
     }
+    /// Finish a private offline import after its rows were loaded in bounded
+    /// batches. The directory must never have served traffic. Publication of the
+    /// containing directory is the converter's responsibility. An interrupted
+    /// import is discarded, never opened as a production database.
+    pub fn finish_distributed_import(&self, history: &[Prefix], metadata: &Metadata) -> Result<()> {
+        let _gate = mutex(&self.apply_gate);
+        self.ensure_distributed()?;
+        let result = (|| {
+            let rocks = self.rocks();
+            if read_position(&rocks)? != Position::default() || !read_metadata(&rocks)?.is_empty() {
+                return Err(Error::InvalidState(
+                    "import requires a private unpositioned database",
+                ));
+            }
+            let mut batch = Vec::new();
+            let mut previous = Position::default();
+            for prefix in history {
+                let p = prefix.position;
+                if p.index != previous.index + 1 || p.term == 0 || p.term < previous.term {
+                    return Err(Error::Corruption("invalid imported log prefix".into()));
+                }
+                let mut value = p.term.to_be_bytes().to_vec();
+                value.extend_from_slice(&prefix.fingerprint);
+                batch.push((entry_key(p.index), value));
+                previous = p;
+            }
+            if previous.index == 0 {
+                return Err(Error::InvalidState("empty imported log prefix"));
+            }
+            let mut keys = BTreeSet::new();
+            for (key, value) in metadata {
+                if !keys.insert(key) {
+                    return Err(Error::InvalidCommand("duplicate imported metadata"));
+                }
+                let mut physical = METADATA.to_vec();
+                physical.extend_from_slice(key);
+                batch.push((physical, value.clone()));
+            }
+            batch.push((APPLIED.to_vec(), position_bytes(previous)));
+            let ops = batch
+                .iter()
+                .map(|(key, val)| BlobOp::Put { key, val })
+                .collect::<Vec<_>>();
+            rocks.write_batch(&ops)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.fence();
+        }
+        result
+    }
     /// Logical page includes deleted keys. Caller pauses publication across pages.
     pub fn distributed_page(
         &self,

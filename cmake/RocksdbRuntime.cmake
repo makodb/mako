@@ -29,7 +29,7 @@ else()
     set(_profile release)
     set(_profile_flags --release)
 endif()
-set(_programs mako_node mako_admin mako_client mako_bench mako_transactions mako_redis)
+set(_programs mako_node mako_admin mako_client mako_bench mako_transactions mako_redis mako_convert)
 add_custom_target(mako_runtime ALL
     COMMAND "${CMAKE_COMMAND}" -E env ${_cargo_env}
         "${MAKO_CARGO_EXECUTABLE}" build ${_common} ${_profile_flags} --bins

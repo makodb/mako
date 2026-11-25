@@ -28,20 +28,20 @@ use std::{
 };
 
 #[derive(Serialize, Deserialize)]
-struct Command {
-    version: u32,
-    incarnation: u64,
-    sequence: u64,
-    rows: Vec<redo::Row>,
-    receipt: Option<wire::GatewayReceipt>,
+pub(crate) struct Command {
+    pub(crate) version: u32,
+    pub(crate) incarnation: u64,
+    pub(crate) sequence: u64,
+    pub(crate) rows: Vec<redo::Row>,
+    pub(crate) receipt: Option<wire::GatewayReceipt>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct JournalCommand {
-    version: u32,
-    incarnation: u64,
-    sequence: u64,
-    record: Record,
+pub(crate) struct JournalCommand {
+    pub(crate) version: u32,
+    pub(crate) incarnation: u64,
+    pub(crate) sequence: u64,
+    pub(crate) record: Record,
 }
 fn storage(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorCode::Fatal, error.to_string())

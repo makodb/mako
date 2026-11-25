@@ -4,6 +4,7 @@
 //! leadership after an append yields `Unknown`, never an invented abort.
 mod durable;
 mod local;
+pub mod offline;
 pub use local::{LocalConfig, LocalHost};
 mod runtime;
 mod snapshot;

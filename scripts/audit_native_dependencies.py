@@ -48,6 +48,7 @@ def main():
     # for fresh artifacts. A separate map records each executable's actual link.
     programs = [("mako-runtime", name, ["--features", "replication"])
                 for name in ("mako_node", "mako_bench", "mako_transactions", "mako_redis")]
+    programs += [("mako-runtime", "mako_convert", ["--features", "logging"])]
     programs += [("mako-runtime", name, []) for name in ("mako_client", "mako_admin")]
     programs += [("mako-cache-bench", name, [])
                  for name in ("mako-cache-bench", "engine_compare", "gc_soak")]
@@ -105,7 +106,7 @@ def main():
             if name in {"mako_node", "mako_bench", "mako_transactions", "mako_redis"}:
                 if not any(Path(path).name == "libmako_native_storage.a" for path in project_archives):
                     raise RuntimeError(f"{name} did not link the audited storage archive")
-            elif name in {"mako_client", "mako_admin"}:
+            elif name in {"mako_client", "mako_admin", "mako_convert"}:
                 if "libmako_native_storage.a" in contents:
                     raise RuntimeError(f"{name} unexpectedly links native storage")
             symbols = subprocess.check_output([args.nm, "--defined-only", "--demangle", executable], text=True)

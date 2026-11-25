@@ -13,6 +13,8 @@ mod checkpoint;
 pub mod client;
 #[cfg(feature = "runtime-storage")]
 pub mod configuration;
+#[cfg(feature = "logging")]
+pub mod conversion;
 #[cfg(feature = "durable-storage")]
 pub mod durable;
 pub mod epoch;

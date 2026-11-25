@@ -131,6 +131,14 @@ foreach(_program mako_node mako_bench mako_transactions mako_redis)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
 
+add_custom_target(mako_convert ALL
+    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
+        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
+        -p mako-runtime --features logging --bin mako_convert
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/mako_convert" "${CMAKE_BINARY_DIR}/mako_convert"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+
 # External clients only use native SRPC and the checked wire protocol.
 foreach(_program mako_client mako_admin)
     add_custom_target(${_program} ALL
@@ -238,10 +246,11 @@ add_custom_target(rust_native_dependency_audit
 add_custom_target(rust_native_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --all-targets --no-deps -- -D warnings
+        -p mako-runtime -p sto-tpcc-ffi -p mako-storage-api -p mako-storage-rocksdb -p raft-host
+        --features mako-runtime/replication,mako-runtime/rocksdb-engine --all-targets --no-deps -- -D warnings
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication --doc
+        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication,mako-runtime/rocksdb-engine --doc
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit
@@ -256,7 +265,7 @@ add_test(NAME rust_application_adapter
 set_tests_properties(native_storage_source_audit rust_application_adapter rust_shard_integration PROPERTIES
     LABELS "native-rust" TIMEOUT 900)
 
-foreach(_program mako_node mako_bench mako_transactions mako_redis mako_client mako_admin
+foreach(_program mako_node mako_bench mako_transactions mako_redis mako_convert mako_client mako_admin
         rocksdb_raft_server rocksdb_raft_client rocksdb_raft_bench
         mako-cache-bench engine_compare gc_soak)
     install(PROGRAMS "${CMAKE_BINARY_DIR}/${_program}" DESTINATION bin)

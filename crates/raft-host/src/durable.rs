@@ -16,6 +16,9 @@ pub(crate) struct Disk {
     log: RocksLog,
 }
 impl Disk {
+    pub(crate) fn into_log(self) -> RocksLog {
+        self.log
+    }
     pub fn open(cfg: &Config) -> Result<Self, String> {
         let fs: Arc<dyn StoreFs> = Arc::new(RealFs::with_sync_writes(cfg.sync_writes));
         let identity = Identity {

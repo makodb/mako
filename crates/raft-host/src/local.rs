@@ -27,24 +27,26 @@ struct Inner {
 }
 #[derive(Clone)]
 pub struct LocalHost(Arc<Inner>);
+pub(crate) fn open_log(config: &LocalConfig) -> Result<RocksLog, String> {
+    let id = Identity {
+        site: 0,
+        partition: config.group as u32,
+        fingerprint: config.group,
+        format: 0x524c_0001,
+    };
+    let authority = format!("local-log/1\ngroup={}\n", config.group);
+    RocksLog::open(
+        &config.directory,
+        id,
+        authority.as_bytes(),
+        config.create,
+        config.sync_writes,
+    )
+}
 impl LocalHost {
     pub fn start(config: LocalConfig, machine: Arc<dyn StateMachine>) -> Result<Self, HostError> {
         let storage = HostError::Storage;
-        let id = Identity {
-            site: 0,
-            partition: config.group as u32,
-            fingerprint: config.group,
-            format: 0x524c_0001,
-        };
-        let authority = format!("local-log/1\ngroup={}\n", config.group);
-        let mut disk = RocksLog::open(
-            &config.directory,
-            id,
-            authority.as_bytes(),
-            config.create,
-            config.sync_writes,
-        )
-        .map_err(storage)?;
+        let mut disk = open_log(&config).map_err(storage)?;
         let mut applied = machine.applied_position().map_err(storage)?;
         if disk.journal.sequence == 0 {
             if applied != Position::default() {

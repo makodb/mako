@@ -142,7 +142,7 @@ must use the same durability policy. Reopening a missing RocksDB directory
 requires explicit creation; schema/profile mismatches fail before admission.
 A fresh CMake build with `-DMAKO_BUILD_PROFILE=ROCKSDB_RUNTIME` builds all Mako
 entry points with `logging,rocksdb-engine`, without configuring a C++ compiler or
-compiling Masstree. `rocks_runtime_audit` checks Cargo dependencies and all six
+compiling Masstree. `rocks_runtime_audit` checks Cargo dependencies and all seven
 executables' symbols. `rust_runtime_tests` runs the direct RocksDB scenarios.
 `NATIVE_RUST` builds both adapters and keeps Masstree as the configuration default.
 Examples are [Masstree with LocalLog](../../examples/native/masstree-node.yml),
@@ -151,7 +151,9 @@ Examples are [Masstree with LocalLog](../../examples/native/masstree-node.yml),
 Run `mako_node --config FILE`; set `create: false` when reopening an existing
 installation. `mako_admin checkpoint ADDRESS OWNER` creates a recovery cut and
 retires its covered log prefix. Durable migration uses the same engine and log;
-its control rows are included in checkpoints. Offline conversion remains pending.
+its control rows are included in checkpoints. `mako_convert` converts stopped
+shared-log directories between engines and imports the old `DurableRows` mirror.
+See the [offline procedure](../mako-book.md#offline-engine-conversion).
 
 Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
 independently. They check private writes, ordered scans, absence and predicate
@@ -164,7 +166,8 @@ log modes recover a volatile protocol index and rows from a bootstrap checkpoint
 plus committed log entries. Later checkpoints include tombstones, timestamps,
 unresolved prepares, decisions, receipts and replay identities. There is no
 RocksDB user-row database on this node path. The old `DurableRows` reader remains
-temporarily for conversion and compatibility qualification.
+for explicit offline conversion and compatibility qualification. Production node
+startup never selects it as a data engine.
 
 Checkpoint export pauses committed publication, while prepared transactions may
 keep their locks. If Complete has been saved but its affine worker has not yet
@@ -180,8 +183,8 @@ An interrupted attempt retains the old recovery authority; another attempt uses
 a fresh generation name. Performance tests remain separate from this operation.
 
 The [pluggable engine plan](../plans/pluggable-distributed-engines.md) tracks the
-remaining offline conversion and final release/sanitizer qualification. Existing row-mirror directories are rejected
-with their data preserved until the conversion stage is available.
+final release/sanitizer qualification. Existing row-mirror directories require
+`mako_convert`; ordinary startup preserves them and refuses implicit conversion.
 
 ## 1. Introduction
 

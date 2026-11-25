@@ -413,6 +413,84 @@ impl DurableRows {
         }
         Ok(Some(receipt.response))
     }
+    /// Convert the legacy mirror's index without inventing fingerprints for
+    /// no-ops. Native receipts retain the exact term of every historical entry.
+    #[cfg(feature = "logging")]
+    pub(crate) fn export_index(&self, owner: u32) -> Result<crate::application::Index> {
+        let _gate = self.gate.lock();
+        let position = self.position()?;
+        let mut index = crate::application::Index {
+            position: crate::application::Position {
+                index: position.index,
+                term: position.term,
+            },
+            ..Default::default()
+        };
+        if position.index == 0 {
+            return Ok(index);
+        }
+        let table = self.table()?;
+        let mut worker = self.db.attach_worker().map_err(storage)?;
+        let mut tx = worker.begin().map_err(storage)?;
+        for prefix in self.db.entry_history().map_err(storage)? {
+            let p = prefix.position;
+            let fingerprint = if let Some(value) =
+                tx.get(table, &entry_key(p.index)).map_err(storage)?
+            {
+                if value.len() != 72 || value[..8] != p.term.to_be_bytes() {
+                    return Err(storage("legacy envelope fingerprint mismatch"));
+                }
+                value[8..40].try_into().expect("checked length")
+            } else {
+                let expected: [u8; 32] = if p.index == 1 {
+                    let command =
+                        Command::create_table(self.db.group(), request(p), self.table_name.clone())
+                            .and_then(|c| c.encode())
+                            .map_err(storage)?;
+                    Sha256::digest(command).into()
+                } else {
+                    Sha256::digest([]).into()
+                };
+                if prefix.fingerprint != expected {
+                    return Err(storage("legacy command lost its source fingerprint"));
+                }
+                Sha256::digest([]).into()
+            };
+            index.fingerprints.insert(p.index, (p.term, fingerprint));
+        }
+        let mut lower = vec![2];
+        loop {
+            let page = tx.scan(table, &lower, Some(&[4]), 256).map_err(storage)?;
+            if page.is_empty() {
+                break;
+            }
+            for (key, value) in page {
+                match key.first() {
+                    Some(2) => {
+                        let receipt: wire::GatewayReceipt = wire::decode(&value)?;
+                        let id = (receipt.request.client, receipt.request.sequence);
+                        if receipt_key(id.0, id.1) != key {
+                            return Err(storage("legacy receipt key mismatch"));
+                        }
+                        index.receipts.insert(id, receipt);
+                    }
+                    Some(3) => {
+                        let entry: Entry = wire::decode(&value)?;
+                        if transaction_key(entry.transaction.id) != key {
+                            return Err(storage("legacy transaction key mismatch"));
+                        }
+                        index.transactions.insert(entry.transaction.id, entry);
+                    }
+                    _ => return Err(storage("unknown legacy metadata")),
+                }
+                lower = key;
+                lower.push(0);
+            }
+        }
+        tx.rollback();
+        index.validate(owner, self.sync_writes)?;
+        Ok(index)
+    }
     pub fn create_checkpoint(&self, path: &Path, position: Position) -> Result<()> {
         let _gate = self.gate.lock();
         self.db.create_checkpoint(path, position).map_err(storage)?;

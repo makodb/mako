@@ -23,7 +23,7 @@ def main():
     for package in forbidden:
         if package in tree:
             raise RuntimeError(f"Masstree dependency in RocksDB-only runtime: {package}")
-    programs = ("mako_node", "mako_admin", "mako_client", "mako_bench", "mako_transactions", "mako_redis")
+    programs = ("mako_node", "mako_admin", "mako_client", "mako_bench", "mako_transactions", "mako_redis", "mako_convert")
     binaries = {}
     for name in programs:
         path = args.target_dir.resolve() / args.profile / name

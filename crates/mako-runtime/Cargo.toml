@@ -68,3 +68,8 @@ name = "mako_bench"
 path = "src/bin/bench.rs"
 required-features = ["runtime-storage"]
 
+
+[[bin]]
+name = "mako_convert"
+path = "src/bin/convert.rs"
+required-features = ["logging"]

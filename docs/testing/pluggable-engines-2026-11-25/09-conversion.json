@@ -1,0 +1,27 @@
+{
+  "stage": "offline conversion",
+  "passed": true,
+  "command": "cargo test -p mako-runtime --features logging,rocksdb-engine --lib conversion::tests; cargo test -p mako-runtime --features logging,rocksdb-engine --test conversion; cargo test -p raft-host --lib offline::tests; cargo test -p sto-rocksdb --test distributed --features test-hooks",
+  "runtime_unit_cases": 2,
+  "runtime_process_cases": 1,
+  "raft_authority_cases": 1,
+  "rocks_distributed_cases": 3,
+  "strict_clippy": "passed for runtime/storage-api/storage-rocksdb/raft-host, all targets, no deps",
+  "coverage": [
+    "legacy trimmed checkpoint plus suffix",
+    "both engine round trips",
+    "pending prepare stays invisible",
+    "receipt and tombstone retained",
+    "source lease and existing destination rejected",
+    "corrupt checkpoint not published",
+    "real converted node accepts new transactions",
+    "Raft term/vote/commit and unapplied suffix preserved",
+    "private import rejects prefix gaps and reuse"
+  ],
+  "limitations": [
+    "offline group-wide operation; no rolling conversion",
+    "shared RocksDB log format only",
+    "does not enable migration or import external legacy metadata",
+    "in-memory protocol index and logical Masstree image"
+  ]
+}

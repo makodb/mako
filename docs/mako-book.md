@@ -213,13 +213,15 @@ shard shutdown joins those workers and closes their native scopes. Durable
 records survive and must be recovered before serving again. Volatile mode loses
 its state on process shutdown. Terminal journal entries currently have no
 reclamation policy; removing them without a stale-request fence is unsafe.
-The local command log also retains its history; local snapshot/compaction is
-not implemented. Raft retains its existing snapshot and prefix-compaction path.
+Both local and Raft logs trim a covered prefix after durable checkpoint
+publication. Protocol records and receipts remain in that checkpoint until a
+separate safe reclamation protocol exists.
 
 The shared log directory format is `mako-rocks-log/1`. Existing segmented Raft
 WAL directories and local stores with applied rows but no command log require
-offline conversion. Startup refuses them and preserves their data; no automatic
-conversion tool is supplied by this cutover. The applied row/receipt encoding and
+format-specific recovery. Startup refuses them and preserves their data.
+`mako_convert` handles the shared RocksDB log format and its old row mirror;
+it does not import a segmented Raft WAL or data without a command log. The applied row/receipt encoding and
 application command versions remain unchanged. The retired C++ WAL is not
 imported. Mixed old/new protocol operation is not a supported rolling
 upgrade: old distributed Timestamp/Validate/Install commands are refused by the
@@ -307,8 +309,48 @@ combined with application-log-backed recovery.
 The [migration chapter](architecture/sharding-migration.md) gives the protocol
 proofs. Actual engine effects, serialization, filesystem durability, the Rust
 runtime authority scopes and RPC delivery remain adapter obligations. Crash
-qualification and the remaining conversion/release work are tracked in the
+qualification and release evidence are tracked in the
 [pluggable engine plan](plans/pluggable-distributed-engines.md).
+
+## Offline engine conversion
+
+Stop every replica in the shard group before conversion. Each replica retains
+its own term, vote, committed cut and uncommitted suffix. Convert the entire
+group to the same engine before restarting; this is not a rolling upgrade.
+
+```sh
+mako_convert --config old-node.yml --destination /data/shard-converted --engine masstree
+# Or select --engine rocksdb for persistent user data.
+mako_node --config /data/shard-converted/node.json
+```
+
+The source must have a shared `mako-rocks-log/1` log. The converter reads legacy
+`rows` mirrors, current Masstree checkpoints, or direct RocksDB data. It restores
+the published checkpoint and committed suffix without starting elections or
+choosing transaction outcomes. An existing source log or data lease excludes a
+running server. Already committed source effects may be replayed during recovery;
+the source log, authority and directory remain available.
+
+The new directory preserves schema, durability, membership, logical versions,
+tombstones, pending prepares, saved decisions, receipts and exact replay
+identities. It validates the copied rows and protocol index, writes a new
+checkpoint at the committed cut, and publishes the directory with an atomic
+rename that refuses an existing destination. `node.json` names the new paths and
+sets `create: false`; `conversion.json` records the cut and counts. A failed
+attempt leaves an unpublished `.mako-convert-*` staging directory for inspection.
+Discard that staging directory rather than serving or resuming it.
+
+Masstree output contains a bootstrap checkpoint and log/checkpoint artifacts,
+without a RocksDB user-row mirror. RocksDB output contains a separate `data`
+directory and the same log format. Conversion preserves existing migration
+control state but does not enable migration on a fixed-placement schema, import
+legacy external migration metadata, or infer missing log history. Those changes
+require a separate authority migration.
+
+The converter uses bounded row batches; its protocol index and Masstree logical
+image are held in memory. Peak offline memory can include both source and target
+images. Checkpoint publication pauses normal committed publication on live
+nodes. Performance qualification remains a separate weekly/manual gate.
 
 ## Workers, RPC and ownership
 

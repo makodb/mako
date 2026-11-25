@@ -1,0 +1,116 @@
+#![cfg(all(feature = "logging", feature = "rocksdb-engine"))]
+use mako_runtime::{
+    gateway_client::GatewayClient,
+    migration::{Kind, TableSpec},
+    node::{Config, EngineConfig, PersistenceConfig},
+    rpc::Network,
+    wire::*,
+};
+use std::{collections::BTreeMap, process::Command, time::Duration};
+#[path = "support/node_process.rs"]
+mod node_process;
+use node_process::Process;
+#[test]
+fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let mut config = Config {
+        engine: EngineConfig::RocksDb {
+            directory: source.join("data"),
+        },
+        owner: 0,
+        nodes: 1,
+        listen: "127.0.0.1:0".into(),
+        tables: vec![TableSpec {
+            id: 1,
+            name: "rows".into(),
+            kind: Kind::Governed,
+            warehouse: false,
+            initial_owner: 0,
+        }],
+        workers: 1,
+        gateway_workers: 1,
+        queue_capacity: 16,
+        warehouses_per_shard: 0,
+        peers: BTreeMap::new(),
+        migration: false,
+        initial: Vec::new(),
+        replication: None,
+        persistence: Some(PersistenceConfig {
+            directory: source,
+            create: true,
+            sync_writes: true,
+        }),
+        volatile: false,
+        replica_groups: BTreeMap::new(),
+    };
+    let timeout = Duration::from_secs(10);
+    let mut child = Process::start(config.clone());
+    let mut client = GatewayClient::connect(child.address.clone(), timeout).unwrap();
+    let target = client
+        .resolve(RouteRequest {
+            table: Some(1),
+            name: None,
+            warehouse: 0,
+            key: b"key".to_vec(),
+        })
+        .unwrap();
+    client.put(target.clone(), b"key", b"checkpoint").unwrap();
+    assert!(matches!(
+        Network::default()
+            .call(&child.address, Message::Checkpoint { owner: 0 }, timeout)
+            .unwrap(),
+        Reply::Checkpoint { .. }
+    ));
+    client.put(target.clone(), b"key", b"suffix").unwrap();
+    child.stop();
+    drop(client);
+    drop(child);
+    let engines = if cfg!(feature = "masstree-engine") {
+        vec!["masstree", "rocksdb"]
+    } else {
+        vec!["rocksdb"]
+    };
+    for (i, engine) in engines.into_iter().enumerate() {
+        let path = root.path().join(format!("input-{i}.json"));
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let output = root.path().join(format!("converted-{i}"));
+        let result = Command::new(env!("CARGO_BIN_EXE_mako_convert"))
+            .arg("--config")
+            .arg(path)
+            .arg("--destination")
+            .arg(&output)
+            .args(["--engine", engine])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        config = mako_runtime::configuration::read(output.join("node.json")).unwrap();
+        assert!(!config.persistence.as_ref().unwrap().create);
+        let mut child = Process::start(config.clone());
+        let mut client = GatewayClient::connect(child.address.clone(), timeout).unwrap();
+        let target = client
+            .resolve(RouteRequest {
+                table: Some(1),
+                name: None,
+                warehouse: 0,
+                key: b"key".to_vec(),
+            })
+            .unwrap();
+        assert_eq!(
+            client.get(target.clone(), b"key").unwrap().as_deref(),
+            Some(b"suffix".as_slice())
+        );
+        client
+            .put(target.clone(), b"after-conversion", b"new commit")
+            .unwrap();
+        assert_eq!(
+            client.get(target, b"after-conversion").unwrap().as_deref(),
+            Some(b"new commit".as_slice())
+        );
+        child.stop();
+    }
+}

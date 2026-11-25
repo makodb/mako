@@ -296,6 +296,37 @@ impl Database {
     pub fn applied(&self) -> Result<Position> {
         read_position(&self.rocks())
     }
+    /// Exact retained replay identities, including no-ops. Conversion uses this
+    /// under the exclusive database lease, never inferring terms from the head.
+    pub fn entry_history(&self) -> Result<Vec<crate::distributed::Prefix>> {
+        let _gate = mutex(&self.apply_gate);
+        self.ensure_serving()?;
+        let rocks = self.rocks();
+        let head = read_position(&rocks)?;
+        let mut history = Vec::new();
+        let mut term = 0;
+        for index in 1..=head.index {
+            let bytes = rocks
+                .get(&entry_key(index))?
+                .ok_or_else(|| Error::Corruption("missing replay identity".into()))?;
+            if bytes.len() != 40 {
+                return Err(Error::Corruption("invalid replay identity length".into()));
+            }
+            let next = u64::from_be_bytes(bytes[..8].try_into().unwrap());
+            if next == 0 || next < term || next > head.term {
+                return Err(Error::Corruption("invalid replay identity term".into()));
+            }
+            term = next;
+            history.push(crate::distributed::Prefix {
+                position: Position { index, term },
+                fingerprint: bytes[8..].try_into().unwrap(),
+            });
+        }
+        if term != head.term {
+            return Err(Error::Corruption("replay identity head mismatch".into()));
+        }
+        Ok(history)
+    }
     pub fn lookup_table(&self, name: &str) -> Result<Option<Table>> {
         self.ensure_serving()?;
         self.rocks()

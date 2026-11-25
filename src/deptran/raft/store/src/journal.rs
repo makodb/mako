@@ -118,6 +118,28 @@ impl Journal {
         self.sequence = sequence;
         Ok(())
     }
+    /// Copy exact durable authority and the retained suffix into a fresh,
+    /// exclusively owned journal with the same identity. Offline conversion
+    /// uses logical key/value copying, never copies live RocksDB SST/WAL files.
+    pub fn copy_to(&self, destination: &mut Self) -> Result<(), String> {
+        if self.failed || destination.failed || destination.sequence != 0 {
+            return Err("journal copy requires a sound source and fresh destination".into());
+        }
+        for key in [base::KEY_ID, KEY_FORMAT, KEY_AUTHORITY] {
+            if self.base.get(key).map_err(|e|e.to_string())? != destination.base.get(key).map_err(|e|e.to_string())? {
+                return Err("journal copy authority differs".into());
+            }
+        }
+        let mut ops: Vec<Op> = destination.base.scan(b"").map_err(|e|e.to_string())?
+            .into_iter().map(|(key,_)| {let mut end=key.clone();end.push(0);Op::DeleteRange(key,end)}).collect();
+        ops.extend(self.base.scan(b"").map_err(|e|e.to_string())?.into_iter().map(|(key,value)|Op::Put(key,value)));
+        if let Err(error) = destination.base.persist(&ops).and_then(|()|destination.base.flush()) {
+            destination.failed = true; return Err(error.to_string());
+        }
+        destination.sequence = self.sequence;
+        destination.state = self.state.clone();
+        Ok(())
+    }
     pub fn flush(&mut self) -> Result<(), String> {
         self.base.flush().map_err(|e| e.to_string())
     }

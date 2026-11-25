@@ -209,6 +209,19 @@ fence and cross-participant safety argument.
 
 Progress on 2026-11-25:
 
+- Offline conversion is implemented. `mako_convert` imports the shared-log
+  legacy row mirror and converts both current engines into a fresh directory.
+  It preserves exact replay fingerprints, tombstones, protocol records and
+  Raft hard state/uncommitted suffix; it does not decide pending transactions.
+  Source log/data leases exclude a running source, and publication refuses any
+  existing destination. Unit tests cover trimmed checkpoints, suffix replay,
+  both engine round trips, pending prepares/receipts, corrupt checkpoints and
+  source/target refusal. A real converted RocksDB node serves old rows and new
+  transactions. Final combined-engine/release/sanitizer qualification remains.
+  Segmented pre-shared-log WALs, missing authority, changing migration schema
+  and external legacy migration metadata are explicitly outside this converter.
+
+
 - Local checkpoint artifact retention is complete. Recovery and durable snapshot
   publication reclaim obsolete generations and abandoned attempts while retaining
   the current authority. All 25 Raft-host cases pass, including recovery after
