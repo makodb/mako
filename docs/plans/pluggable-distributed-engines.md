@@ -209,6 +209,13 @@ fence and cross-participant safety argument.
 
 Progress on 2026-11-25:
 
+- Local checkpoint artifact retention is complete. Recovery and durable snapshot
+  publication reclaim obsolete generations and abandoned attempts while retaining
+  the current authority. All 25 Raft-host cases pass, including recovery after
+  old-generation/orphan removal. Raft's existing outgoing image-lease retirement
+  remains separate. The fixed Masstree bootstrap artifact remains retained.
+
+
 - Durable migration is now wired through the verified durable actors and the
   same selected engine/log. Control namespaces use a reserved internal table;
   startup restores prepared locks and pins before publishing routing admission,
@@ -225,8 +232,7 @@ Progress on 2026-11-25:
   runtime cases, the stale-grant/authority regressions and strict Clippy. The
   upper gate passed again in 149.363 seconds with all 25 semantic negative
   controls. Evidence: `docs/testing/pluggable-engines-2026-11-25/07-*.json`.
-  Conversion, local checkpoint artifact retention, and final release/sanitizer
-  work remain open.
+  Conversion and final release/sanitizer work remain open.
 
 Earlier stage evidence (the status statements below describe those commits):
 

@@ -1,0 +1,15 @@
+{
+  "stage": "Local checkpoint artifact retention",
+  "checks": {
+    "raft_host_unit_cases": 10,
+    "raft_host_protocol_cases": 15,
+    "ignored": "one child-process helper, exercised by its parent crash test",
+    "recovery_after_old_generation_and_orphan_removal": "passed"
+  },
+  "log": "build_upper_development/pluggable-local-retention.log",
+  "log_sha256": "ad250755d1feab09658bdc31b3764efc99e4724208a4f64b16e4232967017ff3",
+  "remaining": [
+    "Offline conversion",
+    "Final release, sanitizer and build qualification"
+  ]
+}

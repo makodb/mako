@@ -225,6 +225,15 @@ imported. Mixed old/new protocol operation is not a supported rolling
 upgrade: old distributed Timestamp/Validate/Install commands are refused by the
 new runtime.
 
+Local logs reclaim obsolete checkpoint generations and abandoned attempts only
+after validating recovered authority or flushing the replacement snapshot
+reference. The current checkpoint remains intact. Raft retirement separately
+waits for outgoing snapshot streams to release their image leases. A Masstree
+bootstrap checkpoint is a single retained baseline artifact; it does not grow
+with later checkpoints. Protocol decisions, receipts and replay fingerprints
+remain retained until a separate stale-request-safe garbage collection protocol
+exists.
+
 ## Gateway and application APIs
 
 The gateway commits each storage operation independently. Session grouping does

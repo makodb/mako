@@ -1067,17 +1067,56 @@ fn local_checkpoint_failure_keeps_log_and_retry_uses_another_generation() {
     let machine = Machine::open(data.clone());
     let log = LocalHost::start(config.clone(), machine.clone()).unwrap();
     assert_eq!(machine.bytes(), b"committed");
+    assert_eq!(
+        fs::read_dir(config.directory.join("checkpoints"))
+            .unwrap()
+            .count(),
+        0,
+        "unpublished attempt reclaimed only after recovery"
+    );
     let cut = log.checkpoint().unwrap();
     assert_eq!(cut.index, 2);
+    let old: Vec<_> = fs::read_dir(config.directory.join("checkpoints"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(old.len(), 1);
+    fs::create_dir(config.directory.join("checkpoints/999-1-abc")).unwrap();
+    fs::write(
+        config.directory.join("images/999-1.img.tmp"),
+        b"unpublished",
+    )
+    .unwrap();
+    assert_eq!(
+        log.propose(1, b" retained".to_vec()).unwrap().status(),
+        ProposalStatus::Applied
+    );
+    assert_eq!(log.checkpoint().unwrap().index, 3);
+    assert!(
+        !old[0].exists(),
+        "old generation retired after new durable reference"
+    );
+    assert_eq!(
+        fs::read_dir(config.directory.join("checkpoints"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_dir(config.directory.join("images"))
+            .unwrap()
+            .count(),
+        1
+    );
     drop(log);
     drop(machine);
     fs::remove_dir_all(&data).unwrap();
     let machine = Machine::open(data);
     let log = LocalHost::start(config, machine.clone()).unwrap();
-    assert_eq!(machine.bytes(), b"committed");
+    assert_eq!(machine.bytes(), b"committed retained");
     assert_eq!(
         log.propose(1, b" suffix".to_vec()).unwrap().status(),
         ProposalStatus::Applied
     );
-    assert_eq!(machine.bytes(), b"committed suffix");
+    assert_eq!(machine.bytes(), b"committed retained suffix");
 }

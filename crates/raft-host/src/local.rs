@@ -64,6 +64,7 @@ impl LocalHost {
                 .map_err(storage)?;
         }
         let state = &disk.journal.state;
+        let mut retained_generation = None;
         if let Some(name) = &state.image {
             let fs = RealFs::with_sync_writes(config.sync_writes);
             let bytes = raft_store::images::read(&fs, &config.directory.join("images"), name)
@@ -79,6 +80,7 @@ impl LocalHost {
             }
             let image =
                 crate::snapshot::Image::load(&config.directory, reference).map_err(storage)?;
+            retained_generation = Some(image.reference.generation.clone());
             if applied.index <= expected.index {
                 machine
                     .validate_checkpoint(&image.directory, expected)
@@ -119,6 +121,12 @@ impl LocalHost {
             }
             applied = position;
         }
+        collect_artifacts(
+            &config.directory,
+            state.image.as_deref(),
+            retained_generation.as_deref(),
+        )
+        .map_err(storage)?;
         let status = Status {
             term: 1,
             leader: Some(0),
@@ -185,12 +193,19 @@ impl LocalHost {
                 snapshot: Some(SnapRef {
                     index: status.applied.index,
                     term: status.applied.term,
-                    image: Some(name),
+                    image: Some(name.clone()),
                     keep: true,
                 }),
                 ..Record::default()
             })?;
             disk.journal.flush()?;
+            // Local logs have no outgoing snapshot streams. Only after the
+            // new reference is durable may older or unpublished files go away.
+            collect_artifacts(
+                &self.0.directory,
+                Some(&name),
+                Some(&image.reference.generation),
+            )?;
             Ok(status.applied)
         })();
         match result {
@@ -292,4 +307,76 @@ impl LocalHost {
         status.is_leader = false;
         status.failure.get_or_insert("local log closed".into());
     }
+}
+
+// Called under the exclusive local-log directory lock, after authoritative
+// recovery or checkpoint publication. Raft has separate image leases and must
+// not use this collector while outgoing transfers can still own an old image.
+fn collect_artifacts(
+    root: &std::path::Path,
+    image: Option<&str>,
+    generation: Option<&str>,
+) -> Result<(), String> {
+    fn generation_name(name: &str) -> bool {
+        let mut parts = name.split('-');
+        if !parts
+            .next()
+            .is_some_and(|part| part.parse::<u64>().is_ok_and(|n| n > 0))
+            || !parts
+                .next()
+                .is_some_and(|part| part.parse::<u64>().is_ok_and(|n| n > 0))
+        {
+            return false;
+        }
+        match parts.next() {
+            None => true, // Older deterministic generation name.
+            Some(nonce) => {
+                !nonce.is_empty()
+                    && nonce.len() <= 32
+                    && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+                    && parts.next().is_none()
+            }
+        }
+    }
+    for (subdir, retained, directory) in
+        [("checkpoints", generation, true), ("images", image, false)]
+    {
+        let path = root.join(subdir);
+        let entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && retained.is_none() => {
+                continue
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut removed = false;
+        for entry in entries {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if retained == Some(name) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if directory && kind.is_dir() && generation_name(name) {
+                std::fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
+                removed = true;
+            } else if !directory
+                && kind.is_file()
+                && raft_store::images::parse_name(name.strip_suffix(".tmp").unwrap_or(name))
+                    .is_some()
+            {
+                std::fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
+                removed = true;
+            }
+        }
+        if removed {
+            std::fs::File::open(path)
+                .and_then(|dir| dir.sync_all())
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
