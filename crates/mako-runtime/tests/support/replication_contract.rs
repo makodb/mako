@@ -104,6 +104,25 @@ fn wait(mut condition: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+// Leader discovery may briefly reject admission while an apply owns the health
+// snapshot. This fixture tests failover/receipts, so retry only the confirmed
+// RouteChanged abort. Unknown must never replay a coordinator body.
+fn retry_aborted<T>(mut run: impl FnMut() -> Result<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match run() {
+            Ok(value) => return value,
+            Err(error) if error.code == ErrorCode::RouteChanged => {
+                assert!(
+                    Instant::now() < deadline,
+                    "coordinator admission deadline: {error:?}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("coordinator transaction failed: {error:?}"),
+        }
+    }
+}
 fn resolve_gateway<T>(mut operation: impl FnMut() -> Result<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -513,13 +532,13 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     )
     .unwrap();
     coordinator.set_replicas(0, group.clone()).unwrap();
-    coordinator
-        .run(local.clone(), &mut worker, |tx| {
+    retry_aborted(|| {
+        coordinator.run(local.clone(), &mut worker, |tx| {
             tx.mutate(&target(), Mutation::Put, b"remote", b"first leader")?;
             tx.mutate(&local_target, Mutation::Put, b"local", b"first leader")?;
             Ok(())
         })
-        .unwrap();
+    });
     let committed = replicas[first]
         .as_ref()
         .unwrap()
@@ -563,8 +582,8 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         resolve_gateway(|| resumed.get(target(), b"receipt")).as_deref(),
         Some(b"new value".as_slice())
     );
-    coordinator
-        .run(local, &mut worker, |tx| {
+    retry_aborted(|| {
+        coordinator.run(local.clone(), &mut worker, |tx| {
             assert_eq!(
                 tx.get(&target(), b"remote")?.as_deref(),
                 Some(b"first leader".as_slice())
@@ -573,7 +592,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
             tx.mutate(&local_target, Mutation::Put, b"local", b"next leader")?;
             Ok(())
         })
-        .unwrap();
+    });
     let mut wrong = group.clone();
     wrong.group = 38;
     assert!(network
