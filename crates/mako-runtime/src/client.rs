@@ -56,6 +56,18 @@ impl Client {
             fenced: false,
         })
     }
+    /// Identity of the last begin attempt, including an uncertain begin failure.
+    pub fn last_attempt_id(&self) -> journal::TransactionId {
+        journal::TransactionId {
+            coordinator: self.stream.node,
+            worker: self.stream.worker,
+            incarnation: self.incarnation,
+            attempt: self.attempt,
+        }
+    }
+    pub fn is_fenced(&self) -> bool {
+        self.fenced
+    }
     pub fn set_replicas(&mut self, owner: u32, replicas: ReplicaSet) -> Result<()> {
         if replicas.endpoints.is_empty() {
             return Err(Error::new(ErrorCode::Invalid, "empty replica group"));
@@ -67,7 +79,6 @@ impl Client {
     /// registration remains Unknown. An available authority can choose Abort
     /// only while Pending; a saved Commit is completed at every participant.
     pub fn resolve(&mut self, store: Arc<Store>, id: journal::TransactionId) -> Result<Outcome> {
-        use mako_protocol::contracts::Transport;
         if id.coordinator != store.owner
             || id.coordinator != self.stream.node
             || id.worker != self.stream.worker
@@ -79,70 +90,7 @@ impl Client {
                 "transaction does not identify this client's last attempt",
             ));
         }
-        let service = crate::receiver::ParticipantService::for_store(&store, self.network.clone())?;
-        service.recover()?;
-        let transaction = store
-            .journal
-            .lookup(id)?
-            .ok_or_else(|| Error::new(ErrorCode::Unknown, "transaction registration unavailable"))?
-            .transaction;
-        let outcome = crate::prepared::local_decision(&store, &transaction, true)?
-            .ok_or_else(|| Error::new(ErrorCode::Unknown, "decision is unavailable"))?;
-        let endpoint = service.endpoint(&store)?;
-        let transport = crate::receiver::LocalTransport {
-            service,
-            network: self.network.clone(),
-            endpoint: endpoint.clone(),
-            owner: store.owner,
-        };
-        let mut failure = None;
-        for member in &transaction.members {
-            let endpoints = if member.owner == store.owner {
-                vec![endpoint.clone()]
-            } else {
-                member.endpoints.clone()
-            };
-            let mut acknowledged = false;
-            let mut last = Error::new(ErrorCode::Unknown, "participant is unavailable");
-            for address in endpoints {
-                let message = Message::Transaction(TransactionRequest {
-                    id,
-                    lease: member.lease,
-                    term: transaction.time_term % 10,
-                    action: TransactionAction::Decide {
-                        transaction: transaction.clone(),
-                        outcome,
-                    },
-                });
-                match transport.call(&address, message, self.timeout) {
-                    Ok(Reply::Transaction(reply))
-                        if reply.id == id && reply.owner == member.owner =>
-                    {
-                        match reply.result {
-                            Ok(TransactionValue::Completed(saved)) if saved == outcome => {
-                                acknowledged = true;
-                                break;
-                            }
-                            Err(error) => last = error,
-                            _ => last = Error::new(ErrorCode::Unknown, "completion reply mismatch"),
-                        }
-                    }
-                    Ok(Reply::Error(error)) | Err(error) => last = error,
-                    _ => {
-                        last = Error::new(ErrorCode::Unknown, "completion reply identity mismatch")
-                    }
-                }
-            }
-            if !acknowledged {
-                failure.get_or_insert(last);
-            }
-        }
-        if let Some(error) = failure {
-            return Err(Error::new(
-                ErrorCode::Unknown,
-                format!("saved {outcome:?}; completion pending: {error}"),
-            ));
-        }
+        let outcome = resolve_transaction(self.network.clone(), store, id, self.timeout)?;
         self.fenced = false;
         Ok(outcome)
     }
@@ -238,6 +186,85 @@ impl Client {
     }
 }
 
+/// Complete a saved coordinator decision without the original Client object.
+/// Callers must not resolve an attempt concurrently with its live body/commit.
+/// A missing registration remains Unknown and is never treated as an abort.
+pub fn resolve_transaction(
+    network: Arc<Network>,
+    store: Arc<Store>,
+    id: journal::TransactionId,
+    timeout: Duration,
+) -> Result<Outcome> {
+    use mako_protocol::contracts::Transport;
+    if id.coordinator != store.owner || timeout.is_zero() {
+        return Err(Error::new(
+            ErrorCode::Invalid,
+            "wrong coordinator or deadline",
+        ));
+    }
+    let service = crate::receiver::ParticipantService::for_store(&store, network.clone())?;
+    service.recover()?;
+    let transaction = store
+        .journal
+        .lookup(id)?
+        .ok_or_else(|| Error::new(ErrorCode::Unknown, "transaction registration unavailable"))?
+        .transaction;
+    let outcome = crate::prepared::local_decision(&store, &transaction, true)?
+        .ok_or_else(|| Error::new(ErrorCode::Unknown, "decision is unavailable"))?;
+    let endpoint = service.endpoint(&store)?;
+    let transport = crate::receiver::LocalTransport {
+        service,
+        network: network.clone(),
+        endpoint: endpoint.clone(),
+        owner: store.owner,
+    };
+    let mut failure = None;
+    for member in &transaction.members {
+        let endpoints = if member.owner == store.owner {
+            vec![endpoint.clone()]
+        } else {
+            member.endpoints.clone()
+        };
+        let mut acknowledged = false;
+        let mut last = Error::new(ErrorCode::Unknown, "participant is unavailable");
+        for address in endpoints {
+            let message = Message::Transaction(TransactionRequest {
+                id,
+                lease: member.lease,
+                term: transaction.time_term % 10,
+                action: TransactionAction::Decide {
+                    transaction: transaction.clone(),
+                    outcome,
+                },
+            });
+            match transport.call(&address, message, timeout) {
+                Ok(Reply::Transaction(reply)) if reply.id == id && reply.owner == member.owner => {
+                    match reply.result {
+                        Ok(TransactionValue::Completed(saved)) if saved == outcome => {
+                            acknowledged = true;
+                            break;
+                        }
+                        Err(error) => last = error,
+                        _ => last = Error::new(ErrorCode::Unknown, "completion reply mismatch"),
+                    }
+                }
+                Ok(Reply::Error(error)) | Err(error) => last = error,
+                _ => last = Error::new(ErrorCode::Unknown, "completion reply identity mismatch"),
+            }
+        }
+        if !acknowledged {
+            failure.get_or_insert(last);
+        }
+    }
+    if let Some(error) = failure {
+        return Err(Error::new(
+            ErrorCode::Unknown,
+            format!("saved {outcome:?}; completion pending: {error}"),
+        ));
+    }
+    Ok(outcome)
+}
+
 pub struct Transaction<'client, 'worker> {
     worker: std::marker::PhantomData<&'worker mut sto::Worker>,
     finished: bool,
@@ -251,6 +278,56 @@ pub struct Transaction<'client, 'worker> {
     retain_snapshot: bool,
 }
 impl Transaction<'_, '_> {
+    fn routed_target(
+        &self,
+        schema: &crate::migration::Schema,
+        table: TableKey,
+        key: &[u8],
+    ) -> Result<Target> {
+        let mut target = schema.target(table, key, self.store.owner, false)?;
+        let spec = schema.spec(table.table)?;
+        if self.store.migration && spec.kind == crate::migration::Kind::Governed {
+            let warehouse = table.warehouse.to_be_bytes();
+            let coordinate = if spec.warehouse {
+                warehouse.as_slice()
+            } else {
+                key
+            };
+            let route = self
+                .protection
+                .as_ref()
+                .expect("transaction epoch")
+                .captured_route(table.table, coordinate)?;
+            target.owner = route.owner;
+            target.access.route = Some(route);
+        }
+        Ok(target)
+    }
+    /// Point access uses the same captured routing epoch as routed scans.
+    pub fn get_routed(
+        &mut self,
+        schema: &crate::migration::Schema,
+        table: TableKey,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        self.attempt(|this| {
+            let target = this.routed_target(schema, table, key)?;
+            this.get(&target, key)
+        })
+    }
+    pub fn mutate_routed(
+        &mut self,
+        schema: &crate::migration::Schema,
+        table: TableKey,
+        mutation: Mutation,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
+        self.attempt(|this| {
+            let target = this.routed_target(schema, table, key)?;
+            this.mutate(&target, mutation, key, value)
+        })
+    }
     /// Scan all captured routing segments in key order. The existing checked
     /// cursor/page core bounds each RPC and verifies order, EOF and snapshot
     /// provenance before rows are delivered. Limit applies across all segments.

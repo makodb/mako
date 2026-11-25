@@ -483,6 +483,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-rocksdb"
+version = "0.1.0"
+dependencies = [
+ "mako-protocol",
+ "mako-runtime",
+ "mako-sharding",
+ "mako-storage-api",
+ "serde_json",
+]
+
+[[package]]
 name = "mako-runtime"
 version = "0.1.0"
 dependencies = [

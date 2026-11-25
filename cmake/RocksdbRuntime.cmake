@@ -33,6 +33,9 @@ set(_programs mako_node mako_admin mako_client mako_bench mako_transactions mako
 add_custom_target(mako_runtime ALL
     COMMAND "${CMAKE_COMMAND}" -E env ${_cargo_env}
         "${MAKO_CARGO_EXECUTABLE}" build ${_common} ${_profile_flags} --bins
+    COMMAND "${CMAKE_COMMAND}" -E env ${_cargo_env}
+        "${MAKO_CARGO_EXECUTABLE}" build --locked --manifest-path "${_manifest}"
+        --package mako-rocksdb --features rocksdb-engine ${_profile_flags} --example rocksdb_transactions
     USES_TERMINAL VERBATIM)
 foreach(_program IN LISTS _programs)
     add_custom_command(TARGET mako_runtime POST_BUILD COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -50,6 +53,6 @@ add_custom_target(rust_runtime_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${_cargo_env}
         "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_CARGO_EXECUTABLE}" --manifest "${_manifest}"
-        --package mako-runtime --features logging,rocksdb-engine ${_profile_flags}
+        --package mako-runtime --package mako-rocksdb --features mako-runtime/logging,mako-runtime/rocksdb-engine,mako-rocksdb/rocksdb-engine ${_profile_flags}
     USES_TERMINAL VERBATIM)
 message(STATUS "ROCKSDB_RUNTIME: distributed STO/OCC+2PC, local/Raft logs and Rust SRPC; no Masstree compiler or archive")

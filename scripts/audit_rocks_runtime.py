@@ -20,10 +20,15 @@ def main():
         "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
     ], text=True)
     forbidden = ("sto-tpcc-ffi", "sto-masstree", "mako-storage-masstree", "mako-mtree-sys")
+    api_tree = subprocess.check_output([
+        args.cargo, "tree", "--locked", "--manifest-path", str(root / "crates/Cargo.toml"),
+        "--package", "mako-rocksdb", "--no-default-features", "--features", "rocksdb-engine",
+        "--edges", "normal,build", "--prefix", "none", "--format", "{p}",
+    ], text=True)
     for package in forbidden:
-        if package in tree:
+        if package in tree or package in api_tree:
             raise RuntimeError(f"Masstree dependency in RocksDB-only runtime: {package}")
-    programs = ("mako_node", "mako_admin", "mako_client", "mako_bench", "mako_transactions", "mako_redis", "mako_convert")
+    programs = ("mako_node", "mako_admin", "mako_client", "mako_bench", "mako_transactions", "mako_redis", "mako_convert", "examples/rocksdb_transactions")
     binaries = {}
     for name in programs:
         path = args.target_dir.resolve() / args.profile / name
@@ -36,7 +41,7 @@ def main():
             raise RuntimeError("RocksDB runtime does not link librocksdb")
         binaries[name] = {"path": str(path), "bytes": path.stat().st_size, "dynamic_libraries": libraries.splitlines()}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"passed": True, "dependency_tree": tree.splitlines(), "binaries": binaries}, indent=2) + "\n")
+    args.output.write_text(json.dumps({"passed": True, "dependency_tree": tree.splitlines(), "api_dependency_tree": api_tree.splitlines(), "binaries": binaries}, indent=2) + "\n")
     print(f"RocksDB-only graph and {len(binaries)} executable symbol audits passed")
 
 

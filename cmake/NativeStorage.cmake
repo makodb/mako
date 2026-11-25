@@ -221,19 +221,19 @@ add_custom_target(rust_shard_integration_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication,rocksdb-engine
+        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME rust_shard_integration
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication,rocksdb-engine)
+        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine)
 add_custom_target(rust_runtime_release_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --features replication,rocksdb-engine --release
+        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --release
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_native_dependency_audit
@@ -246,11 +246,11 @@ add_custom_target(rust_native_dependency_audit
 add_custom_target(rust_native_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p sto-tpcc-ffi -p mako-storage-api -p mako-storage-rocksdb -p raft-host
-        --features mako-runtime/replication,mako-runtime/rocksdb-engine --all-targets --no-deps -- -D warnings
+        -p mako-runtime -p mako-rocksdb -p sto-tpcc-ffi -p mako-storage-api -p mako-storage-rocksdb -p raft-host
+        --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --all-targets --no-deps -- -D warnings
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p sto-tpcc-ffi --features mako-runtime/replication,mako-runtime/rocksdb-engine --doc
+        -p mako-runtime -p mako-rocksdb -p sto-tpcc-ffi --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --doc
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit

@@ -15,6 +15,7 @@ ROOT = host.ROOT
 CORE = ROOT / 'crates/mako-protocol-core'
 ENTRY = 'crates/mako-protocol-core/src/lib.rs'
 ADAPTERS = {
+    'crates/mako-rocksdb/src/runtime.rs': ['client.begin(', 'tx.get_routed(', 'tx.mutate_routed(', 'tx.scan_routed(', 'tx.commit()', 'client::resolve_transaction('],
     'crates/sto-tpcc-ffi/src/protocol.rs': [
         'impl mako_protocol_core::coordinator::Effects for CoordinatorEffects',
         'require_phase(handle, ParticipantPhase::Collecting)',

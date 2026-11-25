@@ -21,6 +21,7 @@ members = [
     "mako-engine-sto",
     "mako-history",
     "mako-runtime",
+    "mako-rocksdb",
     "mako-protocol",
     "mako-protocol-core",
     "mako-storage-api",

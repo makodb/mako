@@ -1,0 +1,25 @@
+[package]
+name = "mako-rocksdb"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+rocksdb-engine = ["dep:mako-runtime", "dep:mako-storage-api", "dep:serde_json", "dep:mako-sharding", "mako-runtime/rocksdb-engine", "mako-runtime/logging"]
+masstree-engine = ["rocksdb-engine", "mako-runtime/masstree-engine"]
+
+[dependencies]
+mako-protocol = { path = "../mako-protocol" }
+mako-runtime = { path = "../mako-runtime", optional = true }
+mako-storage-api = { path = "../mako-storage-api", optional = true }
+mako-sharding = { path = "../../src/cluster", optional = true, default-features = false, features = ["protocol"] }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+
+[[example]]
+name = "rocksdb_transactions"
+required-features = ["rocksdb-engine"]
