@@ -46,7 +46,7 @@ def main():
     checked_rlibs = set()
     # Link every production entry point. Cargo emits build-script records even
     # for fresh artifacts. A separate map records each executable's actual link.
-    programs = [("mako-runtime", name, ["--features", "replication"])
+    programs = [("mako-runtime", name, ["--features", "replication,rocksdb-engine"])
                 for name in ("mako_node", "mako_bench", "mako_transactions", "mako_redis")]
     programs += [("mako-runtime", "mako_convert", ["--features", "logging"])]
     programs += [("mako-runtime", name, []) for name in ("mako_client", "mako_admin")]

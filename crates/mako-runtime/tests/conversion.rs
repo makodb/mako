@@ -12,6 +12,17 @@ mod node_process;
 use node_process::Process;
 #[test]
 fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
+    conversion_case(false, false);
+}
+#[test]
+fn converted_raft_node_preserves_distinct_shard_and_replica_group_identities() {
+    conversion_case(true, false);
+}
+#[test]
+fn converted_migration_node_recovers_its_control_namespace() {
+    conversion_case(false, true);
+}
+fn conversion_case(replicated: bool, migration: bool) {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     let mut config = Config {
@@ -33,7 +44,7 @@ fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
         queue_capacity: 16,
         warehouses_per_shard: 0,
         peers: BTreeMap::new(),
-        migration: false,
+        migration,
         initial: Vec::new(),
         replication: None,
         persistence: Some(PersistenceConfig {
@@ -44,6 +55,20 @@ fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
         volatile: false,
         replica_groups: BTreeMap::new(),
     };
+    if replicated {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        config.replication = Some(mako_runtime::node::ReplicaConfig {
+            group: 77,
+            id: 7,
+            listen: address.clone(),
+            peers: vec![mako_runtime::node::ReplicaPeer { id: 7, address }],
+            directory: config.persistence.take().unwrap().directory,
+            create: true,
+            sync_writes: true,
+        });
+    }
     let timeout = Duration::from_secs(10);
     let mut child = Process::start(config.clone());
     let mut client = GatewayClient::connect(child.address.clone(), timeout).unwrap();
@@ -89,7 +114,8 @@ fn converted_node_serves_checkpoint_suffix_and_accepts_new_transactions() {
             String::from_utf8_lossy(&result.stderr)
         );
         config = mako_runtime::configuration::read(output.join("node.json")).unwrap();
-        assert!(!config.persistence.as_ref().unwrap().create);
+        assert!(config.persistence.as_ref().is_none_or(|c| !c.create));
+        assert!(config.replication.as_ref().is_none_or(|c| !c.create));
         let mut child = Process::start(config.clone());
         let mut client = GatewayClient::connect(child.address.clone(), timeout).unwrap();
         let target = client

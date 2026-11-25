@@ -429,7 +429,8 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
                 if !directory.join("CURRENT").is_file() {
                     return Err("source RocksDB generation is missing".into());
                 }
-                let db = Database::open_distributed(directory, group, durable).map_err(error)?;
+                let db = Database::open_distributed(directory, u64::from(config.owner), durable)
+                    .map_err(error)?;
                 if db.distributed_identity().map_err(error)?.as_deref() != Some(&identity) {
                     return Err("source RocksDB schema mismatch".into());
                 }
@@ -469,7 +470,8 @@ pub fn convert(config: Config, destination: &Path, rocksdb: bool) -> Result<Repo
     let staging = parent.join(format!(".mako-convert-{}-{nonce:x}", std::process::id()));
     fs::create_dir(&staging).map_err(error)?;
     let target_backing = if rocksdb {
-        let db = Database::open_distributed(staging.join("data"), group, durable).map_err(error)?;
+        let db = Database::open_distributed(staging.join("data"), u64::from(config.owner), durable)
+            .map_err(error)?;
         db.bind_distributed_identity(&identity).map_err(error)?;
         Backing::Rocks(db)
     } else {
@@ -809,14 +811,14 @@ mod tests {
         transaction
     }
     fn open_target(config: &Config) -> (offline::Log, Machine) {
-        let (mode, root, group, durable) = log_mode(config).unwrap();
+        let (mode, root, _group, durable) = log_mode(config).unwrap();
         let log = offline::Log::open(mode).unwrap();
         let identity = config.storage_identity().unwrap();
         let backing = match &config.engine {
             EngineConfig::Masstree => Backing::Logical(Mutex::new(Image::default())),
-            EngineConfig::RocksDb { directory } => {
-                Backing::Rocks(Database::open_distributed(directory, group, durable).unwrap())
-            }
+            EngineConfig::RocksDb { directory } => Backing::Rocks(
+                Database::open_distributed(directory, u64::from(config.owner), durable).unwrap(),
+            ),
         };
         let machine = Machine {
             backing,
