@@ -58,9 +58,19 @@ fn one() -> u32 {
 fn capacity() -> usize {
     64
 }
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EngineConfig {
+    #[default]
+    Masstree,
+    #[serde(rename = "rocksdb")]
+    RocksDb { directory: PathBuf },
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub engine: EngineConfig,
     pub owner: u32,
     pub nodes: u32,
     pub listen: String,
@@ -91,6 +101,15 @@ pub struct Config {
 }
 impl Config {
     pub fn schema(&self) -> Result<Arc<Schema>> {
+        if let EngineConfig::RocksDb { directory } = &self.engine {
+            if directory.as_os_str().is_empty() {
+                return Err(Error::new(
+                    ErrorCode::Invalid,
+                    "RocksDB data directory must not be empty",
+                ));
+            }
+        }
+
         if self
             .persistence
             .as_ref()
@@ -270,7 +289,47 @@ impl RunningNode {
                 Arc::new(MemoryLog::new(config.owner))
             }
         };
-        let store = Store::new(config.owner, config.migration, log)?;
+        let database = match &config.engine {
+            EngineConfig::Masstree => mako_storage_masstree::database().map_err(engine)?,
+            EngineConfig::RocksDb { directory } => {
+                #[cfg(feature = "rocksdb-engine")]
+                {
+                    let settings = config
+                        .persistence
+                        .as_ref()
+                        .map(|p| (p.create, p.sync_writes))
+                        .or_else(|| {
+                            config
+                                .replication
+                                .as_ref()
+                                .map(|p| (p.create, p.sync_writes))
+                        });
+                    if settings.is_some_and(|(create, _)| !create)
+                        && !directory.join("CURRENT").is_file()
+                    {
+                        return Err(Error::new(
+                            ErrorCode::Invalid,
+                            "RocksDB data directory missing; creation must be explicit",
+                        ));
+                    }
+                    mako_storage_rocksdb::database(
+                        directory,
+                        u64::from(config.owner),
+                        settings.is_some_and(|(_, sync)| sync),
+                    )
+                    .map_err(engine)?
+                }
+                #[cfg(not(feature = "rocksdb-engine"))]
+                {
+                    let _ = directory;
+                    return Err(Error::new(
+                        ErrorCode::Invalid,
+                        "RocksDB data engine is not compiled into this executable",
+                    ));
+                }
+            }
+        };
+        let store = Store::with_engine(config.owner, config.migration, log, database)?;
         {
             let mut loader = store.database.worker().map_err(engine)?;
             for spec in &config.tables {
@@ -367,7 +426,8 @@ impl RunningNode {
                 ));
             }
             if !create
-                && (!directory.join("log.bootstrap/MANIFEST").is_file()
+                && ((matches!(config.engine, EngineConfig::Masstree)
+                    && !directory.join("log.bootstrap/MANIFEST").is_file())
                     || !directory.join("log/FORMAT").is_file())
             {
                 return Err(Error::new(ErrorCode::Invalid,"engine checkpoint/log missing or legacy format; create must be explicit and existing stores require offline conversion"));

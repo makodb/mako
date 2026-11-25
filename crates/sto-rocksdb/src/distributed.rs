@@ -15,7 +15,7 @@ use std::sync::{atomic::Ordering, Weak};
 
 pub(crate) const PROFILE: &[u8] = &[0, 11];
 pub(crate) const PROFILE_VALUE: &[u8] = b"DISTRIBUTED-STO-01";
-const IDENTITY: &[u8] = &[0, 12];
+pub(crate) const IDENTITY: &[u8] = &[0, 12];
 const CLOCK: &[u8] = &[0, 13];
 const METADATA: &[u8] = &[0, 10];
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,17 +114,12 @@ impl Database {
     pub fn distributed_metadata(&self) -> Result<Metadata> {
         let _gate = mutex(&self.apply_gate);
         self.ensure_distributed()?;
-        let mut rows = Vec::new();
-        self.rocks()
-            .for_each_entry_from(METADATA, usize::MAX, &mut |key, value| {
-                if !key.starts_with(METADATA) {
-                    return Ok(false);
-                }
-                rows.push((key[2..].to_vec(), value.to_vec()));
-                Ok(true)
-            })?;
-        Ok(rows)
+        read_metadata(&self.rocks())
     }
+    pub fn distributed_durable(&self) -> bool {
+        self.sync_writes
+    }
+
     pub fn distributed_clock(&self) -> Result<u32> {
         self.ensure_distributed()?;
         decode_time(self.rocks().get(CLOCK)?)
@@ -344,4 +339,16 @@ impl Database {
         }
         Ok((rows, end_of_table))
     }
+}
+
+pub(crate) fn read_metadata(rocks: &mrx_rocks::RocksBlobs) -> Result<Metadata> {
+    let mut rows = Vec::new();
+    rocks.for_each_entry_from(METADATA, usize::MAX, &mut |key, value| {
+        if !key.starts_with(METADATA) {
+            return Ok(false);
+        }
+        rows.push((key[2..].to_vec(), value.to_vec()));
+        Ok(true)
+    })?;
+    Ok(rows)
 }

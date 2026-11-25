@@ -135,6 +135,7 @@ fn separate_process_migration_moves_raw_and_lazy_warehouse_tables() {
         let owner = owner as u32;
         children.push(Process::spawn(Config {
             persistence: None,
+            engine: Default::default(),
             volatile: true,
             replica_groups: BTreeMap::new(),
             owner,
@@ -314,6 +315,7 @@ fn target(owner: u32) -> Target {
 fn separate_process_clocks_commit_and_abort_through_native_srpc() {
     let mut child = Process::start(Config {
         persistence: None,
+        engine: Default::default(),
         volatile: true,
         replica_groups: BTreeMap::new(),
         owner: 1,
@@ -422,6 +424,15 @@ fn separate_process_clocks_commit_and_abort_through_native_srpc() {
 #[test]
 #[cfg(feature = "replication")]
 fn replicated_server_recovers_rows_in_a_fresh_process() {
+    replicated_server_recovers_rows_in_a_fresh_process_engine(false);
+}
+#[test]
+#[cfg(all(feature = "replication", feature = "rocksdb-engine"))]
+fn rocksdb_replicated_server_recovers_rows_in_a_fresh_process() {
+    replicated_server_recovers_rows_in_a_fresh_process_engine(true);
+}
+#[cfg(feature = "replication")]
+fn replicated_server_recovers_rows_in_a_fresh_process_engine(rocks: bool) {
     use mako_runtime::node::{ReplicaConfig, ReplicaPeer};
     use mako_sharding::gateway as core;
     let root = tempfile::tempdir().unwrap();
@@ -430,6 +441,13 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
     drop(socket);
     let mut config = Config {
         persistence: None,
+        engine: if rocks {
+            mako_runtime::node::EngineConfig::RocksDb {
+                directory: root.path().join("data"),
+            }
+        } else {
+            Default::default()
+        },
         volatile: false,
         replica_groups: BTreeMap::new(),
         owner: 0,
@@ -545,6 +563,15 @@ fn replicated_server_recovers_rows_in_a_fresh_process() {
 #[test]
 #[cfg(feature = "replication")]
 fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
+    local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft_engine(false);
+}
+#[test]
+#[cfg(all(feature = "replication", feature = "rocksdb-engine"))]
+fn rocksdb_local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
+    local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft_engine(true);
+}
+#[cfg(feature = "replication")]
+fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft_engine(rocks: bool) {
     use mako_runtime::node::PersistenceConfig;
     use mako_sharding::gateway as core;
     let root = tempfile::tempdir().unwrap();
@@ -568,6 +595,13 @@ fn local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft() {
         initial: Vec::new(),
         replication: None,
         replica_groups: BTreeMap::new(),
+        engine: if rocks {
+            mako_runtime::node::EngineConfig::RocksDb {
+                directory: root.path().join("data"),
+            }
+        } else {
+            Default::default()
+        },
         volatile: false,
         persistence: Some(PersistenceConfig {
             directory: root.path().to_owned(),

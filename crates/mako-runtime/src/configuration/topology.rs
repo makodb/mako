@@ -491,6 +491,7 @@ pub fn convert(
             peers: peer_map.clone(),
             migration: options.migration,
             initial: vec![],
+            engine: Default::default(),
             volatile: options.volatile || options.migration,
             replication,
             persistence,

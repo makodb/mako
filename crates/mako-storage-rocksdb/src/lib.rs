@@ -16,6 +16,7 @@ use std::{
 };
 use sto_rocksdb as sto;
 mod lane;
+mod persistent;
 use lane::{Envelope, Op, Response};
 
 pub(crate) fn error(e: sto::Error) -> api::Error {
@@ -86,6 +87,9 @@ pub fn native_database(database: &api::Database) -> api::Result<Arc<sto::Databas
 }
 struct Rocks(Arc<Shared>);
 impl api::Backend for Rocks {
+    fn persistent(&self) -> Option<Arc<dyn api::PersistentApplication>> {
+        Some(Arc::new(persistent::Application(self.0.db.clone())))
+    }
     fn kind(&self) -> api::EngineKind {
         api::EngineKind::RocksDb
     }

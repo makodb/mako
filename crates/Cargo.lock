@@ -494,6 +494,7 @@ dependencies = [
  "mako-sharding",
  "mako-storage-api",
  "mako-storage-masstree",
+ "mako-storage-rocksdb",
  "parking_lot",
  "raft-host",
  "serde",

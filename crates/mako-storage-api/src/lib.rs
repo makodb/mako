@@ -113,6 +113,40 @@ pub trait Backend: Any + Send + Sync {
     fn kind(&self) -> EngineKind;
     fn as_any(&self) -> &dyn Any;
     fn worker(&self) -> Result<Box<dyn WorkerBackend>>;
+    fn persistent(&self) -> Option<Arc<dyn PersistentApplication>> {
+        None
+    }
+}
+/// Optional capability of an engine that persists data directly. A single
+/// application batch must recover rows and protocol metadata at the same prefix.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LogPosition {
+    pub index: u64,
+    pub term: u64,
+}
+pub type Metadata = Vec<(Vec<u8>, Vec<u8>)>;
+pub trait PersistentApplication: Send + Sync {
+    fn durable(&self) -> bool;
+    fn bind_identity(&self, identity: &[u8]) -> Result<()>;
+    fn position(&self) -> Result<LogPosition>;
+    fn metadata(&self) -> Result<Metadata>;
+    fn apply(
+        &self,
+        position: LogPosition,
+        fingerprint: [u8; 32],
+        rows: &[RedoRow],
+        metadata: &Metadata,
+    ) -> Result<()>;
+    fn create_checkpoint(&self, path: &std::path::Path, position: LogPosition) -> Result<()>;
+    /// Validate a private generation before publication. A previously selected
+    /// generation may already contain a later prefix and must never regress.
+    fn checkpoint_metadata(
+        &self,
+        path: &std::path::Path,
+        position: LogPosition,
+        identity: &[u8],
+    ) -> Result<(LogPosition, Metadata)>;
+    fn publish_checkpoint(&self, path: &std::path::Path, position: LogPosition) -> Result<()>;
 }
 pub trait TableBackend: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
@@ -209,6 +243,10 @@ impl Database {
     pub fn as_any(&self) -> &dyn Any {
         self.0.as_any()
     }
+    pub fn persistent(&self) -> Option<Arc<dyn PersistentApplication>> {
+        self.0.persistent()
+    }
+
     pub fn worker(&self) -> Result<Worker> {
         Ok(Worker {
             inner: self.0.worker()?,

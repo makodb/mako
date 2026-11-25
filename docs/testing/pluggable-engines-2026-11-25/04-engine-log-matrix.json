@@ -1,0 +1,24 @@
+{
+  "stage": "Shared LocalLog/ReplicatedLog application and node engine selection",
+  "date": "2026-11-25",
+  "checks": {
+    "native_runtime_fresh_process_cases": 66,
+    "new_rocks_runtime_cases": 8,
+    "shared_raft_contract": "same five scenarios for each data engine",
+    "process_crash_matrix": "SIGKILL for both engines with each log mode",
+    "mixed_engine_transaction": "Masstree LocalLog coordinator and RocksDB ReplicatedLog participants",
+    "sto_rocksdb_components": 18,
+    "shared_storage_contract": "passed",
+    "strict_clippy": "passed"
+  },
+  "logs": [
+    "build_upper_development/pluggable-engines-runtime.log",
+    "build_upper_development/pluggable-rocks-log-components.log",
+    "build_upper_development/pluggable-rocks-log-clippy.log"
+  ],
+  "remaining": [
+    "Backend-neutral and durable migration",
+    "Conversion and build profiles",
+    "Final upper/release/sanitizer qualification"
+  ]
+}

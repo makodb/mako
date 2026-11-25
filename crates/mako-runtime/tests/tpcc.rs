@@ -22,6 +22,7 @@ fn config(owner: u32, nodes: u32) -> Config {
         initial: Vec::new(),
         replication: None,
         persistence: None,
+        engine: Default::default(),
         volatile: true,
         replica_groups: BTreeMap::new(),
     }

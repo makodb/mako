@@ -126,7 +126,18 @@ remain alive through retained prepare. Logical distributed times are stored
 separately from local conflict generations. An externally decided batch applies
 rows, tombstones, protocol metadata and the applied log prefix atomically. The
 distributed storage profile rejects the older local-service format, and native
-checkpoints retain this profile identity. Runtime log wiring is still in progress.
+checkpoints retain this profile identity. Both LocalLog and ReplicatedLog apply
+these batches through the shared log state machine. Restart loads the atomic
+persistent prefix and replays only its missing suffix. Retained Prepare records
+remain private intent; Complete publishes their effects. A local STO guard then
+checks installation and completes without validating the decision again.
+
+Node configuration defaults to `engine: {kind: masstree}`. A build with
+`rocksdb-engine` also accepts `engine: {kind: rocksdb, directory: /path/to/data}`.
+The engine directory is separate from the configured log directory. Data and log
+must use the same durability policy. Reopening a missing RocksDB directory
+requires explicit creation; schema/profile mismatches fail before admission.
+RocksDB-only build separation and persistent migration remain pending.
 
 Shared conformance scenarios exercise an in-memory model, Masstree and RocksDB
 independently. They check private writes, ordered scans, absence and predicate

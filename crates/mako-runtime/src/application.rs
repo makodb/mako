@@ -218,3 +218,108 @@ impl Index {
         Ok(())
     }
 }
+
+impl From<Position> for mako_storage_api::LogPosition {
+    fn from(p: Position) -> Self {
+        Self {
+            index: p.index,
+            term: p.term,
+        }
+    }
+}
+impl From<mako_storage_api::LogPosition> for Position {
+    fn from(p: mako_storage_api::LogPosition) -> Self {
+        Self {
+            index: p.index,
+            term: p.term,
+        }
+    }
+}
+fn metadata_key<T: Serialize>(kind: u8, key: &T) -> Result<Vec<u8>> {
+    let mut result = vec![kind];
+    result.extend(crate::wire::encode(key)?);
+    Ok(result)
+}
+impl Change {
+    pub fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
+    }
+    pub fn metadata(&self) -> Result<mako_storage_api::Metadata> {
+        if self.duplicate {
+            return Ok(Vec::new());
+        }
+        let mut metadata = vec![
+            (vec![0], crate::wire::encode(&self.position)?),
+            (
+                metadata_key(1, &self.position.index)?,
+                crate::wire::encode(&(self.position.term, self.fingerprint))?,
+            ),
+        ];
+        if let Some(entry) = &self.entry {
+            metadata.push((
+                metadata_key(2, &entry.transaction.id)?,
+                crate::wire::encode(entry)?,
+            ));
+        }
+        if let Some(receipt) = &self.receipt {
+            metadata.push((
+                metadata_key(3, &(receipt.request.client, receipt.request.sequence))?,
+                crate::wire::encode(receipt)?,
+            ));
+        }
+        Ok(metadata)
+    }
+}
+impl Index {
+    pub fn from_metadata(
+        metadata: mako_storage_api::Metadata,
+        position: mako_storage_api::LogPosition,
+        owner: u32,
+        durable: bool,
+    ) -> Result<Self> {
+        let mut result = Self::default();
+        for (key, value) in metadata {
+            match key.first() {
+                Some(0) if key.len() == 1 => result.position = crate::wire::decode(&value)?,
+                Some(1) => {
+                    let id: u64 = crate::wire::decode(&key[1..])?;
+                    if key != metadata_key(1, &id)?
+                        || result
+                            .fingerprints
+                            .insert(id, crate::wire::decode(&value)?)
+                            .is_some()
+                    {
+                        return Err(invalid("invalid persistent prefix key"));
+                    }
+                }
+                Some(2) => {
+                    let entry: Entry = crate::wire::decode(&value)?;
+                    if key != metadata_key(2, &entry.transaction.id)?
+                        || result
+                            .transactions
+                            .insert(entry.transaction.id, entry)
+                            .is_some()
+                    {
+                        return Err(invalid("invalid persistent transaction key"));
+                    }
+                }
+                Some(3) => {
+                    let receipt: GatewayReceipt = crate::wire::decode(&value)?;
+                    let id = (receipt.request.client, receipt.request.sequence);
+                    if key != metadata_key(3, &id)? || result.receipts.insert(id, receipt).is_some()
+                    {
+                        return Err(invalid("invalid persistent receipt key"));
+                    }
+                }
+                _ => return Err(invalid("unknown protocol metadata key")),
+            }
+        }
+        if result.position != position.into() {
+            return Err(invalid(
+                "rows and protocol metadata have different applied positions",
+            ));
+        }
+        result.validate(owner, durable)?;
+        Ok(result)
+    }
+}

@@ -278,6 +278,7 @@ struct State {
     durable_transactions: bool,
     gate: Mutex<Gate>,
     durable: Option<Arc<DurableRows>>,
+    persistent: Option<Arc<dyn mako_storage_api::PersistentApplication>>,
     index: Mutex<Index>,
     identity: Vec<u8>,
     engine_name: String,
@@ -299,6 +300,30 @@ impl State {
         })?;
         if !batch.is_empty() {
             self.replay.apply(batch)?;
+        }
+        Ok(())
+    }
+    fn persist(&self, change: &crate::application::Change) -> Result<()> {
+        if let Some(application) = &self.persistent {
+            application
+                .apply(
+                    change.position.into(),
+                    change.fingerprint(),
+                    &change.rows,
+                    &change.metadata()?,
+                )
+                .map_err(engine)?;
+        }
+        Ok(())
+    }
+    fn load_persistent(&self) -> Result<()> {
+        if let Some(application) = &self.persistent {
+            *self.index.lock() = Index::from_metadata(
+                application.metadata().map_err(engine)?,
+                application.position().map_err(engine)?,
+                self.owner,
+                self.durable_transactions,
+            )?;
         }
         Ok(())
     }
@@ -364,6 +389,7 @@ impl StateMachine for State {
                 }
                 let mut index = self.index.lock();
                 let change = index.no_op(p.into())?;
+                self.persist(&change)?;
                 index.publish(change);
                 return Ok(());
             };
@@ -407,7 +433,8 @@ impl StateMachine for State {
                         self.durable_transactions,
                         &command.record,
                     )?;
-                    if !change.rows.is_empty() {
+                    self.persist(&change)?;
+                    if self.persistent.is_none() && !change.rows.is_empty() {
                         if local {
                             gate.installing
                                 .insert(command.record.transaction().id, change.rows.clone());
@@ -457,7 +484,8 @@ impl StateMachine for State {
                 let mut index = self.index.lock();
                 let change =
                     index.gateway(p.into(), bytes, &command.rows, command.receipt.as_ref())?;
-                if !local {
+                self.persist(&change)?;
+                if self.persistent.is_none() && !local {
                     self.replay.apply(change.rows.clone())?;
                 }
                 index.publish(change);
@@ -475,6 +503,11 @@ impl StateMachine for State {
             Self::ensure(&gate)?;
             if let Some(durable) = &self.durable {
                 return durable.create_checkpoint(path, position(p));
+            }
+            if let Some(application) = &self.persistent {
+                return application
+                    .create_checkpoint(path, crate::application::Position::from(p).into())
+                    .map_err(engine);
             }
             let index = self.index.lock().clone();
             if index.position != p.into() {
@@ -496,6 +529,17 @@ impl StateMachine for State {
             if let Some(durable) = &self.durable {
                 return durable.validate_checkpoint(path, position(p));
             }
+            if let Some(application) = &self.persistent {
+                let (position, metadata) = application
+                    .checkpoint_metadata(
+                        path,
+                        crate::application::Position::from(p).into(),
+                        &self.identity,
+                    )
+                    .map_err(engine)?;
+                Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
+                return Ok(());
+            }
             checkpoint::validate(path, self.checkpoint_identity(), p.into())?;
             checkpoint::visit(path, |row| self.schema.key_for_log(row.table).map(|_| ()))
         })();
@@ -513,6 +557,20 @@ impl StateMachine for State {
             if let Some(durable) = &self.durable {
                 durable.publish_checkpoint(path, position(p))?;
                 return self.restore();
+            }
+            if let Some(application) = &self.persistent {
+                let (position, metadata) = application
+                    .checkpoint_metadata(
+                        path,
+                        crate::application::Position::from(p).into(),
+                        &self.identity,
+                    )
+                    .map_err(engine)?;
+                Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
+                application
+                    .publish_checkpoint(path, crate::application::Position::from(p).into())
+                    .map_err(engine)?;
+                return self.load_persistent();
             }
             let index = checkpoint::validate(path, self.checkpoint_identity(), p.into())?;
             let replay_start = mako_protocol_core::recovery::replay_start(
@@ -672,6 +730,17 @@ impl<C: Into<Mode>> Log<C> {
             Mode::Local(config) => config.sync_writes,
             Mode::Raft(config) => config.sync_writes,
         };
+        let persistent = if durable.is_none() {
+            store.database.persistent()
+        } else {
+            None
+        };
+        if let Some(application) = &persistent {
+            if application.durable() != sync_writes {
+                return Err(storage("data engine and log durability policies differ"));
+            }
+            application.bind_identity(&identity).map_err(engine)?;
+        }
         let replay = Replay::start(store, schema.clone())?;
         let state = Arc::new(State {
             owner: store.owner,
@@ -681,10 +750,13 @@ impl<C: Into<Mode>> Log<C> {
             engine_name: format!("{:?}", store.database.kind()),
             gate: Mutex::new(Gate::default()),
             durable,
+            persistent,
             replay,
             schema,
         });
-        if state.durable.is_none() {
+        if state.persistent.is_some() {
+            state.load_persistent()?;
+        } else if state.durable.is_none() {
             let (log_path, create) = match &config {
                 Mode::Local(c) => (&c.directory, c.create),
                 Mode::Raft(c) => (&c.directory, c.create),

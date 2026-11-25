@@ -61,9 +61,10 @@ after saved Commit also fences service and requires recovery. Unexpected
 prepared-worker teardown fences admission before releasing native locks and
 retains its migration pin until shard retirement.
 
-Masstree/STO supplies these physical facts. Its transaction manager tests use
-synthetic datatypes, while Masstree and adapter tests have separate gates.
-The outer protocol gate does not link either implementation.
+The Masstree and direct RocksDB STO adapters supply these physical facts. The
+transaction manager tests use synthetic datatypes; each engine runs the shared
+storage conformance scenarios and its own component suite. The outer protocol
+gate links neither native implementation.
 
 ## Journal and authority contract
 
@@ -103,6 +104,16 @@ the saved committed rows when installation is still pending. Synchronous storage
 is required to advertise durability. The memory implementation has no process
 restart guarantee and requires development/test opt-in in node configuration.
 A transaction cannot mix these durability policies.
+
+Direct RocksDB stores committed data, logical timestamps/tombstones, prepared
+records, decisions, receipts and applied-prefix identities in one atomic native
+batch. Startup checks that the protocol metadata and data report the same
+prefix, then replays the committed suffix. Native checkpoints include both.
+Logical transaction time is distinct from RocksDB STO's conflict generation.
+The adapter checks a committed installation before releasing the retained STO
+frame; it never runs another conflict validation after the decision. These
+atomicity, snapshot and checkpoint properties are trusted storage contracts
+checked by native tests, not additional facts proved by the upper Verus core.
 
 The recovery core verifies checkpoint-cut agreement, preservation of the counted
 prepare obligations, publication before trimming, and replay starting from the

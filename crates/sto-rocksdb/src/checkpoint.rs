@@ -120,6 +120,36 @@ impl Database {
         sync_directory(&self.root)?;
         Ok(name)
     }
+    /// Inspect the validated private generation, including schema and protocol
+    /// metadata. Repeated installation may refer to an already advanced CURRENT.
+    pub fn distributed_checkpoint_state(
+        &self,
+        source: &Path,
+        expected: Position,
+        identity: &[u8],
+    ) -> Result<(Position, crate::distributed::Metadata)> {
+        let _gate = mutex(&self.apply_gate);
+        self.ensure_distributed()?;
+        let name = self.stage_checkpoint_locked(source, expected)?;
+        let current = self.generation.read().unwrap_or_else(|e| e.into_inner());
+        let rocks = if current.name == name {
+            current.rocks.clone()
+        } else {
+            Arc::new(RocksBlobs::open_existing_strict(
+                &self.root.join(&name),
+                durability(self.sync_writes),
+            )?)
+        };
+        if rocks.get(crate::distributed::IDENTITY)?.as_deref() != Some(identity) {
+            return Err(Error::Corruption(
+                "checkpoint distributed schema mismatch".into(),
+            ));
+        }
+        Ok((
+            read_position(&rocks)?,
+            crate::distributed::read_metadata(&rocks)?,
+        ))
+    }
     /// Called after Raft snapshot authority is recorded. Only sync mode promises
     /// power-crash durability; async remains weak even after checkpoint work.
     pub fn publish_checkpoint(&self, source: &Path, expected: Position) -> Result<()> {

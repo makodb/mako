@@ -93,6 +93,7 @@ fn two_replicated_shards_run_native_tpcc_and_retain_committed_order_counts() {
                 migration: false,
                 initial: vec![],
                 persistence: None,
+                engine: Default::default(),
                 volatile: false,
                 replica_groups: groups.clone(),
                 replication: Some(ReplicaConfig {

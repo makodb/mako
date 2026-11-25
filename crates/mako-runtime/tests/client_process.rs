@@ -95,6 +95,7 @@ fn config(owner: u32, peers: BTreeMap<u32, String>) -> Config {
         initial: vec![],
         replication: None,
         persistence: None,
+        engine: Default::default(),
         volatile: true,
         replica_groups: BTreeMap::new(),
     }

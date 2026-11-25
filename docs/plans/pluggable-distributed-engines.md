@@ -213,8 +213,13 @@ Progress on 2026-11-25:
   extension separates logical time from STO generation, retains tombstones,
   applies rows and protocol metadata in one batch, and distinguishes distributed
   storage from the existing local-service format. New atomic-failure, reopen and
-  checkpoint cases pass with the existing 16 component cases. Connecting this
-  capability to both runtime log modes is still in progress.
+  checkpoint cases pass with the existing 16 component cases. Both runtime log
+  modes now use the atomic capability. Six RocksDB runtime scenarios pass,
+  including retained prepare recovery, Raft failover/snapshot catchup and a
+  transaction across Masstree and RocksDB. Process engine selection is wired.
+  All 66 native runtime cases pass, including SIGKILL recovery for both engines
+  with both log modes. Strict Clippy and the RocksDB component/conformance suites
+  pass. Migration, conversion, build separation and final qualification remain.
 
 - The neutral interface and Masstree adapter are connected to the production
   client/participant/scan path. `Store::with_engine` selects an explicit adapter.
