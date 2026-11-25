@@ -1,0 +1,69 @@
+mako-protocol v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol) []
+bincode v1.3.3 []
+serde v1.0.229 [default,derive,serde_derive,std]
+serde_core v1.0.229 [result,std]
+serde_derive v1.0.229 (proc-macro) [default]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations]
+unicode-ident v1.0.24 []
+quote v1.0.47 [default,proc-macro]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+syn v3.0.4 [clone-impls,derive,parsing,printing,proc-macro]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+unicode-ident v1.0.24 []
+mako-clock v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-clock) [default,distributed]
+mako-engine-api v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-engine-api) [distributed]
+mako-protocol-core v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol-core) []
+verus_builtin v0.0.0-2026-08-02-0125 []
+verus_builtin_macros v0.0.0-2026-08-02-0125 (proc-macro) []
+convert_case v0.4.0 []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+syn v2.0.119 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+unicode-ident v1.0.24 []
+synstructure v0.13.2 [default,proc-macro]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+syn v2.0.119 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)
+verus_prettyplease v0.0.0-2026-08-02-0125 []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+verus_syn v0.0.0-2026-08-02-0125 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+unicode-ident v1.0.24 []
+verus_syn v0.0.0-2026-08-02-0125 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)
+vstd v0.0.0-2026-08-02-0125 [alloc,default,std]
+verus_builtin v0.0.0-2026-08-02-0125 []
+verus_builtin_macros v0.0.0-2026-08-02-0125 (proc-macro) [] (*)
+verus_state_machines_macros v0.0.0-2026-08-02-0125 (proc-macro) []
+indexmap v2.14.2 [default,std]
+equivalent v1.0.2 []
+hashbrown v0.17.1 []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+verus_syn v0.0.0-2026-08-02-0125 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)
+mako-sharding v0.1.0 (/var/tmp/mako-shard-rust/src/cluster) [protocol]
+vstd v0.0.0-2026-08-02-0125 [alloc,default,std] (*)
+parking_lot v0.12.5 [default]
+lock_api v0.4.14 [atomic_usize,default]
+scopeguard v1.2.0 []
+parking_lot_core v0.9.12 []
+cfg-if v1.0.4 []
+libc v0.2.189 [default,std]
+smallvec v1.15.2 []
+serde v1.0.229 [default,derive,serde_derive,std] (*)
+
+mako-protocol-core v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol-core) [] (*)
+
+mako-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb) [default]
+mako-protocol v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol) [] (*)
+
+mako-storage-api v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-api) []
+mako-protocol v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-protocol) [] (*)
+
+shard-host-core v0.0.0 (/var/tmp/mako-shard-rust/crates/shard-host-core) []
+verus_builtin v0.0.0-2026-08-02-0125 []
+verus_builtin_macros v0.0.0-2026-08-02-0125 (proc-macro) [] (*)
+vstd v0.0.0-2026-08-02-0125 [alloc,default,std] (*)

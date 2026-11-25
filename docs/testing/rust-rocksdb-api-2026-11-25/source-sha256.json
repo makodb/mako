@@ -1,0 +1,21 @@
+{
+  "cmake/NativeStorage.cmake": "af4d62968f32640f71391b088f39e8d1d02d62b8626fca14d8d0194802df23b3",
+  "cmake/RocksdbRuntime.cmake": "3197d7bbef66887b092de26bc6260d5c92216a5f423f3834419d510becb595a7",
+  "crates/Cargo.lock": "33e3c67d7a4fcf22d809d9ed8ee94360d4b6b9fcd7ff26c051ff9518fc2b7cbf",
+  "crates/Cargo.toml": "47d7c4b853497330229c0eb09ae1dc940d008a464df722a75f913919c7a88a11",
+  "crates/mako-rocksdb/Cargo.toml": "dce8b8d6d5d60031d2d4ed655c1061e787405f64fc0e9f72238828f47f30dbc6",
+  "crates/mako-rocksdb/examples/rocksdb_transactions.rs": "a5fec85c08dc1574b628d3b021beffe732c2810c751874e4a22cb9c783cce073",
+  "crates/mako-rocksdb/src/backend.rs": "14cde5da42a77bb9165a9e7729113a8ce7ae7d512edae5858ff0932b2bd0271e",
+  "crates/mako-rocksdb/src/batch.rs": "5a800eedcdc06ab166c09ce0be660e32d916f81490d297416bf6ba25eadf4131",
+  "crates/mako-rocksdb/src/error.rs": "cf856e3a6f09093257df9fbc3466b67785f28badca4da905f148d50316b9d789",
+  "crates/mako-rocksdb/src/lib.rs": "87bf9b397bbef4104bca3846d289cc7ec88008d480dddc8691f348a4c8f0ab5f",
+  "crates/mako-rocksdb/src/options.rs": "810ff9ad5e7a9eaf6d6f2f3e3f8733bd22a85efce3a52ff3fce5459eeea59379",
+  "crates/mako-rocksdb/src/runtime.rs": "b64b5547f4848c064cbdad91042725a924fcb7f56a9beefe48df955b934b1da5",
+  "crates/mako-rocksdb/src/tests.rs": "e5649c81fedcea8cab1254d9fcb0f38e57b503ad73f97d56d7d715a0a9a8fe54",
+  "crates/mako-rocksdb/tests/native.rs": "d3cc7c4cdafcb4ece39bc45055ab4f1b8b128f2bd2bef70fca98bdc816755584",
+  "crates/mako-runtime/src/client.rs": "37ba9544b1a44095dbb2f80873899fb4e35e82b95982be00f83ca247b17b5141",
+  "crates/mako-runtime/tests/support/replication_contract.rs": "dc016a73088a179cc5ae159d297b8a469b092af814d96b5cae184dfbd69e39f3",
+  "scripts/audit_rocks_runtime.py": "a7b98941a8e41e7fbb71d5b8690086c9e281378cfcb54ff7a78659e42104037c",
+  "scripts/upper_check.py": "38a85f082cdef1e692b9f5598a618ac197cb549a7620999b86fb8010be43d97f",
+  "scripts/upper_protocol_proof.py": "f251ef99b260bc382afd30fabe55aec19b5d7c5b199a3597dd8946e63ef075de"
+}

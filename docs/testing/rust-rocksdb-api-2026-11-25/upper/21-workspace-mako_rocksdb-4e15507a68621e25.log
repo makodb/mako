@@ -1,0 +1,19 @@
+
+running 14 tests
+test tests::batch_cross_family_order_and_atomic_failure ... ok
+test tests::column_family_handles_cannot_cross_databases_or_batches ... ok
+test tests::conflicts_are_exposed_without_hidden_retry ... ok
+test tests::crud_is_atomic_and_binary_with_read_your_writes ... ok
+test tests::ignored_operation_error_poison_and_rollback_recovery ... ok
+test tests::iterator_failure_is_an_error_and_poison_not_empty_success ... ok
+test tests::iterator_limit_rejects_truncation_and_large_values ... ok
+test tests::iterator_seek_reverse_and_intersected_binary_bounds ... ok
+test tests::multiget_preserves_order_duplicates_and_missing ... ok
+test tests::rollback_drop_and_reuse_do_not_publish ... ok
+test tests::transaction_and_database_send_contract ... ok
+test tests::uncertain_rollback_cannot_be_cleared_by_repeating_rollback ... ok
+test tests::unknown_commit_resolves_without_reexecution_and_drop_retains_id ... ok
+test tests::unsupported_options_fail_before_backend_and_survive_rollback ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

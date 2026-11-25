@@ -1,0 +1,19 @@
+commit=7b54fa72e48289f1907a16c6a4ac43eb049ef0eb
+sanitizer=thread
+native_scope=Masstree-storage-and-SRPC-platform-kernels
+rust_instrumentation=thread-nightly-sysroot
+rust_std_source=instrumented-sysroot
+rust_std_sysroot=/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-sanitizer-sysroot
+rust_runtime=external-clang
+rustflags=-Zsanitizer=thread -Zexternal-clangrt --sysroot=/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-sanitizer-sysroot -C force-frame-pointers=yes -C link-arg=-fsanitize=thread -C link-arg=--config=/var/tmp/mako-shard-rust/build_native_san_thread_05/clang-gnu-unwind.cfg
+target=x86_64-unknown-linux-gnu
+unwind_backend=libgcc
+unwind_config_sha256=1571e544ff7d19141defe467e04c118e0eac528b78e394e1fe54913ff9f6fb3c
+asan_options=
+ubsan_options=
+tsan_options=halt_on_error=1:print_suppressions=1:second_deadlock_stack=1:suppressions=/var/tmp/mako-shard-rust/src/masstree/tsan_suppressions.txt
+rocksdb_library_dir=/var/tmp/mako-shard-rust/build_native_san_thread_05/tsan-rocksdb/build
+gate_status=running
+rust_one_std_native=92 artifacts, 92 with Rust, all std Cs8OdpPalgxf2_3std
+final_commit=7b54fa72e48289f1907a16c6a4ac43eb049ef0eb
+gate_status=passed

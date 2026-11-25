@@ -1,0 +1,29 @@
+note: verifying module two_phase (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/two_phase.rs:169:5
+    |
+169 |     pub fn record_decision(&mut self, decision: Decision, saved: bool) -> (accepted: bool)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:171:17
+    |
+171 |         ensures final(self).wf(),
+    |                 ^^^^^^^^^^^^^^^^ failed this postcondition
+...
+184 |         true
+    |         ---- at the end of the function body
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:173:13
+    |
+173 |             final(self).outcome() == Decision::Commit ==> final(self).prepared() && !final(self).vetoed(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+184 |         true
+    |         ---- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

@@ -1,0 +1,28 @@
+note: verifying module admission (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/admission.rs:180:1
+    |
+180 | pub fn release_protection(phase: Phase) -> (yes: bool)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/admission.rs:181:13
+    |
+181 |     ensures yes == (phase == Phase::Committed || phase == Phase::Aborted),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+182 |         phase == Phase::Unknown ==> !yes,
+183 | { matches!(phase, Phase::Committed | Phase::Aborted | Phase::Unknown) }
+    |                   -------------------------------------------------- at the end of the function body
+
+error: postcondition not satisfied
+   --> src/admission.rs:182:9
+    |
+182 |         phase == Phase::Unknown ==> !yes,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+183 | { matches!(phase, Phase::Committed | Phase::Aborted | Phase::Unknown) }
+    |                   -------------------------------------------------- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

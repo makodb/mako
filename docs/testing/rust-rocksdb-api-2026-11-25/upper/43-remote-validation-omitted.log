@@ -1,0 +1,15 @@
+note: verifying module coordinator (selected functions)
+
+error: postcondition not satisfied
+   --> src/coordinator.rs:145:9
+    |
+145 | /         status == OK ==> final(effects).stage() == Stage::Validated
+146 | |             && timestamp(final(effects).decision()) && final(effects).decision() > final(effects).dependency(),
+    | |______________________________________________________________________________________________________________^ failed this postcondition
+...
+162 |       OK
+    |       -- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

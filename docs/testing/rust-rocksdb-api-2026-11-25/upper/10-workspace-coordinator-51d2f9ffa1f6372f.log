@@ -1,0 +1,10 @@
+
+running 5 tests
+test a_backend_close_cannot_relabel_installed_rows_as_a_retryable_abort ... ok
+test every_preinstallation_refusal_leaves_rows_unchanged_and_closes_both_sides ... ok
+test failures_before_or_after_an_install_effect_are_unknown_and_never_rolled_back ... ok
+test successful_commit_publishes_both_rows_and_log_above_every_dependency ... ok
+test timestamp_exhaustion_does_not_wrap_or_install ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,31 @@
+note: verifying module verbs (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+  --> crates/shard-host-core/src/verbs.rs:24:1
+   |
+24 | pub fn write_cell<E: WriteEngine>(engine: &mut E, value: Option<&[u8]>) -> (answer: Mapped)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+  --> crates/shard-host-core/src/verbs.rs:26:9
+   |
+26 |         answer == Mapped::Shard(SHARD_OK) ==> final(engine).value() == bytes(value),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+37 |         return map_engine(Stage::Commit, report.status, report.disposition);
+   |         ------------------------------------------------------------------- at this exit
+
+error: precondition not satisfied
+  --> crates/shard-host-core/src/verbs.rs:36:22
+   |
+36 |         let report = engine.finish(true);
+   |                      ^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates/shard-host-core/src/engine.rs:57:18
+   |
+57 |         requires committed ==> old(self).active() && !old(self).staged_write() && old(self).certified(),
+   |                  -------------------------------------------------------------------------------------- failed precondition
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

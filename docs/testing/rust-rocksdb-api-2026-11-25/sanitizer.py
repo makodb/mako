@@ -1,0 +1,60 @@
+import json, os, pathlib, subprocess, sys
+root=pathlib.Path('/var/tmp/mako-shard-rust'); mode=sys.argv[1]
+base=root/('build_native_san_'+mode+'_05')
+manifest=dict(line.split('=',1) for line in (base/'rust-sto-sanitizer-manifest.txt').read_text().splitlines() if '=' in line)
+env=os.environ.copy(); tool=root/'build_toolchains/rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/bin'
+env.update(PATH=str(tool)+':'+env['PATH'], CC=str(base/'sanitizer-cc'), CXX='/usr/bin/clang++-22',
+ MAKO_BUILD_DIR=str(base), LIBCXX_DIR='/usr/lib/llvm-22/lib', MAKO_MTREE_NATIVE_INTEGRATION='1',
+ MAKO_MTREE_NATIVE_LIB_DIRS=str(base)+':/usr/lib/llvm-22/lib',
+ MAKO_MTREE_NATIVE_LIBS='static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread',
+ CARGO_TARGET_DIR=str(base/'rust-workspace-target'), CARGO_BUILD_JOBS='16', CARGO_BUILD_TARGET=manifest['target'],
+ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER='/usr/bin/clang-22', RUSTFLAGS=manifest['rustflags'], RUSTDOCFLAGS=manifest['rustflags'])
+env['LD_LIBRARY_PATH']='/usr/lib/llvm-22/lib:'+env.get('LD_LIBRARY_PATH','')
+if mode=='address': env['ASAN_OPTIONS']=manifest['asan_options']
+else:
+ env['TSAN_OPTIONS']=manifest['tsan_options']; env['ROCKSDB_LIB_DIR']=manifest['rocksdb_library_dir']
+ env['LD_LIBRARY_PATH']=env['ROCKSDB_LIB_DIR']+':'+env['LD_LIBRARY_PATH']
+out=root/'build_upper_development/rust-rocksdb-api'/mode; out.mkdir(parents=True,exist_ok=True)
+command=[str(tool/'cargo'),'test','--locked','--manifest-path',str(root/'crates/mako-rocksdb/Cargo.toml'),'--features','masstree-engine','--target',manifest['target'],'--test','native','--lib','--no-run','--message-format=json']
+built=subprocess.run(command,env=env,text=True,capture_output=True)
+(out/'build.log').write_text(built.stdout+built.stderr)
+if built.returncode: print(built.stderr[-10000:]); sys.exit(built.returncode)
+cases={
+ 'runtime::tests::lost_commit_reply_fences_stream_and_resolves_saved_decision',
+ 'rocks_crud_conflicts_ranges_and_reopen',
+ 'masstree_crud_conflicts_ranges_and_reopen',
+ 'bounded_lanes_recover_after_drop_and_invalid_requests',
+ 'open_options_and_schema_mismatches_fail_explicitly',
+}
+
+def invoke(command, timeout=180):
+ attempts=[]
+ for attempt in range(20):
+  result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=timeout)
+  output=result.stdout+result.stderr
+  startup_failure=(mode=='thread' and result.returncode!=0 and not result.stdout.strip()
+     and 'ThreadSanitizer: encountered an incompatible memory layout' in result.stderr
+     and 'WARNING: ThreadSanitizer' not in result.stderr)
+  if not startup_failure: return result,attempts
+  attempts.append(dict(exit_code=result.returncode,stderr=result.stderr))
+ return result,attempts
+
+report=[]
+for line in built.stdout.splitlines():
+ item=json.loads(line)
+ if item.get('reason')!='compiler-artifact' or not item.get('executable') or not item['profile']['test']: continue
+ exe=item['executable']
+ listing, listing_retries=invoke([exe,'--list','--format','terse'])
+ if listing.returncode: print(listing.stderr); sys.exit(listing.returncode)
+ listed=listing.stdout
+ for line in listed.splitlines():
+  name=line.removesuffix(': test')
+  if name not in cases: continue
+  result,startup_retries=invoke([exe,name,'--exact','--test-threads=1'])
+  output=result.stdout+result.stderr; (out/(name+'.log')).write_text(output)
+  passed=result.returncode==0 and '1 passed; 0 failed; 0 ignored' in result.stdout
+  report.append(dict(test=name,passed=passed,exit_code=result.returncode,startup_retries=startup_retries,listing_retries=listing_retries))
+  print(mode,name,'PASS' if passed else 'FAIL',flush=True)
+  if not passed: print(output[-10000:]); (out/'report.json').write_text(json.dumps(report,indent=2)); sys.exit(1)
+assert len(report)==len(cases),(len(report),len(cases))
+(out/'report.json').write_text(json.dumps(report,indent=2)+'\n')

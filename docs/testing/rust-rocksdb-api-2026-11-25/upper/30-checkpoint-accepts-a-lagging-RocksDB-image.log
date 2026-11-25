@@ -1,0 +1,14 @@
+note: verifying module recovery (selected functions)
+
+error: postcondition not satisfied
+  --> src/recovery.rs:54:13
+   |
+54 |     ensures ready <==> validated && materialized == applied,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+55 | {
+56 |     validated && materialized <= applied
+   |     ------------------------------------ at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

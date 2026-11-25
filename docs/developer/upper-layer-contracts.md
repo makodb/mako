@@ -174,6 +174,24 @@ A timestamp proposal must be positive, encodable and greater than its read
 dependencies. Allocation cannot wrap. The distributed row/redo timestamp is
 separate from Raft position, routing generation, transaction ID and cache HLC.
 
+## Rust RocksDB facade contract
+
+`mako-rocksdb::backend` assumes a session records point, absence and range
+observations, sees its staged writes, and commits through the existing global
+write-lock barrier and durable 2PC. Abort must release unprepared protection or
+report uncertainty and retain the stream. Resolution must use the saved identity,
+finish every participant and never reexecute the body. Production uses the
+runtime coordinator, not the storage adapter's local transaction entry point.
+
+The upper gate tests facade state, option rejection, binary keys, CF ownership,
+ordered atomic batches, poisoning, rollback and Drop, iterator bounds and
+explicit overflow errors, and unknown-result identities without native backends.
+The in-memory model is a test adapter, not a proof of engine serializability.
+Separate native tests cover both storage modes, affine thread ownership,
+cross-shard conflicts, migration routing, synchronous local/Raft logs, lost
+commit replies and saved-ID resolution after a process crash. The existing OCC
+and 2PC proofs continue to cover protocol policy; the facade adds no new protocol.
+
 ## Evidence and remaining trust
 
 | Decision or contract | Production mapping | Evidence |

@@ -1,0 +1,31 @@
+note: verifying module two_phase (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/two_phase.rs:169:5
+    |
+169 |     pub fn record_decision(&mut self, decision: Decision, saved: bool) -> (accepted: bool)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:172:13
+    |
+172 |             accepted ==> saved && !matches!(decision, Decision::Pending) && final(self).outcome() == decision,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+181 |         if !matches!(self.decision, Decision::Pending) { return same_decision(self.decision, decision); }
+    |                                                          --------------------------------------------- at this exit
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:176:13
+    |
+176 | /             accepted <==> saved && !matches!(decision, Decision::Pending)
+177 | |                 && if old(self).outcome() != Decision::Pending { old(self).outcome() == decision }
+178 | |                    else { decision == Decision::Abort || (old(self).prepared() && !old(self).vetoed()) },
+    | |________________________________________________________________________________________________________^ failed this postcondition
+...
+181 |           if !matches!(self.decision, Decision::Pending) { return same_decision(self.decision, decision); }
+    |                                                            --------------------------------------------- at this exit
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

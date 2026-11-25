@@ -1,0 +1,14 @@
+note: verifying module recovery (selected functions)
+
+error: postcondition not satisfied
+  --> src/recovery.rs:20:13
+   |
+20 |     ensures allowed <==> files_validated && files_published && requested <= checkpoint,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+21 | {
+22 |     files_validated && requested <= checkpoint
+   |     ------------------------------------------ at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

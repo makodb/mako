@@ -1,0 +1,30 @@
+note: verifying module coordinator (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/coordinator.rs:140:1
+    |
+140 | fn prepare<E: Effects>(effects: &mut E) -> (status: i32)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/coordinator.rs:145:9
+    |
+145 | /         status == OK ==> final(effects).stage() == Stage::Validated
+146 | |             && timestamp(final(effects).decision()) && final(effects).decision() > final(effects).dependency(),
+    | |______________________________________________________________________________________________________________^ failed this postcondition
+...
+162 |       effects.validate_remote()
+    |       ------------------------- at the end of the function body
+
+error: precondition not satisfied
+   --> src/coordinator.rs:159:5
+    |
+ 80 |             timestamp(value), value > old(self).dependency(),
+    |                               ------------------------------ failed precondition
+...
+159 |     effects.choose(proposal);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

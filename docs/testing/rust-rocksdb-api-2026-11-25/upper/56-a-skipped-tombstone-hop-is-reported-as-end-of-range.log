@@ -1,0 +1,14 @@
+note: verifying module walk (selected functions)
+
+error: postcondition not satisfied
+  --> crates/shard-host-core/src/walk.rs:44:13
+   |
+44 |     ensures old(engine).stable() && answer is Ok ==> answer->Ok_0 == old(engine).first(),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+66 |             Ok(Hop::Resume(key)) => return Ok(None),
+   |                                     --------------- at this exit
+
+verification results:: 1 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

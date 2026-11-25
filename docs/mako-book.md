@@ -21,6 +21,7 @@ verified decisions from assumptions about storage, RPC and replication.
 | --- | --- | --- |
 | Distributed protocol decisions | `crates/mako-protocol-core` | Verus-checked admission, write-lock barrier, prepare votes and immutable decisions |
 | Protocol composition | `crates/mako-protocol` | Coordinator driver, journal transitions, identities, wire encoding and transport contracts |
+| Rust RocksDB API | `crates/mako-rocksdb` | Compatible transaction API subset, column families, atomic batches, bounded iterators and saved-result resolution |
 | Runtime | `crates/mako-runtime` | Native adapters, service-owned participant workers, client, gateway, process ownership and recovery |
 | Sharding and migration | `src/cluster` | Immutable routing snapshots, admission, range transfer, receipts and publication |
 | Storage-host decisions | `crates/shard-host-core` | Checked translation between migration effects and physical storage |
@@ -306,6 +307,137 @@ page size. Individual wire messages and durable journal commands are bounded to
 4 MiB. Volatile prepared intents may aggregate bounded messages up to 128 MiB,
 which supports chunked large Redis values without enlarging the RPC frame limit.
 
+## Rust RocksDB compatibility
+
+`crates/mako-rocksdb` provides a Rust API subset modeled on the community
+[`rocksdb` crate 0.25.0](https://github.com/rust-rocksdb/rust-rocksdb/tree/v0.25.0).
+Its `OptimisticTransactionDB` and `DB` alias run Mako's distributed OCC + 2PC.
+Every committed write reaches the configured local or Raft decision log.
+The API supports direct RocksDB and RocksDB with optional Masstree through the
+same types and methods. It does not introduce another native RocksDB binding.
+
+Enable the `rocksdb-engine` Cargo feature. Enable `masstree-engine` as well to
+allow `Options::set_masstree(true)`. With default features disabled, the crate
+contains only the facade and backend contracts, which the fast upper gate tests
+without RocksDB, Masstree, SRPC or Raft.
+
+```rust
+use mako_rocksdb::{OptimisticTransactionDB, Options};
+
+let mut options = Options::default();
+options.create_if_missing(true);
+let db = OptimisticTransactionDB::open(&options, "/data/mako")?;
+let tx = db.transaction();
+tx.put(b"account:alice", b"100")?;
+tx.put(b"account:bob", b"200")?;
+tx.commit()?;
+assert_eq!(db.get(b"account:alice")?, Some(b"100".to_vec()));
+```
+
+`open` starts a durable single-shard node with four concurrent transaction
+streams by default. `open_default` enables creation. `open_cf` accepts the full
+set of column-family names and includes `default` automatically. Reopening must
+supply the same family set; order does not matter. Names map to stable raw table
+IDs. `set_error_if_exists` and `create_if_missing` are enforced. These directories
+contain Mako's common RocksDB data and transaction log, not an ordinary RocksDB
+application database. There is no on-disk compatibility or automatic import of
+an arbitrary RocksDB directory.
+
+For distributed deployments, `DB::open_config(MakoConfig)` starts and owns one
+shard using the existing runtime configuration. Raw governed or static tables
+become named column families, including a required `default` table. Opening
+returns once the listener starts, so replicas can be started before a quorum
+forms. `ready()` reports recovered coordinator authority on this handle;
+`wait_ready(Duration)` waits with a deadline. Followers stay open and replicate
+while not ready to coordinate transactions. Single-node `open` waits for readiness. Configure
+all shard peers, the same schema and worker count on every shard, and local
+persistence or Raft with synchronous durability. Warehouse tables and the
+runtime's origin-local `replicated` table kind are rejected by this API. The
+`replication` node setting still enables the normal Raft log. Point operations
+and scans use the transaction's captured migration routing epoch.
+
+The [compiled example](../crates/mako-rocksdb/examples/rocksdb_transactions.rs)
+shows transactions and batches across column families. In the build container:
+
+```sh
+cargo run --locked --manifest-path crates/Cargo.toml -p mako-rocksdb \
+  --features rocksdb-engine --example rocksdb_transactions -- /tmp/mako-api
+```
+
+Use the normal native build environment and `--features masstree-engine` to add
+`--masstree` to the example's arguments. The same directory can be reopened with
+that flag enabled or disabled.
+
+### Supported operations and options
+
+| API | Behavior |
+| --- | --- |
+| DB `get`, `put`, `delete`, and their `_cf` / `_opt` variants | Each call is one certified distributed transaction. Deleting an absent key succeeds. |
+| `transaction`, `transaction_opt` | Shared-reference transaction methods with consuming `commit`. A transaction starts on its first operation. |
+| Transaction `get`, `get_cf`, read-option variants, `get_for_update`, `get_for_update_cf` | Reads include staged writes. Both exclusive settings record OCC dependencies; write locks are acquired at prepare. |
+| Transaction `put`, `put_cf`, `delete`, `delete_cf` | Stage work until commit. An operation error poisons the attempt even if the application ignores it. |
+| `rollback` and Drop | Abort staged work. Successful explicit rollback allows reuse as a new attempt. Uncertain cleanup stays fenced. |
+| `multi_get` on DB or transaction | Preserve key order, duplicates and missing values. DB multi-get returns errors for all keys if final certification fails. |
+| `WriteBatch`, `write`, `write_opt` | Ordered puts and deletes commit atomically across families and shards. A foreign handle or invalid batch rejects the batch. |
+| `iterator`, `iterator_opt`, `iterator_cf`, `iterator_cf_opt` | Bytewise Start, End and From seek modes, forward or reverse. ReadOptions provide inclusive lower and exclusive upper bounds. |
+| `WriteOptions::set_sync` | Both values use synchronous durability. The facade does not weaken the configured durable log. |
+| `WriteOptions::disable_wal` | `false` is accepted; `true` returns NotSupported before work starts. |
+| `OptimisticTransactionOptions::set_snapshot` | `false` is accepted; `true` returns NotSupported. |
+| `Options::set_max_transactions` | Mako extension for the single-node coordinator stream limit. Distributed configuration uses `workers`. |
+
+Only listed methods and options are supported. There is no pessimistic
+`TransactionDB` alias, MVCC snapshot, savepoint, merge operator, raw/pinned
+iterator, dynamic column-family creation/deletion, SST import/export, custom
+comparator or RocksDB tuning facade. Unsupported methods are absent, and
+unsupported values of implemented options return an error. For `transaction_opt`,
+that error is reported by the first operation or commit. No C/C++ public
+compatibility layer is included.
+
+Iterators eagerly collect at most 4,096 rows and 4 MiB. Exceeding either limit
+returns an Incomplete item, never a successful truncated range. Use narrower
+bounds for larger scans. A DB iterator certifies its read transaction before
+returning rows. A transaction iterator leaves final certification to commit;
+its buffered rows do not change after later writes in that transaction. Iterators
+can themselves yield errors, so collect or handle their `Result` items.
+Keys are limited to 1,024 bytes and values to 65,535 bytes. Batches are limited
+to 4,096 operations and 4 MiB of key/value bytes; encoded durable transaction
+limits can reject a smaller batch because they also include metadata.
+
+### Isolation and uncertain results
+
+All Mako transaction reads, absence observations and ranges participate in OCC
+validation after the global write-lock barrier. This differs from plain reads in
+RocksDB's optimistic transaction API. It does not provide an MVCC view fixed at
+transaction creation. Values read during a transaction become certified only
+when commit succeeds. The facade adds no automatic transaction retry.
+
+DB is Send + Sync. A transaction is Send and not Sync. Internal threads own
+native workers and SRPC listeners, and the handle joins them during cleanup.
+Each started transaction reserves one coordinator stream until its terminal
+result is received. Exhausting the limit returns Busy rather than waiting while
+the same caller may hold another transaction.
+
+Busy reports a conflict or occupied stream. TryAgain reports changed routing or
+unavailable authority. An UnknownCommit error carries `transaction_id()` when an
+attempt exists. Save that identity and call `db.resolve(id)` against its
+coordinator. Resolution completes the recorded Commit or Abort at every
+participant and never reruns application code. It also works after reopening
+the coordinator with the same durable data. A missing registration stays unknown;
+it does not authorize treating the attempt as aborted. A lost commit reply keeps
+its stream unavailable until resolution succeeds.
+
+`pending_transactions()` lists uncertain results and failed Drop cleanup seen by
+this DB handle. The list itself is not persistent. Keep returned identities in
+the application if they must survive application restart. Resolution refuses a
+stream with a live transaction. Preserve an ID before commit with
+`tx.transaction_id()` after the first operation, or obtain it from the error.
+
+The older `mrxdb_rocksdb_compat.h` is a separate cache API and does not supply these
+distributed transaction semantics. The [implementation plan](plans/rust-rocksdb-api.md)
+records the completed work. The [qualification record](testing/rust-rocksdb-api-2026-11-25/README.md)
+contains the upper, native, sanitizer and build results. The final upper gate
+completed in 159 seconds on 32 CPUs, including the facade contract tests.
+
 ## Sharding and migration
 
 Routing uses immutable snapshots. An admitted transaction retains its snapshot
@@ -504,7 +636,7 @@ Use the fast upper gate for ordinary transaction, sharding and migration changes
 
 It disables C/C++ compilers, checks the dependency graph, verifies the production
 Verus cores, runs semantic negative controls, and executes deterministic
-contract tests. It has a five-minute deadline. Choose a CPU budget suitable for
+contract tests, including the backend-independent Rust RocksDB facade. It has a five-minute deadline. Choose a CPU budget suitable for
 the machine. Detailed reports record the source inputs and wall time. The
 [OCC + 2PC qualification](testing/occ-2pc-2026-11-25/README.md) records the
 checks for that cutover. The later

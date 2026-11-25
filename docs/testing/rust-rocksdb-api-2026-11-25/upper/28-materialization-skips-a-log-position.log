@@ -1,0 +1,17 @@
+note: verifying module recovery (selected functions)
+
+error: postcondition not satisfied
+  --> src/recovery.rs:46:13
+   |
+46 |       ensures valid <==> materialized < u64::MAX && first == materialized + 1
+   |  _____________^
+47 | |         && first <= last && last <= applied,
+   | |___________________________________________^ failed this postcondition
+48 |   {
+49 | /     materialized < u64::MAX
+50 | |         && first <= last && last <= applied
+   | |___________________________________________- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

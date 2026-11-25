@@ -1,0 +1,13 @@
+note: verifying module two_phase (selected functions)
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:230:13
+    |
+230 |     ensures yes <==> matches!(phase, Phase::Executing) || matches!(phase, Phase::Locked),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+231 | { matches!(phase, Phase::Executing | Phase::Prepared) || matches!(phase, Phase::Locked) }
+    |   ------------------------------------------------------------------------------------- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

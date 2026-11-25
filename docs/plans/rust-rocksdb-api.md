@@ -1,6 +1,6 @@
 # Rust RocksDB compatible transaction API
 
-Status: implementation in progress on `rust-rocksdb-compatible-api`.
+Status: complete and qualified locally on `rust-rocksdb-compatible-api`.
 Baseline: `ec345ef0a`. Implement, qualify, update the book and commit locally.
 Pushing is separate.
 
@@ -66,11 +66,32 @@ Performance campaigns remain manual or weekly. Adapter tests do not replace
 the isolated protocol proofs. New proof targets are needed only if this work
 changes a protocol invariant; the facade delegates OCC and 2PC unchanged.
 
-## Progress
+## Completion
 
-- The existing upper client uses service-owned participants. Its borrowed
-  worker is an ownership guard, so a bounded lane can safely own the existing
-  client and worker without introducing unsafe self-referential structures.
-- Point routing must use the transaction's captured routing epoch, matching
-  the existing routed scan. Resolution currently accepts only the original
-  client; a saved-identity runtime entry point is needed for reopened handles.
+- `bac254732` implements the facade, isolated tests, native adapter, captured
+  point routing, saved-identity resolution, opening options and build gates.
+  DB and transaction methods use the production coordinator in both modes.
+  Absent-key Delete preserves an absence read and succeeds. Unknown results
+  reserve their stream until resolution; repeated rollback cannot clear them.
+- `2616b062f` separates replica opening from coordinator readiness. Followers
+  can open before a quorum exists and remain available across failover. A
+  three-replica test resolves the original transaction identity on a new leader.
+- `43bdece32` corrects the existing replica-discovery fixture to retry only
+  RouteChanged aborts within a deadline. Unknown outcomes still fail the test.
+  The original optimized-suite failure is retained with the evidence.
+- The book's Rust RocksDB compatibility section and compiled example document
+  supported signatures, options, limits, durability and semantic differences.
+  The example reopens one directory in RocksDB, Masstree and RocksDB modes.
+- Final qualification passed 126 optimized cases, 28 focused API debug cases,
+  48 RocksDB-only cases and eight executable audits. The earlier full debug
+  suite passed 130 cases; the final fixture passed 15 combined and five
+  RocksDB-only replication cases. ASan and TSan each passed five selected cases
+  without startup retries or new suppressions. Strict Clippy, compile-fail
+  documentation and the 16-source native C++ audit passed.
+- The final upper gate passed in 158.959 seconds on 32 CPUs: 49 workspace tests,
+  24 sharding tests, production proofs and 29 semantic negative controls. Its
+  source-input hashes still match after the test-fixture correction.
+
+All stages are complete. The [qualification record](../testing/rust-rocksdb-api-2026-11-25/README.md)
+contains raw evidence and scope limits. Performance campaigns and pushing are
+separate from this feature.

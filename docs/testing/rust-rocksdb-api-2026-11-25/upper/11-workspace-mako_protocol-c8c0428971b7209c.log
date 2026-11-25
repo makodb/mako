@@ -1,0 +1,13 @@
+
+running 8 tests
+test admission::tests::committed_receipt_survives_retries_and_abort_cannot_relabel_it ... ok
+test admission::tests::duplicates_require_identical_payload_and_stale_packets_cannot_adopt_a_new_attempt ... ok
+test admission::tests::higher_term_cancels_uninstalled_attempt_and_abort_creates_cancellation_fence ... ok
+test admission::tests::install_requires_validation_and_unknown_fences_even_newer_terms ... ok
+test admission::tests::stream_handoff_requires_cleanup_and_stale_open_cannot_revive_old_packets ... ok
+test epoch::tests::cut_never_wraps_or_accepts_future_epochs ... ok
+test epoch::tests::cut_waits_for_all_prior_pins_but_not_new_arrivals ... ok
+test redo::tests::redo_validates_entire_unit_before_exposing_rows ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

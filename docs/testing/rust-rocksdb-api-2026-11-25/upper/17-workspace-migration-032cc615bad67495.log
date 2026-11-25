@@ -1,0 +1,7 @@
+
+running 2 tests
+test aborted_copy_cleans_destination_and_cannot_resurrect_on_delayed_start ... ok
+test handoff_waits_for_drain_and_exact_copy_then_publishes_and_cleans_source ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
