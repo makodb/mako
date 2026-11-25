@@ -1,0 +1,6 @@
+{
+  "revision": "806379424a859c7d6e0d0ed0394ff467c9469417",
+  "rustflags": "-Zsanitizer=thread -Zexternal-clangrt --sysroot=/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-sanitizer-sysroot -C force-frame-pointers=yes -C link-arg=-fsanitize=thread -C link-arg=--config=/var/tmp/mako-shard-rust/build_native_san_thread_05/clang-gnu-unwind.cfg",
+  "native_sha256": "852a3d73f44b5a1e86ed0217b316b0e573e0e7b66bd9f5abf4c190f7c31b4e05",
+  "prior_qualified_manifest": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-sto-sanitizer-manifest.txt"
+}

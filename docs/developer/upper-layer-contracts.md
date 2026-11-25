@@ -35,6 +35,12 @@ only the requested cell; errors preserve the selected window. Admission and
 completed drain provide exclusion for that window. A global database snapshot
 or exclusion of unrelated ranges is not assumed.
 
+A returned raw-store error must be definite and leave the selected window
+unchanged. The native storage host maps ambiguous installation or cleanup to
+`Mapped::FailStop` and aborts the process. Its callback contract has no unknown
+outcome variant. The distributed participant interface does represent unknown
+outcomes and retains the epoch guard in the live store's quarantine.
+
 The Masstree/STO adapter supplies these facts. RocksDB is behind a persistence
 adapter. Verifying the upper layer does not verify either storage implementation.
 Component tests check their internal behavior; adapter integration tests check
@@ -101,7 +107,7 @@ whole-system proof.
 | Physical participant and retained epoch | `mako-runtime/src/receiver.rs::NativeEngine` implements `ParticipantEngine`; generic `Lane` owns protocol state | In-memory lane tests; native unknown-install teardown regression |
 | Delivery and leader discovery | `mako-runtime/src/rpc.rs::Network` implements `Transport` | Virtual deadlines, dropped requests/replies, stale reply rejection; separate SRPC suite |
 | Remote sequencing and routing binding | `mako-protocol/src/remote.rs` and gateway SDK | Production code in isolated tests; native runtime tests retain real transport coverage |
-| Log admission and durable receipts | `mako-runtime/src/storage.rs`, local disk and replicated log adapters implement `CommitLog` | Failure injection at log acknowledgement; separate RocksDB/Raft restart and receipt tests |
+| Log admission and durable receipts | `mako-runtime/src/replication.rs::{LocalLog,ReplicatedLog}` and `gateway.rs::GatewayLog` implement `CommitLog` | Failure injection at log acknowledgement; separate RocksDB/Raft restart and receipt tests |
 | Migration storage and source | Existing `RawStore` / `Source`, implemented by native storage host | Complete production sharding/transfer proof; ordered in-memory cells with byte, absence and outside-range oracles |
 | Clock reservation | `mako-clock`, called by `CoordinatorEffects` | Bounded timestamp contract, exhaustion scenario, and separate clock component tests |
 

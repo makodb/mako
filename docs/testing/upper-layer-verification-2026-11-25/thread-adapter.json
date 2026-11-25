@@ -1,0 +1,1020 @@
+{
+  "passed": true,
+  "tests": [
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "capacity",
+        "registry_budget_is_shared_and_exhaustion_does_not_poison_existing_tables"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/51d30e2cfe370932/out/capacity-51d30e2cfe370932",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-0.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "capacity",
+        "scalar_capacity_aborts_staged_changes_and_preserves_existing_access"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/51d30e2cfe370932/out/capacity-51d30e2cfe370932",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-1.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "delivery_full",
+        "full_delivery_preserves_scalar_empty_zero_line_and_rollback_semantics"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/454ddc014779caa2/out/delivery_full-454ddc014779caa2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-2.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::a_panic_inside_scan_next_is_contained_and_closes_the_attempt"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-3.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::engine_status_mapping_is_total_and_stops_on_indefinite_outcomes"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-4.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::fixed_warehouse_rows_use_coordinate_then_physical_key"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-5.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::scan_next_returns_retry_when_a_row_changes_between_walk_and_validation"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-6.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::status_numbers_and_span_layout_are_stable"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-7.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::table_registry_rejects_conflicts_and_bad_ids"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-8.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "shard_host::tests::verbs_refuse_an_unentered_thread"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-9.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::attached_worker_creates_tables_without_disturbing_its_transaction"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-10.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::checked_get_zeroes_actual_before_rejecting_an_invalid_handle"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-11.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::dense_item_and_stock_paths_warm_mix_and_disable_on_warehouse_mismatch"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-12.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fixed_key_views_require_exact_nonoverflowing_storage"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-13.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fixed_mutation_access_error_reports_only_the_delivered_prefix"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-14.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fixed_mutation_preserves_actions_duplicates_size_and_failure_boundaries"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-15.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fixed_put_supports_all_widths_mixed_rows_duplicates_abort_and_scratch_reuse"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-16.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fixed_read_visits_all_widths_and_aborts_on_callback_failure"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-17.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::fused_new_order_header_reports_registry_exhaustion_as_a_resource_outcome"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-18.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::insert_many_accounting_failure_aborts_staged_transaction"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-19.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::last_error_copy_rejects_overlapping_outputs_before_writing"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-20.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::last_error_copy_validates_scalar_and_output_ranges"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-21.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::last_error_is_bounded_and_utf8"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-22.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::last_only_lane_does_not_grow_the_inline_cache_object"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-23.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::last_only_policy_isolates_its_fixed_lane_from_full_cache"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-24.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::logical_row_adjustment_preserves_value_on_overflow_and_underflow"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-25.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::new_order_codecs_preserve_stock_tail_and_value_layouts"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-26.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::new_order_stock_tokens_drive_stock_level_hit_and_compact_miss_paths"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-27.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_customer_codec_matches_field_order_and_grows_varints"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-28.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_customer_codec_rejects_truncation_malformed_values_and_overflow"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-29.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_name_selection_uses_lower_median_through_the_cpp_limit"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-30.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_output_ranges_detect_overlap_without_rejecting_adjacency"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-31.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_private_abi_layout_is_stable"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-32.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_tail_codecs_match_mako_packed_layouts"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-33.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::payment_zigzag_varints_cover_boundaries_and_reject_malformed_forms"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-34.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::post_install_row_count_failure_marks_runtime_indeterminate"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-35.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::public_and_trusted_byte_endpoints_reject_impossible_ranges"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-36.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::raw_slice_views_reject_impossible_ranges_before_dereference"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-37.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::resolved_cache_hash_distributes_big_endian_customer_ids"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-38.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::resolved_cache_reuses_point_misses_and_only_small_scan_rows"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-39.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::row_count_is_published_before_conflicting_writer_can_commit"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-40.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::shared_ffi_boundary_contains_panics"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-41.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::stable_resolved_cache_policies_match_header"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-42.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::stable_status_numbers_match_header"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-43.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::terminal_capacity_exhaustion_is_fatal_not_retryable"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-44.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::thread_affinity_cookie_is_stable_and_distinct"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-45.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "lib",
+        "tests::worker_owner_runtime_id_remains_accessible_during_transaction"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/58dff0d8642a05ab/out/sto_tpcc_ffi-58dff0d8642a05ab",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-46.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "coordinator_adapts_phases_and_owns_remote_cleanup"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-47.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "coordinator_conflict_aborts_but_log_failure_fences_worker"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-48.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "forgotten_guard_keeps_tables_alive_until_explicit_cleanup"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-49.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "owned_api_preserves_crud_scan_abort_and_table_lifetime"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-50.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "owned_replay_preserves_source_metadata_tombstones_and_clock"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-51.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "retained_participant_cannot_silently_abort_after_installation"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-52.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "shared_tables_preserve_conflicts_between_affine_workers"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-53.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_api",
+        "table_from_another_database_is_rejected_before_access"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/21751279c77c0c1a/out/native_api-21751279c77c0c1a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-54.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "additive_cache_policy_creator_preserves_crud_and_rejects_unknown_values"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-55.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "borrowed_point_and_scan_bytes_preserve_ffi_results_and_read_your_writes"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-56.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "bounded_atomic_value_config_round_trips_cell_boundaries_through_the_c_abi"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-57.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "ffi_crud_scan_read_your_writes_and_cross_table_atomicity"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-58.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "fixed_mutation_batches_preserve_duplicate_order_size_and_abort_recovery"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-59.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "fixed_put_packs_variable_values_and_reports_sequential_duplicates"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-60.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "heterogeneous_insert_many_preserves_order_duplicates_and_validation_atomicity"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-61.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "sealed_directory_keeps_existing_rows_mutable_and_rejects_new_keys"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-62.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_ffi",
+        "streaming_scan_counts_rows_delivered_before_a_later_error_and_reuses_thread_scratch"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/efbe7d5954f36204/out/native_ffi-efbe7d5954f36204",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-63.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_migration",
+        "migration_worker_keeps_registered_storage_alive_through_scan_and_cleanup"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/691e14e79430a393/out/native_migration-691e14e79430a393",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-64.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "native_migration",
+        "warehouse_migration_uses_coordinate_then_key_and_rejects_foreign_database"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/691e14e79430a393/out/native_migration-691e14e79430a393",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-65.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "new_order_full",
+        "full_new_order_commits_exact_bytes_and_rolls_back_collisions"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/16c50a2f7f322fcc/out/new_order_full-16c50a2f7f322fcc",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-66.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "payment_full",
+        "full_payment_commits_gc_bc_and_duplicate_history_as_a_noop"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/df17280bf68e0a4a/out/payment_full-df17280bf68e0a4a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-67.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "payment_prefix",
+        "payment_prefix_commits_aborts_scans_and_fails_atomically"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/c1f9ed8e30421813/out/payment_prefix-c1f9ed8e30421813",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-68.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "protocol",
+        "coordinator_final_write_log_replays_original_decision_without_relogging"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/3cf8c841970ab5a2/out/protocol-3cf8c841970ab5a2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-69.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "protocol",
+        "coordinator_log_uncertainty_cannot_be_retried_or_aborted_after_publication"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/3cf8c841970ab5a2/out/protocol-3cf8c841970ab5a2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-70.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "protocol",
+        "historical_mutations_publish_tombstones_without_corrupting_physical_cardinality"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/3cf8c841970ab5a2/out/protocol-3cf8c841970ab5a2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-71.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "protocol",
+        "remote_unconditional_put_supersedes_an_unsent_duplicate_insert"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/3cf8c841970ab5a2/out/protocol-3cf8c841970ab5a2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-72.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "protocol",
+        "retained_participant_repeated_locking_installs_copied_final_payload_and_metadata"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/3cf8c841970ab5a2/out/protocol-3cf8c841970ab5a2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-73.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "oversized_values_unregistered_tables_and_foreign_contexts_are_refused_without_effect"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-74.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "protocol_scan_with_limit_one_cannot_cross_more_tombstones_than_the_item_cap"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-75.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "put_and_remove_commit_through_the_protocol_over_rows_with_history"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-76.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "scan_next_crosses_five_thousand_tombstones_and_returns_the_first_live_row"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-77.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "scan_next_orders_empty_nul_and_prefix_keys_and_honours_bounds"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-78.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "scan_next_returns_the_newest_committed_version_and_no_deleted_row_with_history"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-79.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "shard_host",
+        "verbs_leave_the_thread_handle_idle_on_every_path"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/756f75eddf38b097/out/shard_host-756f75eddf38b097",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-80.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "stock_level_full",
+        "foreign_runtime_table_aborts_fused_attempt_and_worker_reuses"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/a2131078ca33ff9a/out/stock_level_full-a2131078ca33ff9a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-81.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "stock_level_full",
+        "full_stock_level_matches_scalar_scan_dedup_threshold_and_failure_semantics"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/a2131078ca33ff9a/out/stock_level_full-a2131078ca33ff9a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-82.log"
+    },
+    {
+      "identity": [
+        "sto-tpcc-ffi",
+        "trusted_ffi",
+        "trusted_endpoints_share_public_transaction_semantics"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-tpcc-ffi/8ab5fac47afb20a7/out/trusted_ffi-8ab5fac47afb20a7",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/thread/adapter-83.log"
+    }
+  ],
+  "quarantine": [
+    [
+      "sto-tpcc-ffi",
+      "lib",
+      "tests::post_install_row_count_failure_marks_runtime_indeterminate"
+    ]
+  ]
+}

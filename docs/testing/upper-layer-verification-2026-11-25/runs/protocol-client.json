@@ -1,0 +1,392 @@
+{
+  "passed": true,
+  "revision": "719d8526c1df2218fa7d58fb006ef2d87538855b",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "budget_seconds": 300,
+  "seconds": 226.997,
+  "workspace_dependencies": [
+    "bincode",
+    "cfg-if",
+    "convert_case",
+    "equivalent",
+    "hashbrown",
+    "indexmap",
+    "libc",
+    "lock_api",
+    "mako-clock",
+    "mako-engine-api",
+    "mako-protocol",
+    "mako-protocol-core",
+    "mako-sharding",
+    "parking_lot",
+    "parking_lot_core",
+    "proc-macro2",
+    "quote",
+    "scopeguard",
+    "serde",
+    "serde_core",
+    "serde_derive",
+    "shard-host-core",
+    "smallvec",
+    "syn",
+    "synstructure",
+    "unicode-ident",
+    "verus_builtin",
+    "verus_builtin_macros",
+    "verus_prettyplease",
+    "verus_state_machines_macros",
+    "verus_syn",
+    "vstd"
+  ],
+  "sharding_dependencies": [
+    "convert_case",
+    "equivalent",
+    "hashbrown",
+    "indexmap",
+    "mako-sharding",
+    "proc-macro2",
+    "quote",
+    "syn",
+    "synstructure",
+    "unicode-ident",
+    "verus_builtin",
+    "verus_builtin_macros",
+    "verus_prettyplease",
+    "verus_state_machines_macros",
+    "verus_syn",
+    "vstd"
+  ],
+  "workspace_tests": 21,
+  "sharding_tests": 24,
+  "case": "protocol-client",
+  "proofs": [
+    {
+      "name": "production-sharding",
+      "seconds": 170.397,
+      "exit": 0,
+      "verified": 1495,
+      "errors": 0,
+      "log_sha256": "e3cc2a82efbd8439e4e64678483d396162031cf55239f36c69af35ae899aafbb"
+    },
+    {
+      "name": "storage-host-core",
+      "seconds": 1.347,
+      "exit": 0,
+      "verified": 40,
+      "errors": 0,
+      "log_sha256": "5bf3511eb483acdb478739b05b04a066295cee72637409673a01373841439f8c"
+    },
+    {
+      "name": "transaction-protocol-core",
+      "seconds": 1.177,
+      "exit": 0,
+      "verified": 22,
+      "errors": 0,
+      "log_sha256": "87624fc1cae1ff43cb5cd930410718fc352bc5214d68267edb379303824564b4"
+    },
+    {
+      "name": "stale sequence executes",
+      "seconds": 0.909,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "2c7805b4b0b19970f3a637f99e4c0d963cda4217e18e39a6bf0e950d1f341e1a"
+    },
+    {
+      "name": "install bypasses validation",
+      "seconds": 0.935,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "611cf039766d2c887971b2855fb407980430e38a17defe4f2311b00a9992e398"
+    },
+    {
+      "name": "unknown releases migration protection",
+      "seconds": 0.864,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "fa46156b426f4c8e60c992535f896439075ec6eaa5cf1818ecdf2390909e7443"
+    },
+    {
+      "name": "failed install becomes aborted",
+      "seconds": 0.832,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "2830f1aaf857960058b4e94259c25535dedc84cc6663e80faecbbb6cd4589492"
+    },
+    {
+      "name": "timestamp equals dependency",
+      "seconds": 0.903,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "bf0d75be545c1903a9b59fd35f0f2f231df9cf59b33ef3cdf18c5faba3245ea9"
+    },
+    {
+      "name": "local install failure permits retry",
+      "seconds": 0.868,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "a057d4e9e4c67c662aeb04ec9c7a4a39e5f245bcb7b4397b520fb6c8b33f6108"
+    },
+    {
+      "name": "remote validation omitted",
+      "seconds": 0.873,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "e46dbd8d3384e81354e3746342e1065c92836fdf27b6df89d2d4e6f9e26fa552"
+    },
+    {
+      "name": "coordinator rejects all available attempts",
+      "seconds": 0.839,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "f26efb67a20eeeef09a1249be630027295ea030e6adda4f2768b90e19d7f8a14"
+    },
+    {
+      "name": "a terminal whose install result is unknown releases its read view",
+      "seconds": 19.144,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "8ab3b7682ce938af540fd57dfe8ef91c84d91f03a1feb572d4dbf24d18440725"
+    },
+    {
+      "name": "epoch point admission permits Frozen authority",
+      "seconds": 19.074,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "f39ae94f397806cbe93c1c1c61b4b6857af6f5269ffaef1a233b40cc43b9c418"
+    },
+    {
+      "name": "a staged write is finished read-only instead of committed",
+      "seconds": 0.898,
+      "exit": 1,
+      "verified": 0,
+      "errors": 1,
+      "log_sha256": "f0b6dcf34dd1fe043e8b854210fcb616fd62d2d5c80d0dcb7669771c5ac0f933"
+    },
+    {
+      "name": "a skipped tombstone hop is reported as end of range",
+      "seconds": 0.878,
+      "exit": 1,
+      "verified": 1,
+      "errors": 1,
+      "log_sha256": "2f7a1d6fe0815ae28622d14bcb67758c51f615ddbb386f5eca8cf3a09a0d0d29"
+    }
+  ],
+  "source_manifest": "../source-inputs.json",
+  "local_full_report": "/var/tmp/mako-shard-rust/build_docker/upper/runs/20261125T012336-qk82nx37/report.json",
+  "stages": [
+    {
+      "name": "revision",
+      "seconds": 0.015,
+      "exit": 0,
+      "log": "0-revision.log"
+    },
+    {
+      "name": "working-diff",
+      "seconds": 4.585,
+      "exit": 0,
+      "log": "1-working-diff.log"
+    },
+    {
+      "name": "new-files",
+      "seconds": 0.03,
+      "exit": 0,
+      "log": "2-new-files.log"
+    },
+    {
+      "name": "compiler",
+      "seconds": 0.013,
+      "exit": 0,
+      "log": "3-compiler.log"
+    },
+    {
+      "name": "sysroot",
+      "seconds": 0.024,
+      "exit": 0,
+      "log": "4-sysroot.log"
+    },
+    {
+      "name": "sharding-source-audit",
+      "seconds": 0.387,
+      "exit": 0,
+      "log": "5-sharding-source-audit.log"
+    },
+    {
+      "name": "workspace-dependencies",
+      "seconds": 0.079,
+      "exit": 0,
+      "log": "6-workspace-dependencies.log"
+    },
+    {
+      "name": "workspace-compile",
+      "seconds": 0.706,
+      "exit": 0,
+      "log": "7-workspace-compile.log"
+    },
+    {
+      "name": "workspace-coordinator-51d2f9ffa1f6372f",
+      "seconds": 0.002,
+      "exit": 0,
+      "log": "8-workspace-coordinator-51d2f9ffa1f6372f.log"
+    },
+    {
+      "name": "workspace-mako_protocol_core-a7623c1c532f397c",
+      "seconds": 0.002,
+      "exit": 0,
+      "log": "9-workspace-mako_protocol_core-a7623c1c532f397c.log"
+    },
+    {
+      "name": "workspace-shard_host_core-6e8cd7a900700096",
+      "seconds": 0.009,
+      "exit": 0,
+      "log": "10-workspace-shard_host_core-6e8cd7a900700096.log"
+    },
+    {
+      "name": "workspace-mako_protocol-c8c0428971b7209c",
+      "seconds": 0.002,
+      "exit": 0,
+      "log": "11-workspace-mako_protocol-c8c0428971b7209c.log"
+    },
+    {
+      "name": "workspace-gateway-123660ad29c6fae4",
+      "seconds": 0.002,
+      "exit": 0,
+      "log": "12-workspace-gateway-123660ad29c6fae4.log"
+    },
+    {
+      "name": "workspace-migration-032cc615bad67495",
+      "seconds": 0.002,
+      "exit": 0,
+      "log": "13-workspace-migration-032cc615bad67495.log"
+    },
+    {
+      "name": "workspace-delivery-b73695e0dd799cbd",
+      "seconds": 0.003,
+      "exit": 0,
+      "log": "14-workspace-delivery-b73695e0dd799cbd.log"
+    },
+    {
+      "name": "sharding-dependencies",
+      "seconds": 0.074,
+      "exit": 0,
+      "log": "15-sharding-dependencies.log"
+    },
+    {
+      "name": "sharding-compile",
+      "seconds": 0.057,
+      "exit": 0,
+      "log": "16-sharding-compile.log"
+    },
+    {
+      "name": "sharding-mako_sharding-9689215b9a14bd9f",
+      "seconds": 0.007,
+      "exit": 0,
+      "log": "17-sharding-mako_sharding-9689215b9a14bd9f.log"
+    },
+    {
+      "name": "production-sharding",
+      "seconds": 170.397,
+      "exit": 0,
+      "log": "18-production-sharding.log"
+    },
+    {
+      "name": "storage-host-core",
+      "seconds": 1.347,
+      "exit": 0,
+      "log": "19-storage-host-core.log"
+    },
+    {
+      "name": "transaction-protocol-core",
+      "seconds": 1.177,
+      "exit": 0,
+      "log": "20-transaction-protocol-core.log"
+    },
+    {
+      "name": "stale sequence executes",
+      "seconds": 0.909,
+      "exit": 1,
+      "log": "21-stale-sequence-executes.log"
+    },
+    {
+      "name": "install bypasses validation",
+      "seconds": 0.935,
+      "exit": 1,
+      "log": "22-install-bypasses-validation.log"
+    },
+    {
+      "name": "unknown releases migration protection",
+      "seconds": 0.864,
+      "exit": 1,
+      "log": "23-unknown-releases-migration-protection.log"
+    },
+    {
+      "name": "failed install becomes aborted",
+      "seconds": 0.832,
+      "exit": 1,
+      "log": "24-failed-install-becomes-aborted.log"
+    },
+    {
+      "name": "timestamp equals dependency",
+      "seconds": 0.903,
+      "exit": 1,
+      "log": "25-timestamp-equals-dependency.log"
+    },
+    {
+      "name": "local install failure permits retry",
+      "seconds": 0.868,
+      "exit": 1,
+      "log": "26-local-install-failure-permits-retry.log"
+    },
+    {
+      "name": "remote validation omitted",
+      "seconds": 0.873,
+      "exit": 1,
+      "log": "27-remote-validation-omitted.log"
+    },
+    {
+      "name": "coordinator rejects all available attempts",
+      "seconds": 0.839,
+      "exit": 1,
+      "log": "28-coordinator-rejects-all-available-attempts.log"
+    },
+    {
+      "name": "a terminal whose install result is unknown releases its read view",
+      "seconds": 19.144,
+      "exit": 1,
+      "log": "29-a-terminal-whose-install-result-is-unknown-releases-its-read-view.log"
+    },
+    {
+      "name": "epoch point admission permits Frozen authority",
+      "seconds": 19.074,
+      "exit": 1,
+      "log": "30-epoch-point-admission-permits-Frozen-authority.log"
+    },
+    {
+      "name": "a staged write is finished read-only instead of committed",
+      "seconds": 0.898,
+      "exit": 1,
+      "log": "31-a-staged-write-is-finished-read-only-instead-of-committed.log"
+    },
+    {
+      "name": "a skipped tombstone hop is reported as end of range",
+      "seconds": 0.878,
+      "exit": 1,
+      "log": "32-a-skipped-tombstone-hop-is-reported-as-end-of-range.log"
+    }
+  ]
+}

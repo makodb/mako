@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "runs": [
+    {
+      "case": "unchanged",
+      "seconds": 227.625,
+      "report": "runs/unchanged.json"
+    },
+    {
+      "case": "transaction-core",
+      "seconds": 226.796,
+      "report": "runs/transaction-core.json"
+    },
+    {
+      "case": "protocol-client",
+      "seconds": 226.997,
+      "report": "runs/protocol-client.json"
+    },
+    {
+      "case": "migration",
+      "seconds": 232.675,
+      "report": "runs/migration.json"
+    },
+    {
+      "case": "shared-contract",
+      "seconds": 226.973,
+      "report": "runs/shared-contract.json"
+    }
+  ],
+  "median_seconds": 226.997,
+  "maximum_seconds": 232.675,
+  "same_source_in_all_runs": true
+}

@@ -13,8 +13,9 @@ the existing transaction algorithm and verified sharding/storage-host cores.
 
 The user approved the six-step test organization plan. Component correctness,
 real-adapter integration, extended correctness and performance keep separate
-commands and CI jobs. Performance runs weekly and on demand, on controlled
-hardware. Plain compilation does not run these suites.
+commands and CI jobs. Performance runs weekly and on demand, retaining environment-matched
+baselines. A dedicated runner supplies stable release comparisons; hosted-runner
+samples are diagnostic. Plain compilation does not run these suites.
 
 ## Completion criteria
 
@@ -49,9 +50,9 @@ hardware. Plain compilation does not run these suites.
 | 1 | Inventory current gates, establish baseline, define dependency/contracts map | Complete |
 | 2 | Separate production upper-layer code from lower implementations | Complete |
 | 3 | Prove protocol decisions and add deterministic executable scenarios and negative controls | Complete |
-| 4 | Build the fast command and qualify its dependency closure and runtime budget | In progress |
-| 5 | Separate component/integration/extended CI and weekly/manual performance | In progress |
-| 6 | Run production adapter regressions, repeat timing measurements, document and commit | In progress |
+| 4 | Build the fast command and qualify its dependency closure and runtime budget | Complete |
+| 5 | Separate component/integration/extended CI and weekly/manual performance | Complete |
+| 6 | Run production adapter regressions, repeat timing measurements, document and commit | Complete |
 
 ## Initial findings
 
@@ -117,3 +118,38 @@ timings, failures and fixes below.
   component ownership, unknown build files, schedules, performance-only edits
   and documentation. Eight selector and three baseline-comparison tests pass;
   workflow YAML/job references validate.
+
+- Native release regressions passed all 84 adapter and 45 runtime/process cases.
+  The production build and source/link audit passed: 16 native storage source
+  files, 12 production executable links and 40 Rust archives.
+- Reused the previously qualified instrumented native libraries and pinned
+  nightly standard-library builds, rebuilt the changed Rust code, and reran
+  all 84 adapter + 45 runtime cases in both ASan and TSan. Both passed. These
+  are focused adapter/runtime regressions, not new full component campaigns.
+- The performance runner completed warmup plus one two-second sample for each
+  of three topologies, then repeated them against the saved matching baseline.
+  Baseline comparison reported comparable for every topology. This qualifies
+  the runner and reporting path; these short samples are not performance claims.
+- Shared-contract and component CI selection is validated. The weekly workflow
+  supports a dedicated `MAKO_PERF_RUNNER` and stores matching baseline/results.
+  Workflow files are committed locally; remote scheduling activates after they
+  reach the repository's default branch. The upper job fetches submodules for
+  sibling Cargo workspace metadata, but compiles only the audited pure graph.
+
+- Final five-run qualification passed on four logical CPUs of an AMD Ryzen
+  Threadripper 2990WX in `mako-build:merge`, Rust 1.97.1. Every run verified
+  the same source bytes. Times were 227.625 seconds unchanged, 226.796 after
+  touching transaction admission, 226.997 after touching the gateway client,
+  232.675 after touching migration, and 226.973 after touching the shared
+  contracts. Median 226.997 seconds; maximum 232.675 seconds. All meet the
+  five-minute ceiling. The initial typical 2–3 minute target was optimistic
+  on this host; the measured development check takes about four minutes.
+- Each sample checked 1495 + 40 + 22 complete positive proof obligations,
+  12 semantic negative controls, 45 executable cases, dependency boundaries,
+  pin integrity and source correspondence. No ignored cases or cached proof
+  results supplied success. The dependency graph contains none of the lower
+  implementations and C/C++ compilers are disabled for its Cargo builds.
+- [Committed evidence](../testing/upper-layer-verification-2026-11-25/README.md)
+  records per-stage timing, source hashes, component boundaries, native link
+  audits, sanitizer inventories and performance-runner smoke comparisons.
+  All six stages are complete. No protocol changes remain pending.

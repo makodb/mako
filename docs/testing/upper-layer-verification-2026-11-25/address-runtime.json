@@ -1,0 +1,546 @@
+{
+  "passed": true,
+  "tests": [
+    {
+      "identity": [
+        "mako-runtime",
+        "benchmark_process",
+        "two_replicated_shards_run_native_tpcc_and_retain_committed_order_counts"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/9d11fad9e279c2b9/out/benchmark_process-9d11fad9e279c2b9",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-0.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "client_process",
+        "native_gateway_cli_roundtrips_binary_values_and_session_contract"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/0d36bb2ff1facff2/out/client_process-0d36bb2ff1facff2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-1.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "client_process",
+        "redis_exec_is_atomic_across_shards_and_idle_clients_do_not_own_workers"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/0d36bb2ff1facff2/out/client_process-0d36bb2ff1facff2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-2.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "client_process",
+        "redis_large_records_long_keys_and_large_atomic_batches"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/0d36bb2ff1facff2/out/client_process-0d36bb2ff1facff2",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-3.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "configuration",
+        "existing_topologies_and_raft_fragments_translate_to_reviewable_native_configuration"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/f828c93fc02b859f/out/configuration-f828c93fc02b859f",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-4.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "configuration",
+        "native_cli_prints_converted_config_without_opening_listeners_or_storage"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/f828c93fc02b859f/out/configuration-f828c93fc02b859f",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-5.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "configuration",
+        "native_executable_runs_two_colocated_shards_from_yaml_and_joins_workers"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/f828c93fc02b859f/out/configuration-f828c93fc02b859f",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-6.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "configuration",
+        "typed_yaml_anchors_parse_and_invalid_topologies_are_rejected_before_startup"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/f828c93fc02b859f/out/configuration-f828c93fc02b859f",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-7.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "coordinator",
+        "failed_abort_is_reported_as_unknown_and_fences_the_client_immediately"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b75c6edd687e2421/out/coordinator-b75c6edd687e2421",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-8.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "coordinator",
+        "ignoring_a_remote_operation_error_cannot_commit_a_partial_local_body"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b75c6edd687e2421/out/coordinator-b75c6edd687e2421",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-9.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "coordinator",
+        "native_coordinator_commits_across_shards_and_releases_remote_body_errors"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b75c6edd687e2421/out/coordinator-b75c6edd687e2421",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-10.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "durable",
+        "committed_rows_reopen_with_tombstones_and_checkpoint_generations"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/98d47618c291872e/out/durable-98d47618c291872e",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-11.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "gateway",
+        "forwarded_gateway_resolves_lost_reply_without_replaying_effect"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b01ae3e0e472f66d/out/gateway-b01ae3e0e472f66d",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-12.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "gateway",
+        "native_gateway_retains_mutation_result_bits_and_exact_read_bytes"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b01ae3e0e472f66d/out/gateway-b01ae3e0e472f66d",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-13.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "gateway",
+        "unknown_gateway_commit_is_not_reexecuted_or_reported_as_an_abort"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b01ae3e0e472f66d/out/gateway-b01ae3e0e472f66d",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-14.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "gateway_client::tests::unresolved_sdk_request_retains_identity_and_original_routing_tuple"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-15.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "redis::records::tests::chunk_growth_shrink_delete_and_missing_chunk_detection"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-16.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "redis::records::tests::forced_hash_collisions_and_deleted_slots_preserve_full_key_identity"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-17.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "redis::tests::resp_bounds_binary_fragmentation_and_pipeline"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-18.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "rpc::tests::native_srpc_preserves_owned_request_and_reply_across_worker_threads"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-19.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "lib",
+        "rpc::tests::timed_out_install_is_unknown_and_pending_call_is_cancelled"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/89dd85b1946c147a/out/mako_runtime-89dd85b1946c147a",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-20.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "migration",
+        "failed_cold_start_leaves_only_owned_weak_callback_anchors"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/957ebb942d897588/out/migration-957ebb942d897588",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-21.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "migration",
+        "native_migration_drains_old_admission_and_copies_latest_raw_and_warehouse_rows"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/957ebb942d897588/out/migration-957ebb942d897588",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-22.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "migration",
+        "paged_scans_preserve_binary_cursors_order_and_limits_across_migrated_ranges"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/957ebb942d897588/out/migration-957ebb942d897588",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-23.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "participant",
+        "failed_install_is_retained_as_unknown_and_blocks_migration_drain"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/abdd65e0a55d4cd7/out/participant-abdd65e0a55d4cd7",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-24.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "participant",
+        "new_attempt_cannot_steal_locks_and_delayed_abort_cannot_cancel_its_successor"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/abdd65e0a55d4cd7/out/participant-abdd65e0a55d4cd7",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-25.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "participant",
+        "retained_srpc_participant_commits_replays_receipt_scans_and_aborts"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/abdd65e0a55d4cd7/out/participant-abdd65e0a55d4cd7",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-26.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "process",
+        "local_disk_server_recovers_rows_and_receipts_after_sigkill_without_raft"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/8a6875ab4b91a7ac/out/process-8a6875ab4b91a7ac",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-27.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "process",
+        "replicated_server_recovers_rows_in_a_fresh_process"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/8a6875ab4b91a7ac/out/process-8a6875ab4b91a7ac",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-28.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "process",
+        "separate_process_clocks_commit_and_abort_through_native_srpc"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/8a6875ab4b91a7ac/out/process-8a6875ab4b91a7ac",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-29.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "process",
+        "separate_process_migration_moves_raw_and_lazy_warehouse_tables"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/8a6875ab4b91a7ac/out/process-8a6875ab4b91a7ac",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-30.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "replication",
+        "clients_discover_new_leaders_and_recover_durable_gateway_receipts"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/d9bdc3c0b2f2de6c/out/replication-d9bdc3c0b2f2de6c",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-31.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "replication",
+        "lost_quorum_after_install_is_unknown_and_fences_every_new_transaction"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/d9bdc3c0b2f2de6c/out/replication-d9bdc3c0b2f2de6c",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-32.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "replication",
+        "native_raft_commit_checkpoint_and_restart_rebuild_masstree"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/d9bdc3c0b2f2de6c/out/replication-d9bdc3c0b2f2de6c",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-33.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "replication",
+        "native_replicas_fail_over_and_install_a_checkpoint_for_a_missing_peer"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/d9bdc3c0b2f2de6c/out/replication-d9bdc3c0b2f2de6c",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-34.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "codecs_match_existing_fused_kernel_bytes_and_reject_corruption"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-35.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "competing_order_after_district_read_aborts_speculative_insertions"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-36.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "loader_resumes_committed_batches_and_never_reloads_completed_workloads"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-37.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "micro_workload_loads_shard_local_items_and_aborts_partial_remote_updates"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-38.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "multithreaded_native_workload_preserves_order_totals"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-39.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "native_benchmark_process_reopens_persistent_workload_without_reloading"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-40.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "tpcc",
+        "sharded_tpcc_executes_all_five_transactions_and_aborts_remote_stock_changes"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/cd0d7b5e48a54093/out/tpcc-cd0d7b5e48a54093",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-41.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "transaction_process",
+        "local_transaction_example_reopens_persistent_data"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b394df0a3f9c7f9e/out/transaction_process-b394df0a3f9c7f9e",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-42.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "transaction_process",
+        "replicated_shards_run_transaction_example"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b394df0a3f9c7f9e/out/transaction_process-b394df0a3f9c7f9e",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-43.log"
+    },
+    {
+      "identity": [
+        "mako-runtime",
+        "transaction_process",
+        "separate_shards_run_transaction_example"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_address_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/mako-runtime/b394df0a3f9c7f9e/out/transaction_process-b394df0a3f9c7f9e",
+      "log": "/var/tmp/mako-shard-rust/build_upper_development/sanitizers/address/runtime-44.log"
+    }
+  ],
+  "quarantine": []
+}

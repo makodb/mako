@@ -55,6 +55,10 @@ jobs:
       BUILD_DIR: build
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          # Cargo resolves sibling workspace manifests even when only the pure
+          # packages are selected. No lower implementation is built by this job.
+          submodules: recursive
       - name: Install pinned Rust
         run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
       - name: Bootstrap downloads and compile, timed separately

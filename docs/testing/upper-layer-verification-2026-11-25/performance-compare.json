@@ -1,0 +1,197 @@
+{
+  "environment": {
+    "cpu": "AMD Ryzen Threadripper 2990WX 32-Core Processor",
+    "logical_cpus": 4,
+    "kernel": "7.0.14-19-pve",
+    "architecture": "x86_64",
+    "cpu_quota": "max 100000",
+    "memory_limit": "max",
+    "governor": "performance",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "profile": "Release",
+    "seconds": 2,
+    "samples": 1,
+    "topologies": [
+      {
+        "workload": "micro",
+        "shards": 2,
+        "replicas": 1,
+        "workers": 3
+      },
+      {
+        "workload": "tpcc",
+        "shards": 2,
+        "replicas": 1,
+        "workers": 3
+      },
+      {
+        "workload": "micro",
+        "shards": 2,
+        "replicas": 3,
+        "workers": 2
+      }
+    ]
+  },
+  "fingerprint": "c20e123f0266b6ea10bb39c1decf95531c488e8d6ec4aa7e2e64c5ea9014bc51",
+  "revision": "719d8526c1df2218fa7d58fb006ef2d87538855b",
+  "binary_sha256": "1494f56783a02450e6df8c2004361a07aa1e397c60252710019113ebdea2c6e4",
+  "samples": {
+    "micro-2shards-1replicas": [
+      {
+        "commits_per_second": 5956.139634188818,
+        "shards": [
+          {
+            "workload": "micro",
+            "owner": 0,
+            "committed": [
+              2925,
+              2979,
+              0,
+              0,
+              0
+            ],
+            "aborted": [
+              167508,
+              83408,
+              0,
+              0,
+              0
+            ],
+            "elapsed_seconds": 2.033764333,
+            "committed_latency_microseconds": 4284955
+          },
+          {
+            "workload": "micro",
+            "owner": 1,
+            "committed": [
+              3081,
+              3150,
+              0,
+              0,
+              0
+            ],
+            "aborted": [
+              126192,
+              82617,
+              0,
+              0,
+              0
+            ],
+            "elapsed_seconds": 2.040844123,
+            "committed_latency_microseconds": 4156350
+          }
+        ]
+      }
+    ],
+    "tpcc-2shards-1replicas": [
+      {
+        "commits_per_second": 1286.5418807633068,
+        "shards": [
+          {
+            "workload": "tpcc",
+            "owner": 1,
+            "committed": [
+              510,
+              496,
+              57,
+              42,
+              51
+            ],
+            "aborted": [
+              497006,
+              385588,
+              19,
+              4,
+              18080
+            ],
+            "elapsed_seconds": 2.026121127,
+            "committed_latency_microseconds": 1641924
+          },
+          {
+            "workload": "tpcc",
+            "owner": 0,
+            "committed": [
+              648,
+              619,
+              57,
+              65,
+              70
+            ],
+            "aborted": [
+              444491,
+              309758,
+              20,
+              15,
+              16929
+            ],
+            "elapsed_seconds": 2.037727816,
+            "committed_latency_microseconds": 1516927
+          }
+        ]
+      }
+    ],
+    "micro-2shards-3replicas": [
+      {
+        "commits_per_second": 66.93852338932876,
+        "shards": [
+          {
+            "workload": "micro",
+            "owner": 0,
+            "committed": [
+              43,
+              25,
+              0,
+              0,
+              0
+            ],
+            "aborted": [
+              7,
+              1,
+              0,
+              0,
+              0
+            ],
+            "elapsed_seconds": 2.041778138,
+            "committed_latency_microseconds": 3964181
+          },
+          {
+            "workload": "micro",
+            "owner": 1,
+            "committed": [
+              36,
+              35,
+              0,
+              0,
+              0
+            ],
+            "aborted": [
+              16,
+              20,
+              0,
+              0,
+              0
+            ],
+            "elapsed_seconds": 2.110945385,
+            "committed_latency_microseconds": 3855104
+          }
+        ]
+      }
+    ]
+  },
+  "medians": {
+    "micro-2shards-1replicas": 5956.139634188818,
+    "tpcc-2shards-1replicas": 1286.5418807633068,
+    "micro-2shards-3replicas": 66.93852338932876
+  },
+  "passed": true,
+  "comparison": {
+    "comparable": true,
+    "throughput_ratio": {
+      "micro-2shards-1replicas": 0.9349811779357327,
+      "tpcc-2shards-1replicas": 1.261022608034598,
+      "micro-2shards-3replicas": 0.7725717840065862
+    },
+    "baseline_revision": "719d8526c1df2218fa7d58fb006ef2d87538855b"
+  },
+  "seconds": 22.879
+}
