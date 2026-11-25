@@ -1,11 +1,11 @@
 #![cfg(feature = "native-storage")]
 use mako_protocol::journal::{
-    self, Entry, Journal, Member, MemoryJournal, Outcome, Record, Transaction, TransactionId,
+    self, Entry, Journal, Member, MemoryLog, Outcome, Record, Transaction, TransactionId,
 };
 use mako_runtime::{
     receiver::RunningShard,
     rpc::Network,
-    storage::{CommitLog, Store, VolatileLog},
+    storage::{CommitLog, Store},
     wire::*,
 };
 use std::{
@@ -181,7 +181,7 @@ fn read() -> Action {
 
 #[test]
 fn prepared_participant_commits_once_and_old_decision_cannot_touch_a_new_attempt() {
-    let store = Store::new(0, false, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(0, false, Arc::new(MemoryLog::new(0))).unwrap();
     provision(&store);
     let network = Arc::new(Network::default());
     let server =
@@ -226,15 +226,12 @@ fn prepared_participant_commits_once_and_old_decision_cannot_touch_a_new_attempt
 }
 
 struct FaultJournal {
-    inner: MemoryJournal,
+    inner: MemoryLog,
     fail_completion: AtomicBool,
     panic_completion: bool,
     completions: AtomicUsize,
 }
 impl CommitLog for FaultJournal {
-    fn transaction_journal(&self) -> Option<&dyn Journal> {
-        Some(self)
-    }
     fn append(&self, _: &[u8], _: u32) -> Result<()> {
         panic!("old row log path");
     }
@@ -263,7 +260,7 @@ impl Journal for FaultJournal {
 #[test]
 fn prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_abort() {
     let log = Arc::new(FaultJournal {
-        inner: MemoryJournal::new(0),
+        inner: MemoryLog::new(0),
         fail_completion: AtomicBool::new(true),
         panic_completion: false,
         completions: AtomicUsize::new(0),
@@ -315,7 +312,7 @@ fn prepared_work_survives_listener_teardown_and_recovers_saved_commit_without_ab
 
 #[test]
 fn frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migration_pin() {
-    let store = Store::new(0, false, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(0, false, Arc::new(MemoryLog::new(0))).unwrap();
     provision(&store);
     let network = Arc::new(Network::default());
     let server =
@@ -360,7 +357,7 @@ fn frozen_prepare_rejects_new_writes_terms_and_changed_intent_and_retains_migrat
 
 #[test]
 fn new_attempt_cannot_steal_execution_and_delayed_abort_cannot_cancel_its_successor() {
-    let store = Store::new(0, false, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(0, false, Arc::new(MemoryLog::new(0))).unwrap();
     provision(&store);
     let network = Arc::new(Network::default());
     let server = RunningShard::start(store, network.clone(), "127.0.0.1:0", 1, 1, 8).unwrap();
@@ -383,7 +380,7 @@ fn new_attempt_cannot_steal_execution_and_delayed_abort_cannot_cancel_its_succes
 fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
     use mako_runtime::{
         durable::DurableRows,
-        log::{Log, Mode},
+        log::LocalLog,
         migration::{Kind, Schema, TableSpec},
     };
     let schema = Schema::new(
@@ -398,17 +395,17 @@ fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
         0,
     )
     .unwrap();
-    let log = Log::new(Duration::from_secs(5)).unwrap();
+    let log = LocalLog::new(Duration::from_secs(5)).unwrap();
     let store = Store::new(0, false, log.clone()).unwrap();
     provision(&store);
     let log_path = directory.join("log");
     log.start(
-        Mode::Local(raft_host::LocalConfig {
+        raft_host::LocalConfig {
             group: 1,
             create: !log_path.exists(),
             directory: log_path,
             sync_writes: true,
-        }),
+        },
         &store,
         schema,
         DurableRows::open(directory, 1, true, b"prepared-recovery").unwrap(),
@@ -503,7 +500,7 @@ fn durable_native_prepare_restores_commit_abort_and_absent_tombstone_after_resta
 fn client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pin() {
     use mako_runtime::client::Client;
     let log = Arc::new(FaultJournal {
-        inner: MemoryJournal::new(0),
+        inner: MemoryLog::new(0),
         fail_completion: AtomicBool::new(true),
         panic_completion: false,
         completions: AtomicUsize::new(0),
@@ -551,7 +548,7 @@ fn client_resolves_a_saved_commit_without_repeating_body_or_leaking_migration_pi
 #[test]
 fn prepared_worker_panic_fences_admission_and_preserves_decision_and_migration_pin() {
     let log = Arc::new(FaultJournal {
-        inner: MemoryJournal::new(0),
+        inner: MemoryLog::new(0),
         fail_completion: AtomicBool::new(false),
         panic_completion: true,
         completions: AtomicUsize::new(0),

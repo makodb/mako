@@ -54,11 +54,11 @@ pub trait ParticipantEngine {
     fn retain_uncertain(&mut self);
 }
 
-pub trait CommitLog: Send + Sync {
-    /// None selects the store's explicit in-memory transaction journal. A
-    /// persistence/replication adapter exposes its authoritative journal here.
-    fn transaction_journal(&self) -> Option<&dyn crate::journal::Journal> {
-        None
+/// Shared transaction-log contract for MemoryLog, LocalLog and ReplicatedLog.
+/// Every backend owns its journal; callers never synthesize a memory fallback.
+pub trait CommitLog: crate::journal::Journal {
+    fn ready(&self) -> bool {
+        self.health().is_ok()
     }
     fn health(&self) -> Result<()> {
         Ok(())
@@ -95,13 +95,6 @@ pub trait CommitPermit: Send + Sync {
 }
 impl CommitPermit for () {
     fn check(&self) -> Result<()> {
-        Ok(())
-    }
-}
-/// Explicit policy for a non-replicated, non-persistent shard.
-pub struct VolatileLog;
-impl CommitLog for VolatileLog {
-    fn append(&self, _: &[u8], _: u32) -> Result<()> {
         Ok(())
     }
 }

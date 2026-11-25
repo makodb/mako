@@ -125,10 +125,23 @@ outcome. A missing registration or unavailable authority remains Unknown.
 
 ## Durability and recovery
 
-Production shards use `mako_runtime::log::Log` with either a local or Raft
-ordering driver. Both drivers submit the same application command bytes and call
-the same state machine. The upper protocol continues to use the backend-neutral
-`Journal` interface. Explicit development fixtures may select a volatile journal.
+All three backends implement `CommitLog: Journal`. The shared contract includes
+journal apply/lookup, immutable decisions, durability reporting, admission,
+readiness and shutdown. Every backend owns its journal; the store never supplies
+a hidden memory fallback.
+
+| Implementation | Use | Storage |
+| --- | --- | --- |
+| `MemoryLog` | Isolated tests and explicit volatile native test fixtures | Memory only, with no restart guarantee |
+| `LocalLog` | Production without Raft | Local RocksDB log |
+| `ReplicatedLog` | Production with Raft | Raft-ordered RocksDB log |
+
+`MemoryLog` lives in `mako-protocol` and has no native backend dependencies.
+Native test configuration must opt into it with `volatile: true`. `LocalLog`
+and `ReplicatedLog` live in `mako_runtime::log`; they are typed specializations
+of one implementation, accepting only their respective local or Raft config.
+Both submit the same application command bytes and call the same state machine.
+The upper protocol uses their backend-independent `Journal` contract.
 
 Each participating shard chooses one journal policy:
 
@@ -362,7 +375,8 @@ the machine. Detailed reports record the source inputs and wall time. The
 [OCC + 2PC qualification](testing/occ-2pc-2026-11-25/README.md) records the
 checks for that cutover. The later
 [unified-log qualification](testing/unified-rocks-log-2026-11-25/README.md) records
-the shared local/Raft format, crash/refusal tests and the 156-second upper run.
+the shared local/Raft format, crash/refusal tests and explicit backend contract
+checks. The latest upper run completed in 150 seconds.
 
 The 2PC proof covers the lock barrier, participant-specific Yes votes, the saved
 decision requirement, decision immutability, completion acknowledgements and

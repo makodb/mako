@@ -4,7 +4,7 @@ use mako_runtime::{
     migration::{Kind, RunningMigration, Schema, TableSpec},
     receiver::RunningShard,
     rpc::Network,
-    storage::{Store, VolatileLog},
+    storage::{MemoryLog, Store},
     wire::*,
 };
 use mako_sharding::{
@@ -76,8 +76,8 @@ fn native_migration_drains_old_admission_and_copies_latest_raw_and_warehouse_row
     )
     .unwrap();
     schema.install().unwrap();
-    let source = Store::new(0, true, Arc::new(VolatileLog)).unwrap();
-    let target = Store::new(1, true, Arc::new(VolatileLog)).unwrap();
+    let source = Store::new(0, true, Arc::new(MemoryLog::new(0))).unwrap();
+    let target = Store::new(1, true, Arc::new(MemoryLog::new(1))).unwrap();
     let raw = TableKey {
         table: 101,
         warehouse: 0,
@@ -290,7 +290,7 @@ fn failed_cold_start_leaves_only_owned_weak_callback_anchors() {
     schema.install().unwrap();
     // The existing runtime forbids live migration with replication replay.
     runtime().replication_replay(true).unwrap();
-    let store = Store::new(0, true, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(0, true, Arc::new(MemoryLog::new(0))).unwrap();
     let network = Arc::new(Network::default());
     assert!(RunningMigration::start(store.clone(), schema, network, BTreeMap::new()).is_err());
     // Both paths can still encounter the opener registered before start failed.
@@ -325,8 +325,8 @@ fn paged_scans_preserve_binary_cursors_order_and_limits_across_migrated_ranges()
     )
     .unwrap();
     schema.install().unwrap();
-    let source = Store::new(0, true, Arc::new(VolatileLog)).unwrap();
-    let destination = Store::new(1, true, Arc::new(VolatileLog)).unwrap();
+    let source = Store::new(0, true, Arc::new(MemoryLog::new(0))).unwrap();
+    let destination = Store::new(1, true, Arc::new(MemoryLog::new(1))).unwrap();
     let key = TableKey {
         table: 250,
         warehouse: 0,

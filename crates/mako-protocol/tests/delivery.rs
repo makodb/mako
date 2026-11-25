@@ -1,9 +1,6 @@
 mod support;
 use mako_protocol::{
-    contracts::{Transport, VolatileLog},
-    participant::Lane,
-    remote::Remotes,
-    wire::*,
+    contracts::Transport, journal::MemoryLog, participant::Lane, remote::Remotes, wire::*,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use support::*;
@@ -15,7 +12,7 @@ fn remotes(network: Arc<Network>) -> Remotes {
         BTreeMap::new(),
         request(1, 1, Action::Abort).stream,
         request(1, 1, Action::Abort).identity,
-        Arc::new(VolatileLog),
+        Arc::new(MemoryLog::new(0)),
         Duration::from_millis(10),
     )
 }

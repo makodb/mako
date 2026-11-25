@@ -29,7 +29,7 @@ ADAPTERS = {
     'crates/mako-runtime/src/rpc.rs': ['impl mako_protocol::contracts::Transport for Network'],
     'crates/mako-runtime/src/client.rs': ['remote::Remotes', 'impl Effects for NativeEffects', 'commit::coordinate(&mut effects)', 'TransactionAction::Lock', 'TransactionAction::Prepare', 'Record::Begin', 'Record::Decide'],
     'crates/mako-runtime/src/gateway.rs': ['client.run(', 'transaction.gateway_receipt('],
-    'crates/mako-runtime/src/log.rs': ['impl Journal for Log', 'Mode::Local', 'Mode::Raft', 'journal::transition(', 'binding.host.propose(', 'ProposalStatus::Applied', 'journal::acknowledge('],
+    'crates/mako-runtime/src/log.rs': ['impl<C: Into<Mode>> Journal for Log<C>', 'Mode::Local', 'Mode::Raft', 'journal::transition(', 'binding.host.propose(', 'ProposalStatus::Applied', 'journal::acknowledge('],
     'crates/raft-host/src/durable.rs': ['self.log.journal.persist(raw)?'],
     'crates/raft-host/src/local.rs': ['disk.journal.persist(', 'ProposalStatus::Applied', 'self.0.machine.apply('],
     'crates/mako-runtime/src/gateway_client.rs': ['mako_protocol::gateway_client::GatewayClient'],

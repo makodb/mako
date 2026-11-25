@@ -80,3 +80,24 @@ This is a versioned disk-format cutover. New local and Raft nodes share
 `<data>/log/base` and `<data>/rows`. Old segmented Raft directories and applied-only
 local stores are refused intact; automatic conversion is outside this change.
 Reinitializing or deleting old data is never part of startup recovery.
+
+## Explicit backend follow-up
+
+Expose `MemoryLog`, `LocalLog` and `ReplicatedLog` through the common
+`CommitLog: Journal` contract. Remove the store's implicit memory-journal
+fallback; a backend must implement the journal itself. Keep the two durable
+backends as typed specializations of the shared implementation and preserve
+their existing on-disk format. Use MemoryLog only for testing, selected explicitly
+by native volatile configuration and usable without native dependencies in the
+upper gate.
+
+One shared test helper checks the same transaction contract with all three
+backends. The isolated memory case belongs to the upper gate; actual local/Raft
+cases belong to the native gate. Refresh the upper proofs, native regression
+suite, strict Clippy and API doctests, then record the results before committing.
+
+Completed: all 55 native debug cases passed, including the shared three-backend
+contract case. The isolated upper gate passed in 149.566 seconds with 58 cases
+and all proofs/negative controls. Native and protocol Clippy and API doctests
+passed. The book and contracts name the explicit implementations; the follow-up
+records are in the qualification directory linked above.

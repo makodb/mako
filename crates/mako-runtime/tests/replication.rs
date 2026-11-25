@@ -2,7 +2,7 @@
 use mako_runtime::{
     client::Client,
     durable::DurableRows,
-    log::Log,
+    log::{LocalLog, ReplicatedLog},
     migration::{Kind, Schema, TableSpec},
     rpc::Network,
     storage::Store,
@@ -17,7 +17,7 @@ use std::{
 };
 
 struct Replica {
-    log: Arc<Log>,
+    log: Arc<ReplicatedLog>,
     store: Arc<Store>,
 }
 impl Replica {
@@ -34,20 +34,14 @@ impl Replica {
             0,
         )
         .unwrap();
-        let log = Log::new(Duration::from_secs(5)).unwrap();
+        let log = ReplicatedLog::new(Duration::from_secs(5)).unwrap();
         let store = Store::new(0, false, log.clone()).unwrap();
         {
             let mut loader = store.database.worker().unwrap();
             store.open(&mut loader, target().access.table, 1).unwrap();
         }
         let durable = DurableRows::open(root, config.group, true, b"one table").unwrap();
-        log.start(
-            mako_runtime::log::Mode::Raft(config),
-            &store,
-            schema,
-            durable,
-        )
-        .unwrap();
+        log.start(config, &store, schema, durable).unwrap();
         Self { log, store }
     }
     fn client(&self) -> Client {
@@ -359,7 +353,7 @@ fn lost_quorum_before_prepare_never_installs_and_rejects_new_admission() {
 
 #[test]
 fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
-    use mako_runtime::{gateway, gateway_client::GatewayClient, log::Mode, receiver::RunningShard};
+    use mako_runtime::{gateway, gateway_client::GatewayClient, receiver::RunningShard};
     let root = tempfile::tempdir().unwrap();
     let peers = peers(3);
     let mut replicas: Vec<_> = (1..=3)
@@ -444,7 +438,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
         .as_ref()
         .unwrap()
         .put(b"receipt", b"new value");
-    let local_log = Log::new(Duration::from_secs(5)).unwrap();
+    let local_log = LocalLog::new(Duration::from_secs(5)).unwrap();
     let local = Store::new(1, false, local_log.clone()).unwrap();
     let mut worker = local.database.worker().unwrap();
     local.open(&mut worker, target().access.table, 1).unwrap();
@@ -466,12 +460,12 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     .unwrap();
     local_log
         .start(
-            Mode::Local(raft_host::LocalConfig {
+            raft_host::LocalConfig {
                 group: 1,
                 directory: root.path().join("coordinator-log"),
                 create: true,
                 sync_writes: true,
-            }),
+            },
             &local,
             proxy_schema.clone(),
             DurableRows::open(

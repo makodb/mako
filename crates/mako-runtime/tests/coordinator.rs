@@ -3,7 +3,7 @@ use mako_runtime::{
     client::{Client, Target},
     receiver::RunningShard,
     rpc::Network,
-    storage::{Store, VolatileLog},
+    storage::{MemoryLog, Store},
     wire::*,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -29,7 +29,7 @@ fn target(owner: u32) -> Target {
     }
 }
 fn store(owner: u32) -> Arc<Store> {
-    let store = Store::new(owner, false, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(owner, false, Arc::new(MemoryLog::new(owner))).unwrap();
     let mut loader = store.database.worker().unwrap();
     store
         .open(&mut loader, target(owner).access.table, 1)
@@ -300,7 +300,27 @@ fn global_lock_barrier_rejects_point_absence_and_scan_write_skew() {
 
 #[test]
 fn a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion() {
-    struct Log;
+    struct Log(MemoryLog);
+    impl mako_protocol::journal::Journal for Log {
+        fn durable(&self) -> bool {
+            false
+        }
+        fn apply(
+            &self,
+            record: &mako_protocol::journal::Record,
+        ) -> Result<mako_protocol::journal::Entry> {
+            self.0.apply(record)
+        }
+        fn lookup(
+            &self,
+            id: mako_protocol::journal::TransactionId,
+        ) -> Result<Option<mako_protocol::journal::Entry>> {
+            self.0.lookup(id)
+        }
+        fn entries(&self) -> Result<Vec<mako_protocol::journal::Entry>> {
+            self.0.entries()
+        }
+    }
     impl mako_runtime::storage::CommitLog for Log {
         fn append(&self, _: &[u8], _: u32) -> Result<()> {
             panic!("obsolete row log");
@@ -318,7 +338,7 @@ fn a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion(
         // The blocking health/admission checks remain successful. A nonblocking
         // discovery probe can report false simply because apply owns its mutex.
     }
-    let local = Store::new(0, false, Arc::new(Log)).unwrap();
+    let local = Store::new(0, false, Arc::new(Log(MemoryLog::new(0)))).unwrap();
     let mut worker = local.database.worker().unwrap();
     local.open(&mut worker, target(0).access.table, 1).unwrap();
     let mut client = Client::new(

@@ -5,7 +5,7 @@ use mako_runtime::{
     migration::{Kind, TableSpec},
     node::{Config, InitialRow},
     rpc::Network,
-    storage::{Store, VolatileLog},
+    storage::{MemoryLog, Store},
     wire::*,
 };
 use std::{
@@ -343,7 +343,7 @@ fn separate_process_clocks_commit_and_abort_through_native_srpc() {
             .put(target(1), b"ahead", &index.to_be_bytes())
             .unwrap();
     }
-    let store = Store::new(0, false, Arc::new(VolatileLog)).unwrap();
+    let store = Store::new(0, false, Arc::new(MemoryLog::new(0))).unwrap();
     let mut worker = store.database.worker().unwrap();
     store.open(&mut worker, target(0).access.table, 1).unwrap();
     let mut client = Client::new(

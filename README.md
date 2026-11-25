@@ -94,9 +94,10 @@ native code; stable Rust has no UBSan compiler mode. See
 - Distributed transactions use OCC + 2PC: acquire every write lock before
   final validation, save one coordinator decision, then complete every member.
   Resolve Unknown by transaction ID; never rerun its body. Raft is the supported
-  replication protocol. Both modes use one transaction-log interface and the
-  same RocksDB entry/recovery format. A production node must configure local
-  persistence or Raft; memory-only mode requires `volatile: true`.
+  replication protocol. `MemoryLog`, `LocalLog` and `ReplicatedLog` share one
+  transaction-log interface. Local and replicated logs use the same RocksDB
+  format. Production selects local persistence or Raft; `MemoryLog` is for tests
+  and requires `volatile: true` in native node configuration.
 - Live migration supports volatile, unreplicated shards. Replicated or locally
   persistent migration is rejected. Reopening migration metadata alone does
   not recover row data.

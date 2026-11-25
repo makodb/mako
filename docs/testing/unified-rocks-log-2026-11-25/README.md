@@ -98,3 +98,28 @@ durability, and volatile mode has no restart guarantee.
 The proofs check upper state transitions under storage/RPC/Raft contracts.
 The crash models and native regressions exercise the new storage implementation;
 they are not a proof of RocksDB or whole-stack crash recovery.
+
+## Explicit backend interface follow-up
+
+The follow-up to `63d70287c` exposes `MemoryLog`, `LocalLog` and `ReplicatedLog`
+through `CommitLog: Journal`. It removes the store's implicit memory fallback
+and preserves the shared local/Raft disk format. MemoryLog is for testing;
+native fixtures select it explicitly with `volatile: true`. LocalLog and
+ReplicatedLog are typed specializations accepting their own configuration types.
+
+`upper-backends.json` records the refreshed isolated gate: 149.566 seconds on
+32 CPUs, 58 executable cases, all three production proof suites and all 20
+semantic negative controls. `backend-interface.json` records all 55 native debug
+cases and the final native/protocol Clippy and doctest checks. The first quality
+run found an unused import in the new test; after its removal, the shared
+contract case and quality checks passed. The shared helper checks duplicate
+operations, immutable outcomes, changed descriptors and durability mismatch
+against all three backends. The memory case also runs in the upper gate without
+any native dependency.
+
+The commands are the same native debug, upper and quality commands listed above;
+the protocol quality check adds `cargo clippy --locked --manifest-path
+crates/Cargo.toml -p mako-protocol --all-targets --no-deps -- -D warnings` with
+C/C++ compilers disabled. This interface follow-up does not rerun the unchanged
+storage components, release suite or sanitizers; their earlier records retain
+the scope and source hashes stated above.

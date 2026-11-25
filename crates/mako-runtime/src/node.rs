@@ -5,7 +5,7 @@ use crate::{
     migration::{RunningMigration, Schema, TableSpec},
     receiver::RunningShard,
     rpc::Network,
-    storage::{engine, CommitLog, Store, VolatileLog},
+    storage::{engine, CommitLog, MemoryLog, Store},
     wire::*,
 };
 use serde::{Deserialize, Serialize};
@@ -233,8 +233,6 @@ pub struct RunningNode {
     pub store: Arc<Store>,
     pub schema: Arc<Schema>,
     pub network: Arc<Network>,
-    #[cfg(feature = "replication")]
-    log: Option<Arc<crate::log::Log>>,
 }
 impl RunningNode {
     pub fn start(mut config: Config) -> Result<Self> {
@@ -247,22 +245,29 @@ impl RunningNode {
             ));
         }
         #[cfg(feature = "replication")]
-        let durable_log = if config.replication.is_some() || config.persistence.is_some() {
-            Some(crate::log::Log::new(std::time::Duration::from_secs(10))?)
-        } else {
-            None
-        };
+        let local_log = config
+            .persistence
+            .as_ref()
+            .map(|_| crate::log::LocalLog::new(std::time::Duration::from_secs(10)))
+            .transpose()?;
+        #[cfg(feature = "replication")]
+        let replicated_log = config
+            .replication
+            .as_ref()
+            .map(|_| crate::log::ReplicatedLog::new(std::time::Duration::from_secs(10)))
+            .transpose()?;
         let log: Arc<dyn CommitLog> = {
             #[cfg(feature = "replication")]
-            {
-                durable_log.as_ref().map_or_else(
-                    || Arc::new(VolatileLog) as Arc<dyn CommitLog>,
-                    |log| log.clone(),
-                )
+            if let Some(log) = &local_log {
+                log.clone()
+            } else if let Some(log) = &replicated_log {
+                log.clone()
+            } else {
+                Arc::new(MemoryLog::new(config.owner))
             }
             #[cfg(not(feature = "replication"))]
             {
-                Arc::new(VolatileLog)
+                Arc::new(MemoryLog::new(config.owner))
             }
         };
         let store = Store::new(config.owner, config.migration, log)?;
@@ -301,7 +306,7 @@ impl RunningNode {
             schema.install()?;
         }
         #[cfg(feature = "replication")]
-        if let Some(log) = &durable_log {
+        if local_log.is_some() || replicated_log.is_some() {
             let (directory, group, sync_writes, create, mode) =
                 if let Some(settings) = &config.replication {
                     let mode = crate::log::Mode::Raft(raft_host::Config {
@@ -370,7 +375,16 @@ impl RunningNode {
                 sync_writes,
                 &identity,
             )?;
-            log.start(mode, &store, schema.clone(), rows)?;
+            match mode {
+                crate::log::Mode::Local(settings) => local_log
+                    .as_ref()
+                    .expect("local log configured")
+                    .start(settings, &store, schema.clone(), rows)?,
+                crate::log::Mode::Raft(settings) => replicated_log
+                    .as_ref()
+                    .expect("Raft log configured")
+                    .start(settings, &store, schema.clone(), rows)?,
+            }
         }
         let network = Arc::new(Network::default());
         let server = RunningShard::start_with_gateway(
@@ -396,8 +410,6 @@ impl RunningNode {
             store,
             schema,
             network,
-            #[cfg(feature = "replication")]
-            log: durable_log,
         };
         if config.migration {
             node.migration = Some(RunningMigration::start(
@@ -413,16 +425,7 @@ impl RunningNode {
         self.server.as_ref().expect("running node").address()
     }
     pub fn ready(&self) -> bool {
-        #[cfg(feature = "replication")]
-        if let Some(log) = &self.log {
-            return log.health().is_ok()
-                && log.status().is_ok_and(|status| {
-                    status.leader.is_some()
-                        && status.applied.index > 0
-                        && status.applied.term == status.term
-                });
-        }
-        self.migration.as_ref().is_none_or(RunningMigration::ready)
+        self.store.log.ready() && self.migration.as_ref().is_none_or(RunningMigration::ready)
     }
     pub fn health(&self) -> Result<()> {
         self.store.health()
@@ -431,10 +434,7 @@ impl RunningNode {
         self.server.take();
         self.store.shutdown();
         self.migration.take();
-        #[cfg(feature = "replication")]
-        if let Some(log) = self.log.take() {
-            log.shutdown();
-        }
+        self.store.log.shutdown();
     }
 }
 impl Drop for RunningNode {

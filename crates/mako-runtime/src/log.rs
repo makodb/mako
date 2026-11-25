@@ -280,10 +280,28 @@ impl StateMachine for State {
     }
 }
 /// Both modes submit identical commands and apply them through the same state machine.
+#[doc(hidden)]
 pub enum Mode {
     Local(raft_host::LocalConfig),
     Raft(raft_host::Config),
 }
+impl From<raft_host::LocalConfig> for Mode {
+    fn from(config: raft_host::LocalConfig) -> Self {
+        Self::Local(config)
+    }
+}
+impl From<raft_host::Config> for Mode {
+    fn from(config: raft_host::Config) -> Self {
+        Self::Raft(config)
+    }
+}
+
+/// Single-disk RocksDB transaction log.
+pub type LocalLog = Log<raft_host::LocalConfig>;
+/// Raft-replicated RocksDB transaction log.
+pub type ReplicatedLog = Log<raft_host::Config>;
+pub use mako_protocol::journal::MemoryLog;
+
 #[derive(Clone)]
 enum Driver {
     Local(raft_host::LocalHost),
@@ -328,13 +346,15 @@ struct Binding {
     state: Arc<State>,
     group: Option<u64>,
 }
-pub struct Log {
+/// Shared implementation behind the typed local and replicated logs.
+pub struct Log<C> {
+    backend: std::marker::PhantomData<fn() -> C>,
     binding: OnceLock<Binding>,
     timeout: Duration,
     incarnation: u64,
     next: AtomicU64,
 }
-impl Log {
+impl<C: Into<Mode>> Log<C> {
     pub fn new(timeout: Duration) -> Result<Arc<Self>> {
         if timeout.is_zero() {
             return Err(storage("zero log deadline"));
@@ -344,6 +364,7 @@ impl Log {
             .and_then(|mut file| file.read_exact(&mut nonce))
             .map_err(storage)?;
         Ok(Arc::new(Self {
+            backend: std::marker::PhantomData,
             binding: OnceLock::new(),
             timeout,
             incarnation: u64::from_ne_bytes(nonce).max(1),
@@ -354,7 +375,7 @@ impl Log {
     /// first, then the ordering driver replays its committed prefix.
     pub fn start(
         &self,
-        config: Mode,
+        config: C,
         store: &Arc<Store>,
         schema: Arc<Schema>,
         durable: Arc<DurableRows>,
@@ -362,6 +383,7 @@ impl Log {
         if self.binding.get().is_some() {
             return Err(storage("transaction log already started"));
         }
+        let config = config.into();
         let sync_writes = match &config {
             Mode::Local(config) => config.sync_writes,
             Mode::Raft(config) => config.sync_writes,
@@ -504,9 +526,14 @@ impl Drop for Permit {
         self.state.gate.lock().active -= 1;
     }
 }
-impl CommitLog for Log {
-    fn transaction_journal(&self) -> Option<&dyn Journal> {
-        Some(self)
+impl<C: Into<Mode>> CommitLog for Log<C> {
+    fn ready(&self) -> bool {
+        self.health().is_ok()
+            && self.status().is_ok_and(|status| {
+                status.leader.is_some()
+                    && status.applied.index > 0
+                    && status.applied.term == status.term
+            })
     }
     fn health(&self) -> Result<()> {
         Log::health(self)
@@ -621,7 +648,7 @@ impl CommitLog for Log {
     }
 }
 
-impl Journal for Log {
+impl<C: Into<Mode>> Journal for Log<C> {
     fn durable(&self) -> bool {
         self.binding
             .get()

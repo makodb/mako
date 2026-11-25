@@ -47,37 +47,28 @@ fn check(status: Status) -> Result<()> {
     }
 }
 
-pub use mako_protocol::contracts::{CommitLog, CommitPermit, VolatileLog};
-use mako_protocol::journal::{Entry, Journal, MemoryJournal, Record, TransactionId};
+pub use mako_protocol::contracts::{CommitLog, CommitPermit};
+pub use mako_protocol::journal::MemoryLog;
+use mako_protocol::journal::{Entry, Journal, Record, TransactionId};
 
 struct StoreJournal {
     log: Arc<dyn CommitLog>,
-    memory: MemoryJournal,
 }
 impl Journal for StoreJournal {
     fn durable(&self) -> bool {
-        self.log.transaction_journal().is_some_and(Journal::durable)
+        self.log.durable()
     }
     fn apply(&self, record: &Record) -> Result<Entry> {
         self.log.health()?;
-        match self.log.transaction_journal() {
-            Some(journal) => journal.apply(record),
-            None => self.memory.apply(record),
-        }
+        self.log.apply(record)
     }
     fn lookup(&self, id: TransactionId) -> Result<Option<Entry>> {
         self.log.health()?;
-        match self.log.transaction_journal() {
-            Some(journal) => journal.lookup(id),
-            None => self.memory.lookup(id),
-        }
+        self.log.lookup(id)
     }
     fn entries(&self) -> Result<Vec<Entry>> {
         self.log.health()?;
-        match self.log.transaction_journal() {
-            Some(journal) => journal.entries(),
-            None => self.memory.entries(),
-        }
+        self.log.entries()
     }
 }
 
@@ -110,10 +101,7 @@ impl Store {
             migration,
             epochs: Arc::new(EpochDomain::default()),
             term: AtomicU32::new(0),
-            journal: Arc::new(StoreJournal {
-                log: log.clone(),
-                memory: MemoryJournal::new(owner),
-            }),
+            journal: Arc::new(StoreJournal { log: log.clone() }),
             participants: OnceLock::new(),
             endpoint: RwLock::new(None),
             fault: Arc::new(RwLock::new(None)),

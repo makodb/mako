@@ -346,13 +346,16 @@ pub trait Journal: Send + Sync {
     fn entries(&self) -> Result<Vec<Entry>>;
 }
 
-/// Explicit volatile implementation. Native row effects are supplied by its
-/// participant adapter; the isolated driver has its own byte-level row oracle.
-pub struct MemoryJournal {
+/// Testing-only, in-memory transaction log. It obeys the same journal
+/// transitions as LocalLog and ReplicatedLog but never advertises durability.
+/// Native row effects are supplied by the participant adapter; isolated tests
+/// use their own byte-level row oracle. Production configuration must select
+/// a persistent backend; native test fixtures explicitly opt into volatile mode.
+pub struct MemoryLog {
     owner: u32,
     entries: Mutex<BTreeMap<TransactionId, Entry>>,
 }
-impl MemoryJournal {
+impl MemoryLog {
     pub fn new(owner: u32) -> Self {
         Self {
             owner,
@@ -360,7 +363,7 @@ impl MemoryJournal {
         }
     }
 }
-impl Journal for MemoryJournal {
+impl Journal for MemoryLog {
     fn durable(&self) -> bool {
         false
     }
@@ -376,5 +379,11 @@ impl Journal for MemoryJournal {
     }
     fn entries(&self) -> Result<Vec<Entry>> {
         Ok(self.entries.lock().values().cloned().collect())
+    }
+}
+
+impl crate::contracts::CommitLog for MemoryLog {
+    fn append(&self, _: &[u8], _: u32) -> Result<()> {
+        Ok(())
     }
 }

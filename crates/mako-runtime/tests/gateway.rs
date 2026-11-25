@@ -27,9 +27,6 @@ struct Log {
     fail: bool,
 }
 impl CommitLog for Log {
-    fn transaction_journal(&self) -> Option<&dyn Journal> {
-        Some(self)
-    }
     fn append(&self, _: &[u8], _: u32) -> Result<()> {
         panic!("obsolete post-install logging")
     }

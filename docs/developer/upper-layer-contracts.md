@@ -86,8 +86,12 @@ The descriptor fixes membership, leases, timestamp, recovery endpoints and
 policy. Identity reuse with another descriptor or intent is rejected. Terminal
 records are retained; reclamation requires a separate stale-request fence.
 
-`mako_runtime::log::Log` uses one command codec and state machine with either
-`LocalHost` or Raft authority/read barriers. Both ordering drivers persist the
+`CommitLog` requires `Journal`, so `MemoryLog`, `LocalLog` and `ReplicatedLog`
+all supply the same journal contract directly. No missing implementation can
+silently select an in-memory journal. `MemoryLog` is for tests, with an explicit
+volatile opt-in for native fixtures. `LocalLog` and `ReplicatedLog` are typed
+specializations of `mako_runtime::log::Log<C>` and share one command codec and
+state machine with either `LocalHost` or Raft authority/read barriers. Both ordering drivers persist the
 same RocksDB log format through `raft_store::journal`; a local append saves its
 commit prefix atomically, while Raft controls that prefix through consensus.
 Applied rows and transaction receipts use the same RocksDB adapter in both modes.
