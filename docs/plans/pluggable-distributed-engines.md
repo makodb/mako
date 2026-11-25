@@ -209,6 +209,13 @@ fence and cross-participant safety argument.
 
 Progress on 2026-11-25:
 
+- Migration storage callbacks are engine-neutral and reuse the shared transaction
+  driver. Six migration scenarios pass, covering both directions between engines,
+  RocksDB-to-RocksDB, raw and lazy warehouse tables, admission drain, and binary
+  scan cursors. The separate-process migration regression and strict Clippy pass.
+  Durable migration restart remains fenced until its complete handoff/control
+  state is recoverable; this stage does not remove that fence.
+
 - The direct RocksDB adapter passes the shared conformance scenarios. Its native
   extension separates logical time from STO generation, retains tombstones,
   applies rows and protocol metadata in one batch, and distinguishes distributed

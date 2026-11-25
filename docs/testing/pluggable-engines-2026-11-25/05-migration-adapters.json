@@ -1,0 +1,22 @@
+{
+  "stage": "Engine-neutral migration storage callbacks",
+  "checks": {
+    "migration_fresh_process_cases": 6,
+    "cross_engine_directions": [
+      "Masstree to RocksDB",
+      "RocksDB to Masstree",
+      "RocksDB to RocksDB"
+    ],
+    "separate_process_raw_and_lazy_warehouse_migration": "passed",
+    "strict_clippy": "passed"
+  },
+  "logs": [
+    "build_upper_development/pluggable-migration-tests.log",
+    "build_upper_development/pluggable-migration-process.log",
+    "build_upper_development/pluggable-migration-clippy.log"
+  ],
+  "limitations": [
+    "Durable handoff/control recovery is not complete; existing node fence remains",
+    "RocksDB-only build profile, conversion and final qualification pending"
+  ]
+}

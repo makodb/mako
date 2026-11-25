@@ -91,9 +91,6 @@ impl Database {
                 return Err(Error::Corruption("table identity mismatch".into()));
             }
         } else {
-            if read_position(&rocks)?.index != 0 {
-                return Err(Error::InvalidState("schema change after log admission"));
-            }
             rocks.write_batch(&[
                 BlobOp::Put {
                     key: &key,

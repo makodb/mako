@@ -13,6 +13,7 @@ durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
 replication = ["native-storage", "durable-storage", "dep:raft-host"]
 
 [dependencies]
+shard-host-core = { path = "../shard-host-core" }
 mako-storage-rocksdb = { path = "../mako-storage-rocksdb", optional = true }
 mako-storage-api = { path = "../mako-storage-api" }
 mako-storage-masstree = { path = "../mako-storage-masstree", optional = true }

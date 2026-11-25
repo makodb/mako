@@ -47,6 +47,24 @@ fn admin(network: &Network, endpoint: &str, operation: u32, payload: Vec<u8>) ->
 
 #[test]
 fn native_migration_drains_old_admission_and_copies_latest_raw_and_warehouse_rows() {
+    migration_case(false, false);
+}
+#[test]
+#[cfg(feature = "rocksdb-engine")]
+fn migration_copies_masstree_into_rocksdb() {
+    migration_case(false, true);
+}
+#[test]
+#[cfg(feature = "rocksdb-engine")]
+fn migration_copies_rocksdb_into_masstree() {
+    migration_case(true, false);
+}
+#[test]
+#[cfg(feature = "rocksdb-engine")]
+fn migration_copies_between_rocksdb_engines() {
+    migration_case(true, true);
+}
+fn migration_case(rocks_source: bool, rocks_destination: bool) {
     let schema = Schema::new(
         vec![
             TableSpec {
@@ -76,8 +94,40 @@ fn native_migration_drains_old_admission_and_copies_latest_raw_and_warehouse_row
     )
     .unwrap();
     schema.install().unwrap();
-    let source = Store::new(0, true, Arc::new(MemoryLog::new(0))).unwrap();
-    let target = Store::new(1, true, Arc::new(MemoryLog::new(1))).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let database = |owner, rocks| {
+        if rocks {
+            #[cfg(feature = "rocksdb-engine")]
+            {
+                return mako_storage_rocksdb::database(
+                    directory.path().join(format!("data-{owner}")),
+                    owner,
+                    false,
+                )
+                .unwrap();
+            }
+            #[cfg(not(feature = "rocksdb-engine"))]
+            {
+                let _ = (owner, &directory);
+                panic!("RocksDB not compiled");
+            }
+        }
+        mako_storage_masstree::database().unwrap()
+    };
+    let source = Store::with_engine(
+        0,
+        true,
+        Arc::new(MemoryLog::new(0)),
+        database(0, rocks_source),
+    )
+    .unwrap();
+    let target = Store::with_engine(
+        1,
+        true,
+        Arc::new(MemoryLog::new(1)),
+        database(1, rocks_destination),
+    )
+    .unwrap();
     let raw = TableKey {
         table: 101,
         warehouse: 0,
@@ -307,11 +357,7 @@ fn failed_cold_start_leaves_only_owned_weak_callback_anchors() {
             .code,
         ErrorCode::Closed
     );
-    assert!(sto_tpcc_ffi::native::migration::Registry::new(
-        mako_storage_masstree::native_database(&store.database).unwrap(),
-        0
-    )
-    .is_ok());
+    assert!(store.database.worker().is_ok());
 }
 
 #[test]

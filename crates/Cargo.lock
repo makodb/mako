@@ -501,6 +501,7 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "sha2",
+ "shard-host-core",
  "srpc",
  "sto-rocksdb",
  "sto-tpcc-ffi",

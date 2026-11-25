@@ -117,8 +117,11 @@ RPC or Raft dependency.
 `mako-storage-masstree` implements the interface with the existing Rust STO
 Masstree adapter. The conversion from its local redo framing to owned logical
 rows is inside that adapter. `Store::with_engine` accepts an explicit engine;
-the existing default constructor selects Masstree. The migration host still
-uses a checked Masstree bridge during the ongoing extraction.
+the existing default constructor selects Masstree. Migration now uses the same
+storage interface for scans and writes. The temporary Masstree downcast bridge
+is removed. Scan-bound decisions call the existing verified cursor core, and
+migration mutations use the production OCC + 2PC driver and journal. An uncertain
+migration write stops the process rather than returning a no-effect failure.
 
 `mako-storage-rocksdb` implements the same interface using the existing direct
 RocksDB STO datatype. A worker owns a message lane where borrowed transactions

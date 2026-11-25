@@ -24,6 +24,8 @@ pub mod log;
 #[cfg(feature = "native-storage")]
 pub mod migration;
 #[cfg(feature = "native-storage")]
+mod migration_storage;
+#[cfg(feature = "native-storage")]
 pub mod node;
 #[cfg(feature = "native-storage")]
 mod prepared;

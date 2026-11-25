@@ -1,6 +1,7 @@
-//! Native host for the existing sharding actors and verified storage verbs.
+//! Engine-neutral host for the verified sharding actors.
 //! The actor owns routing/control decisions; this module owns tables, affine
 //! storage workers, admission epochs and SRPC completion lifetimes.
+use crate::migration_storage::Worker as MigrationWorker;
 use crate::{
     client::Target,
     rpc::{Network, Respond},
@@ -12,7 +13,6 @@ use mako_sharding::{
     host::{Bytes, Completion, Host, HostAbi, Opener, ReplySink, RowSink},
     runtime::runtime,
     types::Status,
-    wire,
 };
 use parking_lot::Mutex;
 use std::{
@@ -28,7 +28,6 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
-use sto_tpcc_ffi::native::migration::{MigrationWorker, Registry};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -247,9 +246,6 @@ fn status(error: Error) -> Status {
         _ => Status::Io,
     }
 }
-fn storage_status(code: u32) -> Result<()> {
-    checked(wire::status(code))
-}
 
 struct Open {
     key: TableKey,
@@ -314,7 +310,6 @@ impl Drop for Factory {
 
 struct State {
     store: Arc<Store>,
-    registry: Arc<Registry>,
     schema: Arc<Schema>,
     network: Arc<Network>,
     endpoints: BTreeMap<u32, String>,
@@ -336,19 +331,6 @@ impl State {
                 "physical table differs from schema",
             ));
         }
-        let warehouse = if self.schema.spec(key.table)?.warehouse {
-            Some((key.warehouse, self.schema.total))
-        } else {
-            None
-        };
-        self.registry
-            .register(
-                key.table,
-                warehouse,
-                mako_storage_masstree::native_table(&table.tree).map_err(engine)?,
-                log_id,
-            )
-            .map_err(|code| shard_error(wire::status(code)))?;
         Ok(table)
     }
     fn token(&self, key: TableKey, proxy: bool) -> Result<usize> {
@@ -385,15 +367,9 @@ impl RunningMigration {
                 "migration host requires routed store",
             ));
         }
-        let registry = Registry::new(
-            mako_storage_masstree::native_database(&store.database).map_err(engine)?,
-            store.owner,
-        )
-        .map_err(|code| shard_error(wire::status(code)))?;
         let factory = Factory::new(store.clone())?;
         let state = Arc::new(State {
             store,
-            registry,
             schema,
             network,
             endpoints,
@@ -479,6 +455,12 @@ thread_local! { static WORKER: RefCell<Option<(usize, MigrationWorker)>> = const
 fn boundary(call: impl FnOnce() -> Result<()>) -> u32 {
     match catch_unwind(AssertUnwindSafe(call)) {
         Ok(Ok(())) => Status::Ok as u32,
+        Ok(Err(error)) if error.code == ErrorCode::Unknown => {
+            // The verified storage verb permits either a definite effect/no-effect
+            // result or fail-stop. Never report uncertain application as no effect.
+            eprintln!("migration storage requires restart: {error}");
+            std::process::abort()
+        }
         Ok(Err(error)) => status(error) as u32,
         Err(_) => Status::Io as u32,
     }
@@ -523,10 +505,7 @@ unsafe extern "C" fn enter(context: *mut c_void, owner: u32) -> u32 {
                     "migration worker already entered",
                 ));
             }
-            let worker = state
-                .registry
-                .worker()
-                .map_err(|code| shard_error(wire::status(code)))?;
+            let worker = MigrationWorker::new(state.store.clone(), state.schema.clone())?;
             *slot = Some((context as usize, worker));
             Ok(())
         })
@@ -628,11 +607,7 @@ unsafe extern "C" fn scan(
         } else {
             None
         };
-        let row = with_worker(context, |worker| {
-            worker
-                .scan(table, lo, hi, after)
-                .map_err(|code| shard_error(wire::status(code)))
-        })?;
+        let row = with_worker(context, |worker| worker.scan(table, lo, hi, after))?;
         if let Some(row) = row {
             found = true;
             unsafe {
@@ -673,20 +648,14 @@ unsafe fn write(
             0
         };
         state.materialize(TableKey { table, warehouse })?;
-        with_worker(context, |worker| {
-            storage_status(
-                match value {
-                    Some(value) => worker.put(
-                        table,
-                        coordinate,
-                        key,
-                        unsafe { value.slice() }.map_err(shard_error)?,
-                    ),
-                    None => worker.remove(table, coordinate, key),
-                }
-                .err()
-                .unwrap_or(Status::Ok as u32),
-            )
+        with_worker(context, |worker| match value {
+            Some(value) => worker.put(
+                table,
+                coordinate,
+                key,
+                unsafe { value.slice() }.map_err(shard_error)?,
+            ),
+            None => worker.remove(table, coordinate, key),
         })
     })
 }

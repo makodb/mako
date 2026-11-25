@@ -45,16 +45,7 @@ impl api::TableBackend for Table {
         self.0.len()
     }
 }
-/// Temporary bridge for the existing Masstree migration host. The common
-/// transaction interface never downcasts and this bridge rejects other engines.
-pub fn native_database(database: &api::Database) -> api::Result<native::Database> {
-    database
-        .as_any()
-        .downcast_ref::<native::Database>()
-        .cloned()
-        .ok_or_else(|| api::Error::invalid("Masstree migration requires a Masstree engine"))
-}
-pub fn native_table(table: &api::Table) -> api::Result<&native::Table> {
+fn native_table(table: &api::Table) -> api::Result<&native::Table> {
     table
         .as_any()
         .downcast_ref()
