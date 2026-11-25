@@ -38,7 +38,24 @@ permissions:
   packages: read
 
 jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    outputs:
+      components: ${{ steps.select.outputs.components }}
+      integration: ${{ steps.select.outputs.integration }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: python3 scripts/ci/select_gates.py --event "$EVENT" --base "$BASE" --head "$HEAD"
   native-sanitizer:
+    needs: gates
+    if: needs.gates.outputs.components == 'true' || needs.gates.outputs.integration == 'true'
     name: ${{ matrix.sanitizer }} Rust/native boundary
     runs-on: ubuntu-24.04
     container:

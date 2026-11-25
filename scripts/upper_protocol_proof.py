@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Source correspondence audit and semantic controls for the production core.
+
+The native adapters remain trusted. This checks their entry points, not their
+semantics. See docs/developer/upper-layer-contracts.md for that boundary.
+"""
+from pathlib import Path
+import re
+import shutil
+import tempfile
+import tomllib
+import shard_host_core_proof as host
+
+ROOT = host.ROOT
+CORE = ROOT / 'crates/mako-protocol-core'
+ENTRY = 'crates/mako-protocol-core/src/lib.rs'
+ADAPTERS = {
+    'crates/sto-tpcc-ffi/src/protocol.rs': [
+        'impl mako_protocol_core::coordinator::Effects for CoordinatorEffects',
+        'require_phase(handle, ParticipantPhase::Collecting)',
+        'mako_protocol_core::coordinator::coordinate(&mut CoordinatorEffects'],
+    'crates/mako-protocol/src/admission.rs': [
+        'core::admit(', 'core::claim(', 'core::completed(',
+        'self.last.as_ref() == Some(request) && self.response.is_some()'],
+    'crates/mako-protocol/src/participant.rs': ['core::admission::release_protection(', 'self.engine.execute(', 'self.engine.retain_uncertain()'],
+    'crates/mako-runtime/src/receiver.rs': ['impl ParticipantEngine for NativeEngine', 'Lane::new(', 'self.store.quarantine(protection)'],
+    'crates/mako-runtime/src/rpc.rs': ['impl mako_protocol::contracts::Transport for Network'],
+    'crates/mako-runtime/src/client.rs': ['mako_protocol::remote::Remotes', 'fence_client('],
+    'crates/mako-runtime/src/gateway_client.rs': ['mako_protocol::gateway_client::GatewayClient'],
+}
+
+def audit_file(path, source):
+    code = host.core_code(source)
+    host.audit_core_tokens(path, code)
+    checked = code.replace('#![forbid(unsafe_code)]', '')
+    if re.search(r'verifier::|\bassume\s*\(|(?<!fn )\badmit\s*\(|\bassume_specification\b|\bexternal|\brlimit\b|\bunsafe', checked):
+        raise SystemExit(f'{path}: verifier escape')
+    if path.name == 'lib.rs':
+        if re.sub(r'pub mod \w+;', '', checked).strip():
+            raise SystemExit(f'{path}: executable code outside verus!')
+        return
+    start = checked.find('verus! {')
+    if start < 0 or re.sub(r'use [^;]+;', '', checked[:start]).strip():
+        raise SystemExit(f'{path}: executable code before verus!')
+    depth = 0
+    for index in range(checked.index('{', start), len(checked)):
+        depth += {'{':1, '}':-1}.get(checked[index], 0)
+        if depth == 0:
+            if checked[index+1:].strip():
+                raise SystemExit(f'{path}: executable code after verus!')
+            break
+    else:
+        raise SystemExit(f'{path}: unmatched verus! block')
+
+def audit():
+    host.audit_configuration(CORE)
+    files = sorted((CORE/'src').glob('*.rs'))
+    declared = set(re.findall(r'pub mod (\w+);', (CORE/'src/lib.rs').read_text()))
+    if declared != {p.stem for p in files if p.name != 'lib.rs'}:
+        raise SystemExit('Core module graph mismatch')
+    for path in files:
+        audit_file(path, path.read_text())
+    # Audit controls use the same parser as the unchanged crate.
+    path = CORE/'src/admission.rs'
+    for bad in ('#[cfg(verus_keep_ghost)]\n', '#[verifier::external_body]\n'):
+        try:
+            audit_file(path, path.read_text().replace('pub fn active(', bad+'pub fn active(', 1))
+        except SystemExit:
+            pass
+        else:
+            raise SystemExit('Core source audit accepted a proof bypass')
+    for name, sites in ADAPTERS.items():
+        source = (ROOT/name).read_text()
+        for site in sites:
+            if re.sub(r'\s+', '', site) not in re.sub(r'\s+', '', source):
+                raise SystemExit(f'Trusted adapter mapping changed: {name}: {site}')
+    for crate in ('mako-protocol-core','shard-host-core'):
+        deps = tomllib.loads((ROOT/'crates'/crate/'Cargo.toml').read_text())['dependencies']
+        if deps['vstd'] != '='+host.CRATES_VERSION:
+            raise SystemExit(f'{crate}: Verus pin drift')
+    print('Protocol source audit: all core items verified; explicit trusted adapter mappings; bypass controls rejected', flush=True)
+
+# name, source, unique executable mutation, replacement, module, function.
+CONTROLS = [
+    ('stale sequence executes', 'admission.rs', 'request.sequence <= prior.sequence', 'request.sequence < prior.sequence', 'admission', 'admit'),
+    ('install bypasses validation', 'admission.rs', 'if matches!(operation, Operation::Install) && !matches!(phase, Phase::Sealed)', 'if false && matches!(operation, Operation::Install) && !matches!(phase, Phase::Sealed)', 'admission', 'admit'),
+    ('unknown releases migration protection', 'admission.rs', 'matches!(phase, Phase::Committed | Phase::Aborted) }', 'matches!(phase, Phase::Committed | Phase::Aborted | Phase::Unknown) }', 'admission', 'release_protection'),
+    ('failed install becomes aborted', 'admission.rs', 'Operation::Install => if success { Phase::Committed } else { Phase::Unknown }', 'Operation::Install => if success { Phase::Committed } else { Phase::Aborted }', 'admission', 'completed'),
+    ('timestamp equals dependency', 'coordinator.rs', 'if proposal <= dependency {', 'if proposal < dependency {', 'coordinator', 'prepare'),
+    ('local install failure permits retry', 'coordinator.rs', 'if effects.install_local() != OK {\n        effects.quarantine();\n        return UNKNOWN;', 'if effects.install_local() != OK {\n        effects.quarantine();\n        return RETRY;', 'coordinator', 'coordinate'),
+    ('remote validation omitted', 'coordinator.rs', '    effects.validate_remote()\n}', '    OK\n}', 'coordinator', 'prepare'),
+    ('coordinator rejects all available attempts', 'coordinator.rs', '    let prepared = prepare(effects);', '    return RETRY;\n    let prepared = prepare(effects);', 'coordinator', 'coordinate'),
+]
+
+def controls(run_proof):
+    for name, filename, before, after, module, function in CONTROLS:
+        with tempfile.TemporaryDirectory(prefix='mako-upper-control-') as tmp:
+            dest = Path(tmp)
+            shutil.copytree(CORE/'src', dest/'src')
+            path = dest/'src'/filename
+            source = path.read_text()
+            if source.count(before) != 1:
+                raise SystemExit(f'{name}: mutation site changed')
+            path.write_text(source.replace(before,after))
+            run_proof(name, 'src/lib.rs', cwd=dest, reject=True, module=module, function=function)

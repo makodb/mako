@@ -462,12 +462,35 @@ name = "mako-history"
 version = "0.1.0"
 
 [[package]]
+name = "mako-protocol"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "mako-clock",
+ "mako-protocol-core",
+ "mako-sharding",
+ "parking_lot",
+ "serde",
+]
+
+[[package]]
+name = "mako-protocol-core"
+version = "0.1.0"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
+]
+
+[[package]]
 name = "mako-runtime"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "libc",
  "mako-clock",
+ "mako-protocol",
+ "mako-protocol-core",
  "mako-sharding",
  "parking_lot",
  "raft-host",
@@ -929,6 +952,7 @@ name = "sto-tpcc-ffi"
 version = "0.0.0"
 dependencies = [
  "mako-clock",
+ "mako-protocol-core",
  "masstree",
  "shard-host-core",
  "sto-core",

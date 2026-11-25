@@ -1,0 +1,54 @@
+name: Weekly performance
+
+on:
+  schedule:
+    - cron: "34 9 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  performance:
+    # Set MAKO_PERF_RUNNER to a dedicated runner label for stable comparisons.
+    # Shared hosted runners produce diagnostic samples, not release thresholds.
+    runs-on: ${{ vars.MAKO_PERF_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      BUILD_DIR: build
+      CI_MAKE_JOBS: "4"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+      - run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - run: bash ci/native_rust.sh compile
+      - id: environment
+        run: echo "fingerprint=$(python3 scripts/ci/weekly_performance.py --fingerprint-only)" >> "$GITHUB_OUTPUT"
+      - name: Restore comparable baseline
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: build/performance-baseline
+          key: perf-${{ vars.MAKO_PERF_RUNNER || runner.os }}-${{ steps.environment.outputs.fingerprint }}-${{ github.run_id }}
+          restore-keys: perf-${{ vars.MAKO_PERF_RUNNER || runner.os }}-${{ steps.environment.outputs.fingerprint }}-
+      - name: Warmup, repeat workloads and compare medians
+        run: python3 scripts/ci/weekly_performance.py --build build --output build/performance --baseline build/performance-baseline/results.json --update-baseline
+      - name: Retain new baseline
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: build/performance-baseline
+          key: perf-${{ vars.MAKO_PERF_RUNNER || runner.os }}-${{ steps.environment.outputs.fingerprint }}-${{ github.run_id }}
+      - name: Retain raw results and environment metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: weekly-performance-${{ github.run_id }}
+          path: |
+            build/performance/
+            build/runs/

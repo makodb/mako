@@ -11,6 +11,7 @@ launch() { python3 examples/run_native.py "$@" --build "$build"; }
 case "${1:-}" in
     compile) bash ci/native_rust.sh compile ;;
     nativeRust) bash ci/native_rust.sh all ;;
+    upper) bash ci/upper.sh ;;
     rustStorageGates|rustStoBoundaryBinaries) bash ci/native_rust.sh components ;;
     nativeRuntime|nativeShardingSmoke|clientServer|raftKillTest|shard1ReplicationRaftRestart)
         bash ci/native_rust.sh runtime ;;
@@ -28,6 +29,7 @@ case "${1:-}" in
     cpuThrottlingScaling) bash ci/test_cpu_throttling_scaling.sh ;;
     cleanup) echo 'Native launchers stop their own processes. Build and failure artifacts are retained.' ;;
     all)
+        bash ci/upper.sh
         bash ci/native_rust.sh proofs
         bash ci/native_rust.sh srpc
         bash ci/native_rust.sh all

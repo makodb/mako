@@ -852,91 +852,169 @@ pub unsafe extern "C" fn sto_tpcc_protocol_log(
     })
 }
 
+// These values are part of the verified coordinator's adapter contract.
+const _: () = {
+    use mako_protocol_core::coordinator as checked;
+    assert!(checked::OK == Status::Ok as i32);
+    assert!(checked::RETRY == Status::Retry as i32);
+    assert!(checked::CAPACITY == Status::ResourceExhausted as i32);
+    assert!(checked::FATAL == Status::Fatal as i32);
+    assert!(checked::UNKNOWN == Status::Unknown as i32);
+    assert!(checked::COMMITTED_ERROR == Status::CommittedError as i32);
+    assert!(checked::MAX_TIMESTAMP == mako_clock::distributed::MAX_BASE);
+};
+
+/// Trusted physical adapter. The ordering of these primitive calls is in the
+/// verified core; STO still owns locking, certification and local installation.
+struct CoordinatorEffects<'a> {
+    handle: &'a mut StoTpccThread,
+    latency: u32,
+    callback: StoTpccProtocolCallback,
+    context: *mut c_void,
+    proposal: u32,
+}
+impl CoordinatorEffects<'_> {
+    fn remote(&mut self, action: u32, timestamp: u32) -> FfiResult<()> {
+        if self.handle.protocol.touched.is_empty() {
+            return Ok(());
+        }
+        invoke(
+            self.callback,
+            self.context,
+            &mut StoTpccProtocolRequest::phase(action, timestamp),
+        )
+    }
+}
+impl mako_protocol_core::coordinator::Effects for CoordinatorEffects<'_> {
+    fn flush(&mut self) -> i32 {
+        flush_remote(self.handle, self.callback, self.context).map_or_else(Status::code, |_| 0)
+    }
+    fn lock(&mut self) -> i32 {
+        lock(self.handle).map_or_else(Status::code, |_| 0)
+    }
+    fn reserve(&mut self, minimum: u32) -> Result<u32, i32> {
+        let result = if minimum == 0 {
+            global_distributed().reserve()
+        } else {
+            global_distributed().observe(
+                DistributedTimestamp::new(self.proposal).expect("validated timestamp proposal"),
+            );
+            global_distributed().reserve_after(
+                DistributedTimestamp::new(minimum).expect("existing read dependency"),
+            )
+        };
+        let timestamp =
+            result.map_err(|error| fatal(format_args!("distributed timestamp: {error}")).code())?;
+        self.proposal = timestamp.get();
+        Ok(timestamp.get())
+    }
+    fn remote_timestamp(&mut self) -> Result<u32, i32> {
+        if self.handle.protocol.touched.is_empty() {
+            return Ok(0);
+        }
+        let mut request = StoTpccProtocolRequest::phase(TIMESTAMP, 0);
+        invoke(self.callback, self.context, &mut request).map_err(Status::code)?;
+        if request.timestamp > self.proposal {
+            DistributedTimestamp::new(request.timestamp)
+                .map_err(|error| fatal(format_args!("remote proposal: {error}")).code())?;
+            self.proposal = request.timestamp;
+        }
+        Ok(request.timestamp)
+    }
+    fn read_dependency(&self) -> u32 {
+        self.handle
+            .protocol
+            .dependency
+            .map_or(0, |value| value.get())
+    }
+    fn choose(&mut self, value: u32) {
+        let proposal = DistributedTimestamp::new(value).expect("verified decision bounds");
+        let decision = DistributedTimeTerm::new(proposal, self.handle.protocol.term);
+        self.handle.protocol.decision = Some(decision);
+        self.handle.protocol.report.time_term = decision.encode_legacy();
+    }
+    fn validate_local(&mut self) -> i32 {
+        validate(self.handle).map_or_else(Status::code, |_| 0)
+    }
+    fn validate_remote(&mut self) -> i32 {
+        self.remote(VALIDATE, 0).map_or_else(Status::code, |_| 0)
+    }
+    fn abort_remote(&mut self) -> i32 {
+        self.remote(ABORT, 0).map_or_else(Status::code, |_| 0)
+    }
+    fn finish_abort(&mut self) -> i32 {
+        finish(self.handle, false)
+            .unwrap_or_else(|status| status)
+            .code()
+    }
+    fn install_local(&mut self) -> i32 {
+        let decision = self
+            .handle
+            .protocol
+            .decision
+            .expect("verified chosen decision");
+        install(self.handle, decision).map_or_else(Status::code, |_| 0)
+    }
+    fn install_remote(&mut self) -> i32 {
+        let timestamp = self
+            .handle
+            .protocol
+            .decision
+            .expect("verified chosen decision")
+            .timestamp()
+            .get();
+        self.remote(INSTALL, timestamp)
+            .map_or_else(Status::code, |_| 0)
+    }
+    fn append_log(&mut self) -> i32 {
+        submit_log(self.handle, self.latency, self.callback, self.context)
+            .map_or_else(Status::code, |_| 0)
+    }
+    fn finish_commit(&mut self) -> i32 {
+        finish(self.handle, true)
+            .unwrap_or_else(|status| status)
+            .code()
+    }
+    fn quarantine(&mut self) {
+        self.handle.protocol.report.disposition = 3;
+    }
+}
+
 fn coordinate(
     handle: &mut StoTpccThread,
     latency: u32,
     callback: StoTpccProtocolCallback,
     context: *mut c_void,
 ) -> FfiResult<Status> {
-    let prepared = (|| {
-        flush_remote(handle, callback, context)?;
-        lock(handle)?;
-        let mut proposal = global_distributed()
-            .reserve()
-            .map_err(|error| fatal(format_args!("distributed timestamp: {error}")))?;
-        if !handle.protocol.touched.is_empty() {
-            let mut request = StoTpccProtocolRequest::phase(TIMESTAMP, 0);
-            invoke(callback, context, &mut request)?;
-            if request.timestamp > proposal.get() {
-                proposal = DistributedTimestamp::new(request.timestamp)
-                    .map_err(|error| fatal(format_args!("remote proposal: {error}")))?;
-            }
-        }
-        if let Some(dependency) = handle.protocol.dependency {
-            if proposal.get() <= dependency.get() {
-                global_distributed().observe(proposal);
-                proposal = global_distributed()
-                    .reserve_after(dependency)
-                    .map_err(|error| fatal(format_args!("read dependency timestamp: {error}")))?;
-            }
-        }
-        let decision = DistributedTimeTerm::new(proposal, handle.protocol.term);
-        handle.protocol.decision = Some(decision);
-        handle.protocol.report.time_term = decision.encode_legacy();
-        // All allocation and certification precede the irreversible boundary.
-        validate(handle)?;
-        if !handle.protocol.touched.is_empty() {
+    // Reject invalid entry states before supplying the core's Collecting
+    // precondition. Preserve the existing cleanup behavior of the raw API.
+    if let Err(status) = require_phase(handle, ParticipantPhase::Collecting) {
+        let remote_cleanup = if handle.protocol.touched.is_empty() {
+            Ok(())
+        } else {
             invoke(
                 callback,
                 context,
-                &mut StoTpccProtocolRequest::phase(VALIDATE, 0),
-            )?;
+                &mut StoTpccProtocolRequest::phase(ABORT, 0),
+            )
+        };
+        let cleanup = finish(handle, false)?;
+        if cleanup != Status::Ok {
+            return Ok(cleanup);
         }
-        Ok(decision)
-    })();
-    let decision = match prepared {
-        Ok(decision) => decision,
-        Err(status) => {
-            let remote_cleanup = if handle.protocol.touched.is_empty() {
-                Ok(())
-            } else {
-                invoke(
-                    callback,
-                    context,
-                    &mut StoTpccProtocolRequest::phase(ABORT, 0),
-                )
-            };
-            let cleanup = finish(handle, false)?;
-            if cleanup != Status::Ok {
-                return Ok(cleanup);
-            }
-            if remote_cleanup.is_err() {
-                return Err(Status::Fatal);
-            }
-            return Ok(status);
+        if remote_cleanup.is_err() {
+            return Err(Status::Fatal);
         }
-    };
-    // From this point neither local nor remote failures can mean retry.
-    if install(handle, decision).is_err() {
-        handle.protocol.report.disposition = 3;
-        return Err(Status::Unknown);
+        return Ok(status);
     }
-    if !handle.protocol.touched.is_empty()
-        && invoke(
-            callback,
-            context,
-            &mut StoTpccProtocolRequest::phase(INSTALL, decision.timestamp().get()),
-        )
-        .is_err()
-    {
-        handle.protocol.report.disposition = 3;
-        return Err(Status::Unknown);
-    }
-    if submit_log(handle, latency, callback, context).is_err() {
-        handle.protocol.report.disposition = 3;
-        return Err(Status::Unknown);
-    }
-    finish(handle, true)
+    let status = mako_protocol_core::coordinator::coordinate(&mut CoordinatorEffects {
+        handle,
+        latency,
+        callback,
+        context,
+        proposal: 0,
+    });
+    Ok(callback_status(status))
 }
 
 #[no_mangle]

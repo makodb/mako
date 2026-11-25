@@ -12,6 +12,7 @@ path = "src/lib.rs"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+mako-protocol-core = { path = "../mako-protocol-core" }
 mako-clock = { path = "../mako-clock" }
 masstree = { path = "../masstree" }
 shard-host-core = { path = "../shard-host-core" }

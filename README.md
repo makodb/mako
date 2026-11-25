@@ -30,6 +30,12 @@ BUILD_DIR=build bash ci/native_rust.sh all
 `NATIVE_RUST` is the default CMake profile. `ROCKSDB_RAFT` builds the direct
 RocksDB service without Masstree. The retired `MAKO` profile is rejected.
 
+For everyday upper-layer protocol work, run `./docker_build.sh ci upper`.
+It verifies distributed transaction, sharding and migration decisions against
+small backend contracts without building the physical engines, RPC or Raft.
+The check has a five-minute deadline; component/integration checks and weekly
+performance have separate commands. See [development](docs/developer/development.md).
+
 Run a two-shard transaction example or a TPC-C workload inside the container:
 
 ```sh

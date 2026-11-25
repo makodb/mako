@@ -31,6 +31,33 @@ profile under `build/storage-tests`.
 
 ## Test selection
 
+For distributed transaction, sharding and migration work, use:
+
+```sh
+./docker_build.sh ci upper
+```
+
+This runs the production Verus proofs, selected semantic negative controls and
+small deterministic scenarios. It uses four logical CPUs and has a five-minute
+wall deadline. It does not compile Masstree, RocksDB, SRPC or Raft. Storage,
+local transaction effects, delivery, logging and time come through the explicit
+[upper-layer contracts](upper-layer-contracts.md). Production adapters call the
+same core functions as this suite.
+
+On a new checkout, download and compile separately inside the container:
+
+```sh
+bash ci/upper.sh --bootstrap
+bash ci/upper.sh
+```
+
+Bootstrap never reports a passing correctness check. Every normal invocation
+reruns all positive proofs and scenarios, even if Cargo has nothing to compile.
+Stage logs, dependency inventories, source identity and timing reports are
+under `$BUILD_DIR/upper/runs`. `python3 scripts/qualify_upper.py` measures five
+complete runs, including representative source touches to force incremental
+recompilation. Plain `cmake --build` and Cargo compilation run no test suites.
+
 | Gate | Coverage |
 | --- | --- |
 | `components` | Independent STO, support libraries, tree/ABI, adapters and cache |
@@ -41,7 +68,7 @@ profile under `build/storage-tests`.
 | `workloads` | Sharded/colocated transactions, TPC-C, persistence and throttling |
 | `audit` | Source/header closure, Cargo archives and all production executable links |
 | `srpc` | Native kernel pins, negative controls and copied Cargo-only independence |
-| `proofs` | Native sharding and host Verus gates and negative controls |
+| `proofs` | Extended native/independent sharding models, full controls and recovery examples |
 
 Run `BUILD_DIR=build bash ci/native_rust.sh GATE`. The transaction-manager gate
 never receives native linkage settings. Adapter and runtime tests explicitly
@@ -52,6 +79,27 @@ For direct RocksDB/Raft, `bash ci/rocksdb_raft.sh` runs native unit tests and
 process tests for leader loss, commit boundaries, snapshots and restart.
 For sanitizer qualification, use `scripts/ci/run_rust_sto_sanitizer.sh` and
 its checked-in workflow. Sanitizer builds require fresh output directories.
+
+CI selects component jobs from their source paths. Shared contract changes also
+select the real adapters and affected components. The full integration and
+extended correctness jobs run nightly and on demand. The upper development
+check remains a separate job and never waits for component compilation.
+
+Performance runs only in the weekly/manual workflow. After compiling the
+production binaries, run it locally inside the container with:
+
+```sh
+python3 scripts/ci/weekly_performance.py --build build --output build/performance \
+  --baseline build/performance-baseline/results.json --update-baseline
+```
+
+It warms each topology, records three samples, and retains raw shard metrics,
+binary/revision identity and environment metadata. A comparison is valid only
+when the environment and workload configuration match. Set the repository
+variable `MAKO_PERF_RUNNER` to a dedicated runner label for stable performance
+comparisons. The default hosted runner gives diagnostic samples; its shared
+hardware does not support a release performance threshold. No performance
+command is part of compilation or `ci upper`.
 
 ## Launchers and diagnostics
 

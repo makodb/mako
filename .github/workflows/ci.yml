@@ -6,13 +6,99 @@ on:
   pull_request:
     branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
+  schedule:
+    - cron: "12 7 * * *"
 
 permissions:
   contents: read
   packages: read
 
 jobs:
+  gates:
+    name: Select component and protocol checks
+    runs-on: ubuntu-24.04
+    outputs:
+      upper: ${{ steps.select.outputs.upper }}
+      components: ${{ steps.select.outputs.components }}
+      replication: ${{ steps.select.outputs.replication }}
+      srpc: ${{ steps.select.outputs.srpc }}
+      integration: ${{ steps.select.outputs.integration }}
+      extended: ${{ steps.select.outputs.extended }}
+      miri: ${{ steps.select.outputs.miri }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Validate selector
+        run: python3 -m unittest discover -s scripts/ci -p test_select_gates.py
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: python3 scripts/ci/select_gates.py --event "$EVENT" --base "$BASE" --head "$HEAD"
+
+  upper:
+    name: Upper protocol verification, four CPUs, five-minute check
+    needs: gates
+    if: needs.gates.outputs.upper == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 30
+    env:
+      BUILD_DIR: build
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Rust
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - name: Bootstrap downloads and compile, timed separately
+        run: bash ci/upper.sh --bootstrap
+      - name: Complete proofs, negative controls and deterministic scenarios
+        run: bash ci/upper.sh
+      - name: Keep stage timing and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: upper-protocol
+          path: build/upper/runs/
+
+  native-components:
+    name: Transaction manager, storage and adapter components
+    needs: gates
+    if: needs.gates.outputs.components == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 120
+    env:
+      BUILD_DIR: build
+      CI_MAKE_JOBS: "4"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+      - run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - name: Configure component targets
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Local transaction manager without Masstree
+        run: cmake --build build --target rust_sto_transaction_tests rust_support_tests --parallel 4
+      - name: Masstree and cache components
+        run: cmake --build build --target rust_masstree_tests rust_cache_tests --parallel 4
+      - name: Real transaction/storage adapter
+        run: cmake --build build --target rust_application_adapter_tests --parallel 4
+      - name: C++ storage component tests
+        run: bash ci/native_rust.sh storage
+
   rocksdb-raft:
+    needs: gates
+    if: needs.gates.outputs.replication == 'true'
     name: Native Rust STO + RocksDB + Raft
     runs-on: ubuntu-24.04
     container:
@@ -49,7 +135,9 @@ jobs:
             build_rocksdb_raft/runtime-evidence.*/**/*.json
 
   native-rust:
-    name: Native Rust application and separate storage gates
+    needs: gates
+    if: needs.gates.outputs.integration == 'true'
+    name: Real adapter and process integration
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24:latest
@@ -99,10 +187,6 @@ jobs:
 
       - name: Build optimized native executables
         run: bash ci/native_rust.sh compile
-      - name: Transaction manager, Masstree and adapter components
-        run: bash ci/native_rust.sh components
-      - name: Separate C++ storage component tests
-        run: bash ci/native_rust.sh storage
       - name: Native poison transition and Rust API checks
         run: bash ci/native_rust.sh health && bash ci/native_rust.sh quality
       - name: Runtime and process regression suites in debug and release
@@ -125,6 +209,8 @@ jobs:
             build/storage-tests/Testing/Temporary/
 
   native-srpc:
+    needs: gates
+    if: needs.gates.outputs.srpc == 'true'
     name: Native SRPC without C++ tools or providers
     runs-on: ubuntu-24.04
     container:
@@ -144,7 +230,9 @@ jobs:
         run: bash ci/native_rust.sh srpc
 
   native-proofs:
-    name: Native sharding and storage host proofs
+    needs: gates
+    if: needs.gates.outputs.extended == 'true'
+    name: Extended proof controls and recovery campaigns
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24:latest
@@ -163,6 +251,8 @@ jobs:
         run: bash ci/native_rust.sh proofs
 
   rust-sto-miri:
+    needs: gates
+    if: needs.gates.outputs.miri == 'true'
     name: Rust STO Miri ownership gate
     runs-on: ubuntu-24.04
     container:

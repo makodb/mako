@@ -9,7 +9,7 @@ use crate::participant::{Participant, ControlResult, Cleanup};
 use crate::storage::{self, Source, Store};
 #[cfg(verus_keep_ghost)]
 use crate::storage::{Image, first, identity, in_range, row_cell};
-#[cfg(all(test, not(verus_keep_ghost)))]
+#[cfg(all(test, feature = "engine-host", not(verus_keep_ghost)))]
 #[path = "transfer_tests.rs"]
 mod tests;
 

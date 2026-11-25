@@ -2,7 +2,7 @@
 //! deliver its phases to retained native SRPC participants.
 use crate::{
     rpc::Network,
-    storage::{engine, CommitLog, Protection, Store},
+    storage::{engine, Protection, Store},
     wire::*,
 };
 use std::{collections::BTreeMap, io::Read, sync::Arc, time::Duration};
@@ -88,23 +88,20 @@ impl Client {
             .ok_or_else(|| Error::new(ErrorCode::Capacity, "transaction attempt exhausted"))?;
         let protection = store.protect()?;
         let participant = worker.begin_participant(self.term).map_err(engine)?;
-        let remotes = Remotes {
-            network: self.network.clone(),
-            endpoints: self.endpoints.clone(),
-            replicas: self.replicas.clone(),
-            stream: self.stream,
-            identity: Identity {
+        let remotes = Remotes(mako_protocol::remote::Remotes::new(
+            self.network.clone(),
+            self.endpoints.clone(),
+            self.replicas.clone(),
+            self.stream,
+            Identity {
                 incarnation: self.incarnation,
                 attempt: self.attempt,
                 sequence: 0,
                 term: self.term,
             },
-            peers: BTreeMap::new(),
-            targets: BTreeMap::new(),
-            log: store.log.clone(),
-            timeout: self.timeout,
-            cleanup_failure: None,
-        };
+            store.log.clone(),
+            self.timeout,
+        ));
         Ok(Transaction {
             participant: Some(participant),
             remotes,
@@ -136,108 +133,16 @@ impl Client {
     }
 }
 
-struct Peer {
-    incarnation: u64,
-    sequence: u64,
-    endpoint: String,
-}
-struct Remotes {
-    cleanup_failure: Option<Error>,
-    network: Arc<Network>,
-    endpoints: Arc<BTreeMap<u32, String>>,
-    replicas: BTreeMap<u32, ReplicaSet>,
-    stream: Stream,
-    identity: Identity,
-    peers: BTreeMap<u32, Peer>,
-    targets: BTreeMap<(u32, u16, Vec<u8>), Access>,
-    log: Arc<dyn CommitLog>,
-    timeout: Duration,
-}
-impl Remotes {
-    fn select(&mut self, owner: u32) -> Result<()> {
-        if !self.peers.contains_key(&owner) {
-            let endpoint = if let Some(replicas) = self.replicas.get(&owner) {
-                self.network.find_leader(owner, replicas, self.timeout)?
-            } else {
-                self.endpoints
-                    .get(&owner)
-                    .cloned()
-                    .ok_or_else(|| Error::new(ErrorCode::Invalid, "missing shard endpoint"))?
-            };
-            let incarnation = match self.network.call(
-                &endpoint,
-                Message::OpenStream {
-                    stream: self.stream,
-                    nonce: self.identity.incarnation,
-                },
-                self.timeout,
-            )? {
-                Reply::OpenStream(result) => result?,
-                Reply::Error(error) => return Err(error),
-                _ => {
-                    return Err(Error::new(
-                        ErrorCode::Transport,
-                        "invalid stream claim reply",
-                    ))
-                }
-            };
-            self.peers.insert(
-                owner,
-                Peer {
-                    incarnation,
-                    sequence: 0,
-                    endpoint,
-                },
-            );
-        }
-        Ok(())
+struct Remotes(mako_protocol::remote::Remotes);
+impl std::ops::Deref for Remotes {
+    type Target = mako_protocol::remote::Remotes;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
-    fn call(&mut self, owner: u32, action: Action) -> Result<Value> {
-        self.select(owner)?;
-        // A lost initial reply may leave a remote session requiring ABORT.
-        let peer = self
-            .peers
-            .get_mut(&owner)
-            .expect("selected participant endpoint");
-        peer.sequence = peer.sequence.checked_add(1).ok_or_else(|| {
-            Error::new(
-                ErrorCode::Capacity,
-                "participant request sequence exhausted",
-            )
-        })?;
-        let identity = Identity {
-            incarnation: peer.incarnation,
-            sequence: peer.sequence,
-            ..self.identity
-        };
-        let reply = self.network.call(
-            &peer.endpoint,
-            Message::Participant(Request {
-                stream: self.stream,
-                identity,
-                action,
-            }),
-            self.timeout,
-        )?;
-        match reply {
-            Reply::Participant(response) if response.identity == identity => response.result,
-            Reply::Error(error) => Err(error),
-            _ => Err(Error::new(
-                ErrorCode::Transport,
-                "reply does not match pending participant identity",
-            )),
-        }
-    }
-    fn all(&mut self, action: Action) -> Result<()> {
-        let owners: Vec<_> = self.peers.keys().copied().collect();
-        let mut failure = None;
-        for owner in owners {
-            // Send cleanup to every peer even when an earlier ABORT failed.
-            if let Err(error) = self.call(owner, action.clone()) {
-                failure.get_or_insert(error);
-            }
-        }
-        failure.map_or(Ok(()), Err)
+}
+impl std::ops::DerefMut for Remotes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 fn callback_error(error: Error) -> sto::Error {
@@ -262,72 +167,29 @@ impl sto::ProtocolCallbacks for Remotes {
         key: &[u8],
         value: &[u8],
     ) -> sto::Result<()> {
-        let access = self
-            .targets
-            .get(&(shard, table, key.to_vec()))
-            .cloned()
-            .ok_or_else(|| {
-                callback_error(Error::new(
-                    ErrorCode::Invalid,
-                    "remote table was not resolved",
-                ))
-            })?;
         let mutation = match mutation {
             sto::Mutation::Put => Mutation::Put,
             sto::Mutation::Insert => Mutation::Insert,
             sto::Mutation::Remove => Mutation::Remove,
         };
-        self.call(
-            shard,
-            Action::Stage {
-                writes: vec![Write {
-                    access,
-                    mutation,
-                    key: key.to_vec(),
-                    value: value.to_vec(),
-                }],
-            },
-        )
-        .map(|_| ())
-        .map_err(callback_error)
-    }
-    fn timestamp(&mut self) -> sto::Result<u32> {
-        let mut maximum = 0;
-        for owner in self.peers.keys().copied().collect::<Vec<_>>() {
-            match self
-                .call(owner, Action::Timestamp)
-                .map_err(callback_error)?
-            {
-                Value::Timestamp(timestamp) => maximum = maximum.max(timestamp),
-                _ => {
-                    return Err(callback_error(Error::new(
-                        ErrorCode::Transport,
-                        "missing participant timestamp",
-                    )))
-                }
-            }
-        }
-        Ok(maximum)
-    }
-    fn validate(&mut self) -> sto::Result<()> {
-        self.all(Action::Validate).map_err(callback_error)
-    }
-    fn install(&mut self, timestamp: u32) -> sto::Result<()> {
-        self.all(Action::Install { timestamp })
+        self.0
+            .stage(shard, table, mutation, key, value)
             .map_err(callback_error)
     }
+    fn timestamp(&mut self) -> sto::Result<u32> {
+        self.0.timestamp().map_err(callback_error)
+    }
+    fn validate(&mut self) -> sto::Result<()> {
+        self.0.validate().map_err(callback_error)
+    }
+    fn install(&mut self, timestamp: u32) -> sto::Result<()> {
+        self.0.install(timestamp).map_err(callback_error)
+    }
     fn abort(&mut self) -> sto::Result<()> {
-        self.all(Action::Abort).map_err(|error| {
-            let error = Error::new(
-                ErrorCode::Unknown,
-                format!("remote cleanup was not confirmed: {error}"),
-            );
-            self.cleanup_failure = Some(error.clone());
-            callback_error(error)
-        })
+        self.0.abort().map_err(callback_error)
     }
     fn log(&mut self, bytes: &[u8], time_term: u32) -> sto::Result<()> {
-        self.log.append(bytes, time_term).map_err(callback_error)
+        self.0.log(bytes, time_term).map_err(callback_error)
     }
 }
 
@@ -417,15 +279,14 @@ impl Transaction<'_, '_> {
         rows: &mut Vec<Row>,
         limit: usize,
     ) -> Result<()> {
-        let mut identity = self.remotes.identity;
+        let mut identity = self.remotes.identity();
         if target.owner != self.store.owner {
             self.participant
                 .as_mut()
                 .expect("live transaction")
                 .flush_remote(&mut self.remotes)
                 .map_err(engine)?;
-            self.remotes.select(target.owner)?;
-            identity.incarnation = self.remotes.peers[&target.owner].incarnation;
+            identity = self.remotes.remote_identity(target.owner)?;
         }
         let mut driver = crate::scan::Driver::new(target, identity, lower, upper, reverse)?;
         loop {
@@ -565,27 +426,7 @@ impl Transaction<'_, '_> {
                     ));
                 }
             } else {
-                if this.remotes.targets.iter().any(|((owner, id, _), access)| {
-                    *owner == target.owner
-                        && *id == target.log_id
-                        && access.table != target.access.table
-                }) {
-                    return Err(Error::new(
-                        ErrorCode::Invalid,
-                        "remote log ID identifies two physical tables",
-                    ));
-                }
-                let slot = this
-                    .remotes
-                    .targets
-                    .entry((target.owner, target.log_id, key.to_vec()))
-                    .or_insert_with(|| target.access.clone());
-                if slot != &target.access {
-                    return Err(Error::new(
-                        ErrorCode::RouteChanged,
-                        "remote table route changed during transaction",
-                    ));
-                }
+                this.remotes.bind_target(target, key)?;
                 participant
                     .stage_remote(target.owner, target.log_id, mutation, key, value)
                     .map_err(engine)?;
@@ -682,12 +523,13 @@ impl Transaction<'_, '_> {
             .commit(0, &mut self.remotes)
             .map(|_| ())
             .map_err(engine);
-        if let Some(error) = self.remotes.cleanup_failure.take() {
+        if let Some(error) = self.remotes.take_cleanup_failure() {
             *self.client_fenced = true;
             return Err(error);
         }
-        if matches!(&result, Err(e) if !matches!(e.code, ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy | ErrorCode::Capacity))
-        {
+        let retryable = matches!(&result, Err(e) if matches!(e.code,
+            ErrorCode::Conflict | ErrorCode::RouteChanged | ErrorCode::Busy | ErrorCode::Capacity));
+        if mako_protocol_core::admission::fence_client(result.is_ok(), retryable, false) {
             *self.client_fenced = true;
         }
         result

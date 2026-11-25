@@ -47,52 +47,7 @@ fn check(status: Status) -> Result<()> {
     }
 }
 
-pub trait CommitLog: Send + Sync {
-    fn health(&self) -> Result<()> {
-        Ok(())
-    }
-    fn shutdown(&self) {}
-    fn replica_status(&self, owner: u32) -> ReplicaStatus {
-        ReplicaStatus {
-            owner,
-            group: None,
-            leader: true,
-            term: 0,
-            healthy: true,
-            durable_receipts: false,
-        }
-    }
-    fn retains_gateway_receipts(&self) -> bool {
-        false
-    }
-    fn gateway_receipt(&self, _: &GatewayRequest) -> Result<Option<GatewayResponse>> {
-        Ok(None)
-    }
-    fn append_gateway(&self, bytes: &[u8], time_term: u32, _: &GatewayReceipt) -> Result<()> {
-        self.append(bytes, time_term)
-    }
-    fn admit(&self) -> Result<Box<dyn CommitPermit>> {
-        Ok(Box::new(()))
-    }
-    /// Return success only after the configured durability contract is met.
-    /// A failure occurs after local installation and therefore fences the lane.
-    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()>;
-}
-pub trait CommitPermit: Send + Sync {
-    fn check(&self) -> Result<()>;
-}
-impl CommitPermit for () {
-    fn check(&self) -> Result<()> {
-        Ok(())
-    }
-}
-/// Explicit policy for a non-replicated, non-persistent shard.
-pub struct VolatileLog;
-impl CommitLog for VolatileLog {
-    fn append(&self, _: &[u8], _: u32) -> Result<()> {
-        Ok(())
-    }
-}
+pub use mako_protocol::contracts::{CommitLog, CommitPermit, VolatileLog};
 
 #[derive(Clone)]
 pub struct Table {

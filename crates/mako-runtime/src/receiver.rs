@@ -1,9 +1,9 @@
 use crate::{
-    admission::{Admission, Phase, Session},
     rpc::{Network, Respond, RpcServer},
     storage::{engine, LogCallbacks, Protection, Store},
     wire::*,
 };
+use mako_protocol::{contracts::ParticipantEngine, participant::Lane};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -71,33 +71,22 @@ fn fresh_lease() -> Result<u64> {
         .map_err(|error| Error::new(ErrorCode::Fatal, format!("stream lease entropy: {error}")))?;
     Ok(u64::from_ne_bytes(bytes).max(1))
 }
-struct Lane {
+struct NativeEngine {
     worker: sto::Worker,
     store: Arc<Store>,
-    session: Session,
     protection: Option<Protection>,
     retained: bool,
+    uncertain: bool,
 }
-impl Lane {
-    fn process(&mut self, request: Request) -> Response {
-        let admission = self
-            .session
-            .admit(&request, self.store.term.load(Ordering::Acquire));
-        if let Admission::Reply(response) = admission {
-            return response;
-        }
-        let result = self.execute(&request, matches!(admission, Admission::Begin));
-        let response = Response {
-            identity: request.identity,
-            result,
-        };
-        let response = self.session.record(request, response);
-        // Unknown holds its epoch even after local native cleanup. Migration
-        // cannot mistake an unresolved INSTALL for a drained participant.
-        if matches!(self.session.phase(), Phase::Aborted | Phase::Committed) {
-            self.protection.take();
-        }
-        response
+impl ParticipantEngine for NativeEngine {
+    fn minimum_term(&self) -> u32 {
+        self.store.term.load(Ordering::Acquire)
+    }
+    fn release_terminal(&mut self) {
+        self.protection.take();
+    }
+    fn retain_uncertain(&mut self) {
+        self.uncertain = true;
     }
     fn execute(&mut self, request: &Request, begin: bool) -> Result<Value> {
         if begin {
@@ -161,10 +150,14 @@ impl Lane {
         }
     }
 }
-impl Drop for Lane {
+impl Drop for NativeEngine {
     fn drop(&mut self) {
         let _ = self.worker.abort();
-        self.protection.take();
+        if let Some(protection) = self.protection.take() {
+            if self.uncertain {
+                self.store.quarantine(protection);
+            }
+        }
     }
 }
 fn execute(
@@ -446,13 +439,13 @@ fn lane_loop(
             return;
         }
     };
-    let mut lane = Lane {
+    let mut lane = Lane::new(NativeEngine {
         worker,
         store,
-        session: Session::default(),
         protection: None,
         retained: false,
-    };
+        uncertain: false,
+    });
     if ready.send(Ok(())).is_err() {
         return;
     }
@@ -461,9 +454,9 @@ fn lane_loop(
             Ok(work) => {
                 let reply = match work.request {
                     WorkKind::Participant(request) => Reply::Participant(lane.process(request)),
-                    WorkKind::Open(nonce) => Reply::OpenStream(
-                        fresh_lease().and_then(|lease| lane.session.claim(nonce, lease)),
-                    ),
+                    WorkKind::Open(nonce) => {
+                        Reply::OpenStream(fresh_lease().and_then(|lease| lane.claim(nonce, lease)))
+                    }
                 };
                 (work.respond)(reply);
             }

@@ -12,6 +12,8 @@ durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
 replication = ["native-storage", "durable-storage", "dep:raft-host"]
 
 [dependencies]
+mako-protocol = { path = "../mako-protocol" }
+mako-protocol-core = { path = "../mako-protocol-core" }
 sto-tpcc-ffi = { path = "../sto-tpcc-ffi", optional = true }
 mako-sharding = { path = "../../src/cluster" }
 srpc = { path = "../../src/srpc" }

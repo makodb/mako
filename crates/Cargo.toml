@@ -21,6 +21,8 @@ members = [
     "mako-engine-sto",
     "mako-history",
     "mako-runtime",
+    "mako-protocol",
+    "mako-protocol-core",
     "masstree",
     "mrx",
     "mrx-ffi",

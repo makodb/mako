@@ -217,7 +217,9 @@ fn failed_install_is_retained_as_unknown_and_blocks_migration_drain() {
     let cut = store.epochs.cut().unwrap();
     assert!(!store.epochs.drained(cut).unwrap());
     drop(server);
-    assert!(store.epochs.drained(cut).unwrap());
+    // Destroying a request lane does not resolve its installed outcome. The
+    // store remains alive, so migration must not mistake teardown for drain.
+    assert!(!store.epochs.drained(cut).unwrap());
 }
 
 #[test]

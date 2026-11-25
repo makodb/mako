@@ -142,27 +142,9 @@ impl Network {
         replicas: &wire::ReplicaSet,
         timeout: Duration,
     ) -> Result<String> {
-        for endpoint in &replicas.endpoints {
-            if let Ok(Reply::ReplicaStatus(status)) = self.call(
-                endpoint,
-                Message::ReplicaStatus,
-                timeout.min(Duration::from_millis(500)),
-            ) {
-                if status.owner == owner
-                    && status.group == Some(replicas.group)
-                    && status.leader
-                    && status.healthy
-                    && status.durable_receipts
-                {
-                    return Ok(endpoint.clone());
-                }
-            }
-        }
-        Err(Error::new(
-            ErrorCode::RouteChanged,
-            "no healthy leader in configured replica group",
-        ))
+        mako_protocol::contracts::Transport::find_leader(self, owner, replicas, timeout)
     }
+
     fn client(&self, endpoint: &str) -> Result<Arc<Client>> {
         let mut clients = self.clients.lock();
         if let Some(client) = clients.get(endpoint) {
@@ -249,6 +231,12 @@ impl Drop for Network {
             client.close();
         }
         self.poll.shutdown();
+    }
+}
+
+impl mako_protocol::contracts::Transport for Network {
+    fn call(&self, endpoint: &str, message: Message, timeout: Duration) -> Result<Reply> {
+        Network::call(self, endpoint, message, timeout)
     }
 }
 
