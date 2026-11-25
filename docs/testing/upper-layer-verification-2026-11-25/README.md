@@ -42,6 +42,23 @@ and verifier downloads already cached. That is bootstrap evidence, not a cold
 network measurement. The initial 2–3 minute target was optimistic for this host;
 the qualified runs take about four minutes and all meet the five-minute ceiling.
 
+## CPU scaling
+
+The upper check now accepts an explicit CPU budget, for example
+`./docker_build.sh ci upper 32`. The default remains four logical CPUs.
+The budget controls process affinity, Cargo jobs and Verus workers together,
+and respects a smaller parent affinity mask.
+
+`cpu-scaling.json` records complete checks on the same Threadripper host, which
+has 32 physical cores and 64 logical CPUs. One run with 16 CPUs passed in
+140.321 seconds; one with 32 CPUs passed in 128.252 seconds. The five-run
+four-CPU baseline had a median of 226.997 seconds. These are individual scaling
+measurements, not a repeated qualification at each larger budget. Every run
+retained all positive proofs, twelve semantic controls and 45 executable cases.
+
+Targeted CLI checks also passed for invalid budgets, the environment default,
+clamping to a two-CPU parent affinity mask, and Docker argument forwarding.
+
 ## Production regressions
 
 Debug and release regressions passed 84 native transaction-adapter cases and

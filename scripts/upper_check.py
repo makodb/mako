@@ -69,20 +69,28 @@ def source_inputs():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bootstrap', action='store_true')
+    parser.add_argument('--cpus', type=int, default=os.environ.get('MAKO_UPPER_CPUS', '4'),
+                        help='logical CPU budget for Cargo and Verus; default MAKO_UPPER_CPUS or 4')
     args = parser.parse_args()
+    if args.cpus < 1:
+        parser.error('--cpus must be a positive integer')
     if not (Path('/.dockerenv').exists() or Path('/run/.containerenv').exists()):
         raise SystemExit('Use ./docker_build.sh ci upper')
     os.chdir(ROOT)
-    # All descendants share this four-logical-CPU budget, including rustc/Z3.
-    cpus = sorted(os.sched_getaffinity(0))[:4]
+    # All descendants share this CPU budget, including rustc/Z3. Respect a
+    # smaller affinity mask imposed by the container or calling process.
+    cpus = sorted(os.sched_getaffinity(0))[:args.cpus]
+    workers = len(cpus)
     os.sched_setaffinity(0, cpus)
     started = time.monotonic()
     budget = 1800 if args.bootstrap else 300
     runs = BUILD/'upper/runs'; runs.mkdir(parents=True,exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%S')+'-',dir=runs))
-    report = {'passed':False,'bootstrap':args.bootstrap,'cpu_affinity':cpus,'budget_seconds':budget,'stages':[]}
+    report = {'passed':False,'bootstrap':args.bootstrap,'cpu_affinity':cpus,
+              'requested_cpus':args.cpus,'workers':workers,'budget_seconds':budget,'stages':[]}
+    print(f'upper: using {workers} logical CPUs; requested {args.cpus}', flush=True)
     env = {k:v for k,v in os.environ.items() if not k.startswith('MAKO_MTREE')}
-    env.update(CC='/bin/false',CXX='/bin/false',CARGO_BUILD_JOBS='4', CARGO_TARGET_DIR=str(BUILD/'upper/target'))
+    env.update(CC='/bin/false',CXX='/bin/false',CARGO_BUILD_JOBS=str(workers), CARGO_TARGET_DIR=str(BUILD/'upper/target'))
 
     def run(name, command, cwd=ROOT, expected=0, machine=False):
         begin=time.monotonic(); print(f'upper: {name}',flush=True)
@@ -179,7 +187,7 @@ def main():
             return
 
         def proof(name,entry,cwd=ROOT,reject=False,module=None,function=None,minimum=1):
-            command=[verifier,'--sysroot',sysroot,'--crate-type=lib','--edition=2021','--no-cheating','--num-threads','4','--triggers-mode','silent',entry]
+            command=[verifier,'--sysroot',sysroot,'--crate-type=lib','--edition=2021','--no-cheating','--num-threads',str(workers),'--triggers-mode','silent',entry]
             if reject: command+=['--verify-only-module',module,'--verify-function',function]
             result=run(name,command,cwd=cwd,expected=None)
             validate_proof(result,reject,minimum)

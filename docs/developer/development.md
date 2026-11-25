@@ -38,11 +38,24 @@ For distributed transaction, sharding and migration work, use:
 ```
 
 This runs the production Verus proofs, selected semantic negative controls and
-small deterministic scenarios. It uses four logical CPUs and has a five-minute
+small deterministic scenarios. It defaults to four logical CPUs and has a five-minute
 wall deadline. It does not compile Masstree, RocksDB, SRPC or Raft. Storage,
 local transaction effects, delivery, logging and time come through the explicit
 [upper-layer contracts](upper-layer-contracts.md). Production adapters call the
 same core functions as this suite.
+
+Use more CPUs on a development machine with an explicit budget:
+
+```sh
+./docker_build.sh ci upper 16
+# Inside the container:
+bash ci/upper.sh --cpus 16
+```
+
+The budget sets process affinity, Cargo jobs and Verus workers together. It is
+capped by the calling process's available CPU affinity. `MAKO_UPPER_CPUS` also
+sets the default inside the container. Reports record requested and actual CPU
+counts; proof coverage and the five-minute deadline remain the same.
 
 On a new checkout, download and compile separately inside the container:
 

@@ -662,6 +662,9 @@ case "$ACTION" in
         fi
         CI_TEST=${2:-all}
         CI_JOBS=${3:-32}
+        if [[ "${CI_TEST}" == upper && -z "${3:-}" ]]; then
+            CI_JOBS=4
+        fi
         if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
             CI_TEST=all
             CI_JOBS=${2}
@@ -699,7 +702,12 @@ case "$ACTION" in
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
-            nativeShardingProof|srpcTests|upper)
+            upper)
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" \
+                    -e "MAKO_UPPER_CPUS=${CI_JOBS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh upper"
+                ;;
+            nativeShardingProof|srpcTests)
                 # Proof needs the pinned verifier/Rust only, not a C++ rebuild.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
@@ -1355,6 +1363,7 @@ case "$ACTION" in
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped unless compose duplicate-avoidance applies)"
         echo "  test         - Build native Rust and run shardNoReplication smoke test"
         echo "  ci [test] [jobs] - Build and run CI test (default: all, jobs: 32)"
+        echo "  ci upper [cpus] - Verify upper protocol with a CPU budget (default: 4)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
         echo "  clean        - Clean build artifacts"
         echo "  compose-up   - Start persistent dev container via docker-compose"
