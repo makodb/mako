@@ -177,6 +177,20 @@ impl crate::durable_engine::DurableEngine for Engine {
     }
 }
 
+#[cfg(feature = "test-hooks")]
+static RANGE_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Observe a final-copy retry without depending on timing or parking its worker.
+#[cfg(feature = "test-hooks")]
+pub fn range_waits() -> u64 {
+    RANGE_WAITS.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(feature = "test-hooks")]
+pub(crate) fn record_range_wait() {
+    RANGE_WAITS.fetch_add(1, std::sync::atomic::Ordering::Release);
+}
+
 /// Deterministic process-crash boundary, absent from production builds.
 #[cfg(feature = "test-hooks")]
 pub fn test_pause(point: &str) {

@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--package", action="append", required=True)
     parser.add_argument("--features")
+    parser.add_argument("--test", action="append", default=[])
+    parser.add_argument("--lib", action="store_true")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
@@ -29,6 +31,10 @@ def main():
         command.extend(["-p", package])
     if args.features:
         command.extend(["--features", args.features])
+    for test in args.test:
+        command.extend(["--test", test])
+    if args.lib:
+        command.append("--lib")
     if args.release:
         command.append("--release")
     built = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)

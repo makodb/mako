@@ -28,6 +28,8 @@ pub mod migration;
 #[cfg(feature = "runtime-storage")]
 mod migration_metadata;
 #[cfg(feature = "runtime-storage")]
+mod migration_ranges;
+#[cfg(feature = "runtime-storage")]
 mod migration_storage;
 #[cfg(feature = "runtime-storage")]
 pub mod node;

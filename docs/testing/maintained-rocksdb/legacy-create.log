@@ -1,0 +1,7 @@
+     Locking 2 packages to latest compatible versions
+   Compiling mako-rocksdb-ffi v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-ffi)
+   Compiling raft-store v0.0.0 (/var/tmp/mako-shard-rust/src/deptran/raft/store)
+   Compiling rocksdb-compat-fixture v0.0.0 (/var/tmp/mako-shard-rust/build_rocks_crate/compat)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.14s
+     Running `build_rocks_crate/compat-target/debug/rocksdb-compat-fixture write build_rocks_crate/legacy-8.9.1`
+legacy SST/checkpoint/WAL fixture written; exiting without destructors

@@ -1,24 +1,8 @@
-# Workspace for Mako's native Rust components: the Masstree/RocksDB cache
-# (mrx-*, mako-cache), the native Rust STO (sto-*), and the direct
-# RocksDB/Raft profile (sto-rocksdb, raft-host, rocksdb-raft-service; built
-# and tested by cmake/RocksdbRaft.cmake, not by the workspace-wide sweeps).
-#
-# One workspace so the crates share a lockfile and a target directory, and
-# so `cargo test` at this level covers all of them. It is rooted at
-# `crates/` rather than the repository root deliberately: the repository
-# root is a CMake project, and putting a Cargo.toml there would make every
-# unrelated Rust artefact in the tree (rust-lib, third-party) a member by
-# accident.
+# Rust workspace for distributed transactions, storage adapters and component tests.
 [workspace]
 resolver = "2"
 members = [
-    "mako-cache",
-    "mako-cache-bench",
     "mako-clock",
-    "mako-differential",
-    "mako-engine",
-    "mako-engine-api",
-    "mako-engine-sto",
     "mako-history",
     "mako-runtime",
     "mako-rocksdb",
@@ -28,15 +12,9 @@ members = [
     "mako-storage-masstree",
     "mako-storage-rocksdb",
     "masstree",
-    "mrx",
-    "mrx-ffi",
-    "mrx-core",
-    "mrx-masstree",
-    "mrx-rocks",
+    "mako-rocksdb-store",
     "mtree-sys",
-    "mtx-sys",
     "raft-host",
-    "rocksdb-raft-service",
     "shard-host-core",
     "sto-core",
     "sto-masstree",
@@ -51,9 +29,7 @@ rust-version = "1.95"
 license = "MIT"
 publish = false
 
-# See mrx-core: mixing an LTO staticlib with the existing non-LTO rust-lib
-# archive fails to link with duplicate std symbols. Reproduced, not
-# theorised.
+# Native static archives share the same non-LTO Rust linkage.
 [profile.release]
 lto = false
 panic = "abort"
@@ -63,7 +39,7 @@ opt-level = 3
 [profile.dev]
 lto = false
 
-# raft-host and rocksdb-raft-service depend on srpc (whose Lion runtime names
+# raft-host depends on srpc (whose Lion runtime names
 # vstd from Verus's git repository), on raft-core (Verus's crates.io release)
 # and on src/cluster (another git revision). Cargo refuses two Verus releases
 # in one graph, so unify them exactly as src/deptran/raft/Cargo.toml does.

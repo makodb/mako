@@ -10,15 +10,10 @@ endif()
 if(CMAKE_MATCH_1 VERSION_LESS "1.97.1")
     message(FATAL_ERROR "ROCKSDB_RUNTIME requires Rust >= 1.97.1")
 endif()
-if(DEFINED ENV{ROCKSDB_LIB_DIR})
-    find_library(MAKO_ROCKSDB_LIBRARY rocksdb PATHS "$ENV{ROCKSDB_LIB_DIR}" NO_DEFAULT_PATH REQUIRED)
-else()
-    find_library(MAKO_ROCKSDB_LIBRARY rocksdb
-        PATHS /usr/local/lib /usr/lib/${CMAKE_HOST_SYSTEM_PROCESSOR}-linux-gnu /usr/lib64 /usr/lib REQUIRED)
-endif()
-get_filename_component(_rocksdb_library_dir "${MAKO_ROCKSDB_LIBRARY}" DIRECTORY)
+# Cargo owns the pinned upstream RocksDB build. Explicit native overrides
+# (for example TSan) must provide matching headers and library through the environment.
 set(MAKO_RUST_TARGET_DIR "${PROJECT_BINARY_DIR}/cargo" CACHE PATH "Isolated Rust artifacts")
-set(_cargo_env "ROCKSDB_LIB_DIR=${_rocksdb_library_dir}" "CARGO_TARGET_DIR=${MAKO_RUST_TARGET_DIR}")
+set(_cargo_env "CARGO_TARGET_DIR=${MAKO_RUST_TARGET_DIR}")
 set(_manifest "${PROJECT_SOURCE_DIR}/crates/Cargo.toml")
 set(_common --locked --manifest-path "${_manifest}" --package mako-runtime
     --no-default-features --features logging,rocksdb-engine)

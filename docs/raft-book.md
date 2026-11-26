@@ -2,11 +2,10 @@
 
 A comprehensive developer guide for the Raft consensus implementation in Mako.
 
-**Product profiles:** the Mako/C++ integration described below remains the
-default. The optional `ROCKSDB_RAFT` profile instead embeds the same native
-`raft-core` and `raft-store` in `crates/raft-host`, with SRPC and a fallible
-`StateMachine` implementation supplied by `rocksdb-raft-service`. It does not
-route transactions through `add_log_to_nc()` or the legacy learner callback.
+The production runtime uses `raft-host` over native `raft-core` and `raft-store`,
+with SRPC transport. Runtime `ReplicatedLog` supplies the application state
+machine. One-shard and multi-shard deployments share this integration. The
+standalone RocksDB/Raft service and the former C++ integration are retired.
 
 With the default sync policy, a proposal handle distinguishes local durable admission,
 quorum commitment, local application, unknown outcome and authoritative discard.
@@ -33,8 +32,7 @@ The native host defaults to 40-ms heartbeats, one-second peer RPC deadlines and
 a three-second election base (actual timeout `[3 s, 6 s)`). Peer replies include
 durable WAL sync, not just network RTT. These bounds allow headroom over the
 measured shared-HDD sync latency; they trade slower failure detection for fewer
-storage-induced elections. They do not change the default Mako/C++ configuration
-or the service's transaction deadlines, and cannot mask unbounded disk stalls.
+storage-induced elections. Runtime configuration can override them; they cannot mask unbounded disk stalls.
 
 Native RocksDB checkpoints use hashed manifests and bounded file chunks.
 Installation durably stages files, persists Raft authority, publishes the user
@@ -43,23 +41,16 @@ durable references and active transfer leases. Snapshot contacts refresh followe
 election timers throughout a transfer; a multi-frame transfer is not one long,
 unacknowledged heartbeat.
 
-The explicit `ROCKSDB_RAFT` async experiment selects `Config.sync_writes=false`
-through server JSON `durability: "async"`. It retains WAL writes but omits
-foreground persistence barriers; quorum/application completion is **not** a
-power-crash durability guarantee. The async base uses WAL-enabled `sync=false`
-RocksDB writes and nonwaiting flushes, protecting process-restart recovery after
-Raft segment reclamation without waiting for a foreground base flush. Existing
-Mako/default store callers retain synchronous behavior. Persistent identities
-reject cross-policy reuse, and separate Raft envelope versions reject mixed-mode
-peers before votes/appends/snapshots reach the core. Background RocksDB work and
-explicit application checkpoint maintenance may still synchronize storage.
-See [durability selection](rocksdb_interface.md#durability-selection).
+`Config.sync_writes=false` retains WAL writes but omits foreground persistence
+barriers. It is a component-level experimental policy; quorum/application
+completion under that policy is not a power-crash durability guarantee. The
+normal runtime uses synchronous persistence.
 
-Use `./docker_build.sh ci rocksdbRaft` for this profile's Docker qualification.
-Its fault-enabled binaries are separate from the production build. See
-[operation and API](rocksdb_interface.md#direct-rocksdb-service-profile) and
-[the implementation design](plans/rocksdb-raft-mode.md) for the local-only scope,
-request-outcome rules, crash scenarios and evaluation.
+Use `./docker_build.sh ci replication` to qualify shared storage/Raft components
+and the distributed RocksDB runtime. Current transaction/log behavior is
+documented in the [Mako book](mako-book.md). The remainder of this guide includes
+historical C++ integration details; use current Rust source for implementation
+interfaces.
 
 ---
 

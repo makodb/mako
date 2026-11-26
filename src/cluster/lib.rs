@@ -62,6 +62,8 @@ mod runtime_participant;
 
 #[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
 pub mod host;
+#[cfg(all(feature = "protocol", not(verus_keep_ghost)))]
+pub mod range_lock;
 #[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]
 pub mod wire;
 #[cfg(all(feature = "engine-host", not(verus_keep_ghost)))]

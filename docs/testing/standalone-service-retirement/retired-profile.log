@@ -1,0 +1,7 @@
+CMake Error at CMakeLists.txt:10 (message):
+  Unsupported MAKO_BUILD_PROFILE: ROCKSDB_RAFT.  Use NATIVE_RUST or
+  ROCKSDB_RUNTIME in a fresh build directory.  Both run the distributed
+  runtime for one or more shards.
+
+
+-- Configuring incomplete, errors occurred!

@@ -42,8 +42,8 @@ impl std::fmt::Display for Error {
     }
 }
 impl std::error::Error for Error {}
-impl From<mrx_core::BlobError> for Error {
-    fn from(error: mrx_core::BlobError) -> Self {
+impl From<mako_rocksdb_store::BlobError> for Error {
+    fn from(error: mako_rocksdb_store::BlobError) -> Self {
         Self::Storage(error.0)
     }
 }

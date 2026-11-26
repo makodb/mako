@@ -26,8 +26,6 @@ src/mako/spinlock.h
 src/mako/static_vector.h
 src/mako/storage/mtree_abi.cc
 src/mako/storage/mtree_abi.h
-src/mako/storage/mtx_abi.cc
-src/mako/storage/mtx_abi.h
 src/mako/ticker.cc
 src/mako/ticker.h
 src/mako/util.h

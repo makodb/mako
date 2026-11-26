@@ -82,6 +82,7 @@ pub struct Store {
     pub owner: u32,
     pub migration: bool,
     pub epochs: Arc<EpochDomain>,
+    pub(crate) ranges: Arc<mako_storage_api::range_lock::RangeLocks>,
     pub term: AtomicU32,
     pub log: Arc<dyn CommitLog>,
     pub journal: Arc<dyn Journal>,
@@ -109,11 +110,13 @@ impl Store {
         log: Arc<dyn CommitLog>,
         database: sto::Database,
     ) -> Result<Arc<Self>> {
+        let epochs = Arc::new(EpochDomain::default());
         Ok(Arc::new(Self {
             database,
             owner,
             migration,
-            epochs: Arc::new(EpochDomain::default()),
+            ranges: mako_storage_api::range_lock::RangeLocks::new(epochs.clone()),
+            epochs,
             term: AtomicU32::new(0),
             journal: Arc::new(StoreJournal { log: log.clone() }),
             participants: OnceLock::new(),
@@ -217,6 +220,7 @@ impl Store {
             fault: self.fault.clone(),
             permit,
             _pin: pin,
+            ranges: self.ranges.clone(),
             snapshot,
             owner: self.owner,
         })
@@ -300,6 +304,7 @@ pub struct Protection {
     fault: Arc<RwLock<Option<Error>>>,
     permit: Box<dyn CommitPermit>,
     _pin: Pin,
+    ranges: Arc<mako_storage_api::range_lock::RangeLocks>,
     snapshot: Option<Arc<AdmissionSnapshot>>,
     owner: u32,
 }
@@ -430,6 +435,7 @@ impl Protection {
                 Coordinates::Warehouse => warehouse_coordinate(access.table.warehouse).to_vec(),
             };
             check(snapshot.point(access.table.table, &coordinate, route))?;
+            self.ranges.point(&self._pin, access.table.table, &coordinate)?;
         }
         Ok(())
     }
@@ -449,14 +455,17 @@ impl Protection {
                 Bound::Unbounded => None,
                 Bound::Included(key) => {
                     check(snapshot.point(access.table.table, key, route))?;
+                    self.ranges.point(&self._pin, access.table.table, key)?;
                     Some(key.as_slice())
                 }
                 Bound::Excluded(key) => Some(key.as_slice()),
             };
             if hi != Some(lo) {
                 check(snapshot.range(access.table.table, lo, hi, route))?;
+                self.ranges.range(&self._pin, access.table.table, lo, hi)?;
             } else {
                 check(snapshot.point(access.table.table, lo, route))?;
+                self.ranges.point(&self._pin, access.table.table, lo)?;
             }
         }
         Ok(())

@@ -1,6 +1,0 @@
-# Rust STO intentionally retains thread-affine worker addresses for process
-# lifetime, including after an OS thread exits. Only these two cold Box::leak
-# allocation roots are exempt. Neither helper allocates transaction payloads.
-# The focused gate proves a lost TouchLog allocation still fails LSan.
-leak:mako_engine_sto::worker::retain_process_lifetime_native_worker
-leak:mako_engine_sto::worker::retain_process_lifetime_worker_slot

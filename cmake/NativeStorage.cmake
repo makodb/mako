@@ -68,6 +68,9 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 option(MAKO_STORAGE_TESTS_ONLY "Build the separate C++ Masstree component tests" OFF)
 if(MAKO_STORAGE_TESTS_ONLY)
+    if(MAKO_BUILD_PROFILE STREQUAL "MASSTREE_TX")
+        message(FATAL_ERROR "MASSTREE_TX owns transaction adapter tests; use a separate NATIVE_RUST build with MAKO_STORAGE_TESTS_ONLY for index tests")
+    endif()
     include("${CMAKE_SOURCE_DIR}/src/masstree/CMakeLists.txt")
     return()
 endif()
@@ -118,6 +121,12 @@ else()
     message(FATAL_ERROR "Unknown MAKO_NATIVE_CARGO_PROFILE: ${MAKO_NATIVE_CARGO_PROFILE}")
 endif()
 
+include("${CMAKE_SOURCE_DIR}/cmake/MasstreeTransaction.cmake")
+if(MAKO_BUILD_PROFILE STREQUAL "MASSTREE_TX")
+    message(STATUS "MASSTREE_TX: transaction adapter and wrapper; no application, RocksDB, SRPC or Raft build")
+    return()
+endif()
+
 # Cargo owns all application and network code. Only the audited storage archive
 # crosses the native boundary; SRPC is compiled directly as a Rust dependency.
 foreach(_program mako_node mako_bench mako_transactions mako_redis)
@@ -150,37 +159,6 @@ foreach(_program mako_client mako_admin)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
 
-# The direct RocksDB service uses native SRPC/Raft without Masstree.
-add_custom_target(rocksdb_raft_tools ALL
-    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
-        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
-        -p rocksdb-raft-service --bins
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_server"
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_client"
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/rocksdb_raft_bench"
-        "${CMAKE_BINARY_DIR}/"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
-
-# Existing Rust cache and comparison tools use the same storage-only archive.
-add_custom_target(mako_cache_tools ALL
-    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
-        -p mako-cache-bench --bins
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/mako-cache-bench"
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/engine_compare"
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/gc_soak" "${CMAKE_BINARY_DIR}/"
-    DEPENDS mako_native_storage
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
-add_custom_target(rust_cache_tests
-    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/ci/run_rust_sto_cache_tests.py"
-        --cargo "${MAKO_NATIVE_CARGO}" --manifest-path "${_cargo_manifest}"
-        --report "${CMAKE_BINARY_DIR}/rust-cache-tests.json"
-    DEPENDS mako_native_storage
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
-
 # Component tests remain separate. The transaction-manager suite never receives
 # native library settings; application/adapter tests explicitly use the tree.
 add_custom_target(rust_sto_transaction_tests
@@ -191,25 +169,18 @@ add_custom_target(rust_sto_transaction_tests
 add_custom_target(rust_support_tests
     COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-clock -p mako-history -p mako-engine-api -p mako-differential
-        -p mrx-core -p shard-host-core
+        -p mako-clock -p mako-history -p shard-host-core
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_masstree_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package masstree --package sto-masstree
-        --package mrx --package mrx-ffi --package mrx-masstree
-        --package mtree-sys --package mtx-sys
+        --package masstree
+        --package mtree-sys
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
-add_custom_target(rust_application_adapter_tests
-    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
-        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package sto-tpcc-ffi
-    DEPENDS mako_native_storage
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+# Compatibility name; the component now owns both adapter packages.
+add_custom_target(rust_application_adapter_tests DEPENDS masstree_tx_tests)
 
 enable_testing()
 add_custom_target(rust_runtime_tests
@@ -246,27 +217,20 @@ add_custom_target(rust_native_dependency_audit
 add_custom_target(rust_native_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p mako-rocksdb -p sto-tpcc-ffi -p mako-storage-api -p mako-storage-rocksdb -p raft-host
+        -p mako-runtime -p mako-rocksdb -p mako-storage-api -p mako-storage-rocksdb -p raft-host
         --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --all-targets --no-deps -- -D warnings
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p mako-rocksdb -p sto-tpcc-ffi --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --doc
+        -p mako-runtime -p mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --doc
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_native_rust_build.py"
         --build "${CMAKE_BINARY_DIR}" --archive "$<TARGET_FILE:mako_native_storage>"
         --nm "${CMAKE_NM}")
-add_test(NAME rust_application_adapter
-    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
-        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
-        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package sto-tpcc-ffi)
-set_tests_properties(native_storage_source_audit rust_application_adapter rust_shard_integration PROPERTIES
+set_tests_properties(native_storage_source_audit rust_shard_integration PROPERTIES
     LABELS "native-rust" TIMEOUT 900)
 
-foreach(_program mako_node mako_bench mako_transactions mako_redis mako_convert mako_client mako_admin
-        rocksdb_raft_server rocksdb_raft_client rocksdb_raft_bench
-        mako-cache-bench engine_compare gc_soak)
+foreach(_program mako_node mako_bench mako_transactions mako_redis mako_convert mako_client mako_admin)
     install(PROGRAMS "${CMAKE_BINARY_DIR}/${_program}" DESTINATION bin)
 endforeach()

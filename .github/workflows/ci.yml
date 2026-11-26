@@ -20,6 +20,7 @@ jobs:
     outputs:
       upper: ${{ steps.select.outputs.upper }}
       components: ${{ steps.select.outputs.components }}
+      masstree_tx: ${{ steps.select.outputs.masstree_tx }}
       replication: ${{ steps.select.outputs.replication }}
       srpc: ${{ steps.select.outputs.srpc }}
       integration: ${{ steps.select.outputs.integration }}
@@ -73,7 +74,7 @@ jobs:
           path: build/upper/runs/
 
   native-components:
-    name: Transaction manager, storage and adapter components
+    name: Shared transaction core and Masstree index components
     needs: gates
     if: needs.gates.outputs.components == 'true'
     runs-on: ubuntu-24.04
@@ -93,19 +94,47 @@ jobs:
       - run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
       - name: Configure component targets
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Local transaction manager without Masstree
+      - name: Shared transaction machinery without Masstree
         run: cmake --build build --target rust_sto_transaction_tests rust_support_tests --parallel 4
-      - name: Masstree and cache components
-        run: cmake --build build --target rust_masstree_tests rust_cache_tests --parallel 4
-      - name: Real transaction/storage adapter
-        run: cmake --build build --target rust_application_adapter_tests --parallel 4
+      - name: Masstree components
+        run: cmake --build build --target rust_masstree_tests --parallel 4
       - name: C++ storage component tests
         run: bash ci/native_rust.sh storage
 
-  rocksdb-raft:
+  masstree-transaction:
+    name: Masstree transaction adapter and wrapper
+    needs: gates
+    if: needs.gates.outputs.masstree_tx == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 60
+    env:
+      CI_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+      - run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - name: Compile audited component and run local tests
+        run: bash ci/masstree_tx.sh
+      - name: Retain component diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: masstree-transaction
+          path: |
+            build_masstree_tx/build.log
+            build_masstree_tx/tests.log
+            build_masstree_tx/masstree-tx-dependencies.*
+
+  replication:
     needs: gates
     if: needs.gates.outputs.replication == 'true'
-    name: Native Rust STO + RocksDB + Raft
+    name: Replication components and RocksDB runtime
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/makodb/mako-ci-ubuntu24:latest
@@ -115,8 +144,8 @@ jobs:
     timeout-minutes: 90
     env:
       CI_BUILD_JOBS: "4"
-      ROCKSDB_RAFT_BUILD_DIR: build_rocksdb_raft
-      CARGO_TARGET_DIR: target-rocksdb-raft
+      REPLICATION_BUILD_DIR: build_replication
+      CARGO_TARGET_DIR: target-replication
     steps:
       # srpc needs its Lion submodule. Fetch it with the checkout action, as
       # every other job here does, not with a later `git submodule update`
@@ -128,17 +157,17 @@ jobs:
           submodules: recursive
       - name: Install pinned Rust toolchain
         run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
-      - name: Build and qualify local-only storage and replication
-        run: bash ci/rocksdb_raft.sh
+      - name: Qualify shared storage, replication and the distributed runtime
+        run: bash ci/replication.sh
       - name: Retain test diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: rocksdb-raft-tests
+          name: replication-tests
           path: |
-            build_rocksdb_raft/Testing/Temporary/
-            build_rocksdb_raft/runtime-evidence.*/**/node*.log
-            build_rocksdb_raft/runtime-evidence.*/**/*.json
+            build_replication/components.log
+            build_replication/runtime.log
+            build_replication/rocks-runtime-audit.json
 
   native-rust:
     needs: gates
@@ -193,8 +222,8 @@ jobs:
 
       - name: Build optimized native executables
         run: bash ci/native_rust.sh compile
-      - name: Native poison transition and Rust API checks
-        run: bash ci/native_rust.sh health && bash ci/native_rust.sh quality
+      - name: Native Rust API checks
+        run: bash ci/native_rust.sh quality
       - name: Runtime and process regression suites in debug and release
         run: bash ci/native_rust.sh runtime
       - name: Separate and colocated workload matrix
@@ -209,9 +238,7 @@ jobs:
           path: |
             build/Testing/Temporary/
             build/runs/
-            build/rust-cache-tests.json
             build/native-dependency-audit/
-            build/native-health-*/
             build/storage-tests/Testing/Temporary/
 
   native-srpc:

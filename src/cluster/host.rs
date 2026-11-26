@@ -3,7 +3,7 @@
 #![allow(unsafe_code)]
 use std::ffi::c_void;
 use std::sync::Arc;
-use crate::types::{KeyRange, Row, Status};
+use crate::types::{KeyRange, MigrationPlan, Row, Status};
 use crate::wire::{checked, status};
 
 #[repr(C)]
@@ -38,6 +38,7 @@ pub struct HostAbi {
     pub thread_enter: Option<Enter>, pub thread_leave: Option<Leave>,
     pub open: Option<Open>, pub scan_next: Option<Scan>, pub put: Option<Put>,
     pub remove: Option<Remove>, pub peer_call: Option<Peer>,
+    /// Retained ABI slots. Live migration requires the typed range-lock provider.
     pub epoch_cut: Option<EpochCut>, pub epoch_drained: Option<EpochDrained>,
 }
 /// The C++ owner keeps context/DB alive until stop_node joins every borrower.
@@ -46,18 +47,17 @@ pub struct HostAbi {
 pub struct Host {
     _owner: Option<Arc<dyn std::any::Any + Send + Sync>>,
     recovery: Option<crate::runtime_durability::Recovery>,
+    ranges: Option<Arc<dyn crate::range_lock::RangeLocks>>,
     context: usize, enter: Enter, leave: Leave, open: Open, scan: Scan,
-    put: Put, remove: Remove, peer: Peer, epoch_cut: EpochCut, epoch_drained: EpochDrained,
+    put: Put, remove: Remove, peer: Peer,
 }
 impl Host {
     pub unsafe fn from_abi(abi: &HostAbi) -> Result<Self, Status> {
-        Ok(Self { _owner: None, recovery: None, context: abi.context as usize,
+        Ok(Self { _owner: None, recovery: None, ranges: None, context: abi.context as usize,
             enter: abi.thread_enter.ok_or(Status::Invalid)?, leave: abi.thread_leave.ok_or(Status::Invalid)?,
             open: abi.open.ok_or(Status::Invalid)?, scan: abi.scan_next.ok_or(Status::Invalid)?,
             put: abi.put.ok_or(Status::Invalid)?, remove: abi.remove.ok_or(Status::Invalid)?,
-            peer: abi.peer_call.ok_or(Status::Invalid)?,
-            epoch_cut: abi.epoch_cut.ok_or(Status::Invalid)?,
-            epoch_drained: abi.epoch_drained.ok_or(Status::Invalid)? })
+            peer: abi.peer_call.ok_or(Status::Invalid)? })
     }
     /// As from_abi, with an owned context anchor retained by every host clone.
     /// Callbacks may upgrade a Weak application owner through that anchor and
@@ -71,24 +71,20 @@ impl Host {
         self.recovery = Some(recovery); self
     }
     pub(crate) fn recovery(&self) -> Option<&crate::runtime_durability::Recovery> {self.recovery.as_ref()}
+    pub fn with_range_locks(mut self, ranges: Arc<dyn crate::range_lock::RangeLocks>) -> Self {
+        self.ranges = Some(ranges); self
+    }
+    pub(crate) fn range_locks(&self) -> Result<&Arc<dyn crate::range_lock::RangeLocks>, Status> {
+        self.ranges.as_ref().ok_or(Status::Invalid)
+    }
+    pub fn acquire_range(&self, plan: &MigrationPlan) -> Result<Arc<dyn crate::range_lock::RangeGuard>, Status> {
+        self.range_locks()?.acquire(plan)
+    }
+    pub(crate) fn reset_ranges(&self) -> Result<(), Status> { self.range_locks()?.reset() }
     pub fn enter(&self, owner: u32) -> Result<(), Status> {
         checked(status(unsafe { (self.enter)(self.context as *mut c_void,owner) }))
     }
     pub fn leave(&self) { unsafe { (self.leave)(self.context as *mut c_void) } }
-    /// The host advances the actual process STO clock after Frozen is published.
-    pub fn epoch_cut(&self) -> Result<u64, Status> {
-        let cut = unsafe { (self.epoch_cut)(self.context as *mut c_void) };
-        if cut == 0 { Err(Status::Invalid) } else { Ok(cut) }
-    }
-    /// This scan borrows no new epoch guard and cannot itself prevent draining.
-    pub fn epoch_drained(&self, cut: u64) -> Result<bool, Status> {
-        if cut == 0 { return Err(Status::Invalid); }
-        match status(unsafe { (self.epoch_drained)(self.context as *mut c_void,cut) }) {
-            Status::Ok => Ok(true),
-            Status::Busy => Ok(false),
-            error => Err(error),
-        }
-    }
     pub fn open(&self, table: u64, name: &[u8], owner: u32, proxy: bool, kind: u32) -> Result<usize, Status> {
         let mut handle = 0usize;
         checked(status(unsafe { (self.open)(self.context as *mut c_void,table,

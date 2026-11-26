@@ -1,0 +1,6 @@
+{
+  "version": "11.8.1",
+  "instrumented_sources": 363,
+  "library": "/var/tmp/mako-shard-rust/build_rocks_crate/tsan-rocksdb/build/librocksdb.so.11.8.1",
+  "compiler_commands": "/var/tmp/mako-shard-rust/build_rocks_crate/tsan-rocksdb/build/compile_commands.json"
+}

@@ -349,8 +349,8 @@ fn checkpoint_staging_is_not_publication_and_old_snapshots_are_fenced() {
 
 #[test]
 fn durable_tombstone_generation_exhaustion_is_checked_not_wrapped() {
-    use mrx_core::{BlobOp, Blobs};
-    use mrx_rocks::{Durability, RocksBlobs};
+    use mako_rocksdb_store::{BlobOp, Blobs};
+    use mako_rocksdb_store::{Durability, RocksBlobs};
     let directory = tempfile::tempdir().unwrap();
     let db = Database::open(directory.path(), 7, true).unwrap();
     let (table, _) = table(&db, 1, "rows");

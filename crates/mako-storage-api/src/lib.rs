@@ -21,6 +21,8 @@ use std::{
 };
 
 pub use mako_protocol::redo::Row as RedoRow;
+/// Shared migration exclusion above either physical transaction backend.
+pub use mako_protocol::range_lock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {

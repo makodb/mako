@@ -12,7 +12,7 @@ a worktree-specific container runner may already be configured in a session.
 Do not modify a different worktree to make this worktree pass.
 
 Default CMake profile: `NATIVE_RUST`. The other production profile is
-`ROCKSDB_RAFT`. Rust code uses Cargo/rustc and the workspace toolchain pin.
+`ROCKSDB_RUNTIME`. Rust code uses Cargo/rustc and the workspace toolchain pin.
 Do not compile SRPC or Lion into C++.
 
 Keep production C++ confined to `cmake/native-storage-sources.txt` and its
@@ -25,9 +25,10 @@ controls under `src/srpc/scripts`.
 
 - `crates/sto-core`: transaction manager, independent of Masstree.
 - `crates/sto-test-datatypes`: synthetic transaction test datatypes.
-- `crates/masstree`, `sto-masstree`, `mtree-sys`, `mtx-sys`: tree and ABI layers.
-- `crates/sto-tpcc-ffi`: owned Rust database/worker/table/transaction API and
-  migration storage adapter. Its name also reflects the retained C storage ABI.
+- `crates/masstree`, `mtree-sys`: index and ABI layers, separate from transaction support.
+- `crates/sto-masstree`, `sto-tpcc-ffi`: Masstree transaction component. Owns
+  versioned rows/scans, Rust database/worker/table/transaction API and migration
+  storage adapter. The wrapper retains a C storage ABI.
 - `src/cluster`: native sharding and migration actors and proofs.
 - `crates/shard-host-core`: storage-independent host rules and proofs.
 - `crates/mako-runtime`: workers, participants, native SRPC, migration host,
@@ -35,15 +36,21 @@ controls under `src/srpc/scripts`.
 - `src/deptran/raft/{core,store,replay}`: Raft state machine and durable formats.
   The former C++ host and Rust transpiler shell have been removed.
 - `crates/raft-host`: native Raft runtime using SRPC.
-- `crates/mako-engine-sto`, `mako-cache`: persistence and cache policy.
-- `crates/rocksdb-raft-service`: direct native RocksDB/Raft application.
+- `crates/mako-storage-rocksdb`, `mako-storage-masstree`: data adapters for the
+  distributed runtime, including one-shard deployment. RocksDB persists rows;
+  Masstree is optional. The standalone cache and RocksDB/Raft service are retired.
 
 ## Tests
 
-`ci/native_rust.sh` exposes compile, components, storage, health, quality,
+`ci/native_rust.sh` exposes compile, components, storage, quality,
 runtime, workloads, audit, srpc and proofs gates. `all` runs the application
 build and regression gates; SRPC independence and proofs are separate CI jobs.
-`ci/rocksdb_raft.sh` covers the direct service, including fault boundaries.
+`ci/replication.sh` qualifies shared storage/Raft components and the distributed
+RocksDB runtime, including one-shard transactions and failure recovery.
+`./docker_build.sh ci masstreeTx [jobs]` independently compiles and tests the
+Masstree transaction component. Its `MASSTREE_TX` profile and dedicated Cargo
+directory exclude RocksDB, SRPC, Raft and application packages. Preserve the
+dependency audit; use `masstree_tx_build` for compilation without tests.
 
 Keep transaction-manager tests independent of Masstree. Test Masstree and its
 ABI separately, and use real storage only for adapter/application integration.
@@ -61,8 +68,9 @@ its transaction invariants.
 
 ## Current limits
 
-See README's behavior section. In particular, live migration is rejected for
-replicated or locally persistent shards. Uncertain installed transactions fence
+See README's behavior section. Durable live migration requires synchronous
+application-log recovery with LocalLog or ReplicatedLog. The older standalone
+metadata inspection path cannot serve recovered data. Uncertain installed transactions fence
 the runtime. Gateway operation sessions are auto-commit; Redis MULTI/EXEC uses
 real transactions. Native durable files do not import the old C++ WAL.
 

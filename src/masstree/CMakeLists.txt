@@ -7,7 +7,7 @@ set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/googletest"
                  "${CMAKE_BINARY_DIR}/googletest" EXCLUDE_FROM_ALL)
 include(GoogleTest)
-foreach(_test test_mtree_abi test_mtx_abi test_silo_allocator test_silo_rcu_thread)
+foreach(_test test_mtree_abi test_silo_allocator test_silo_rcu_thread)
     add_executable(${_test} "${CMAKE_SOURCE_DIR}/tests/${_test}.cc")
     target_link_libraries(${_test} PRIVATE mako_native_storage GTest::gtest_main)
     gtest_discover_tests(${_test} TEST_PREFIX "${_test}." DISCOVERY_TIMEOUT 60

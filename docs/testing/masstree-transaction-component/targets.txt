@@ -1,0 +1,19 @@
+[1/1] All primary targets available:
+CMakeFiles/mako_native_storage.dir/CXXModules.json: CXX_DYNDEP__mako_native_storage_Release
+masstree_tx_tests: phony
+masstree_tx_quality: phony
+test: phony
+edit_cache: phony
+rebuild_cache: phony
+/var/tmp/mako-shard-rust/build_masstree_tx/CMakeFiles/native_storage_source_audit: CUSTOM_COMMAND
+/var/tmp/mako-shard-rust/build_masstree_tx/CMakeFiles/masstree_tx_build: CUSTOM_COMMAND
+/var/tmp/mako-shard-rust/build_masstree_tx/CMakeFiles/masstree_tx_tests: CUSTOM_COMMAND
+/var/tmp/mako-shard-rust/build_masstree_tx/CMakeFiles/masstree_tx_quality: CUSTOM_COMMAND
+__cmake_cxx_std_23: phony
+mako_native_storage: phony
+all: phony
+build.ninja: RERUN_CMAKE
+/var/tmp/mako-shard-rust/build_masstree_tx/cmake_install.cmake: RERUN_CMAKE
+/var/tmp/mako-shard-rust/build_masstree_tx/CTestTestfile.cmake: RERUN_CMAKE
+clean: CLEAN
+help: HELP

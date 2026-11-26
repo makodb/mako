@@ -1,0 +1,14 @@
+....updated docs/architecture/component-inventory.json and docs/mako-book.md
+component census is current
+updated docs/architecture/component-inventory.json and docs/mako-book.md
+[execution 1; accepted slot 1] cpp read10 threads=1 repetition=0 pair_attempt=1
+[execution 2; accepted slot 2] rust read10 threads=1 repetition=0 pair_attempt=1
+[guard] rejected both pair-1 samples: lxd_restart_count_changed
+[execution 3; accepted slot 1] cpp read10 threads=1 repetition=0 pair_attempt=2
+[execution 4; accepted slot 2] rust read10 threads=1 repetition=0 pair_attempt=2
+..[execution 1; accepted slot 1] cpp read10 threads=1 repetition=0 pair_attempt=1
+.........
+----------------------------------------------------------------------
+Ran 15 tests in 0.094s
+
+OK

@@ -67,7 +67,33 @@ fn masstree_crud_conflicts_ranges_and_reopen() {
 }
 fn basics(masstree: bool) {
     let root = Directory::new();
-    let db = open(&root.0, masstree);
+    transaction_contract(|| open(&root.0, masstree));
+}
+
+#[test]
+fn one_shard_raft_rocks_uses_the_same_transaction_contract() {
+    replicated_basics(false);
+}
+#[test]
+#[cfg(feature = "masstree-engine")]
+fn one_shard_raft_masstree_uses_the_same_transaction_contract() {
+    replicated_basics(true);
+}
+fn replicated_basics(masstree: bool) {
+    let root = Directory::new();
+    let peers = BTreeMap::from([(0, addresses(1).remove(0))]);
+    let mut cfg = config(&root.0, 0, &peers, masstree, true);
+    transaction_contract(|| {
+        let db = open_config(cfg.clone());
+        cfg.replication.as_mut().unwrap().create = false;
+        db
+    });
+}
+
+// The service contract belongs to the main runtime at either shard count.
+// Local and Raft logs must preserve identical atomicity, conflict and reopen behavior.
+fn transaction_contract(mut reopen: impl FnMut() -> DB) {
+    let db = reopen();
     let cf = db.cf_handle("other").unwrap();
     let tx = db.transaction();
     tx.put(b"", b"").unwrap();
@@ -127,7 +153,7 @@ fn basics(masstree: bool) {
     std::thread::scope(|scope| scope.spawn(move || tx.commit().unwrap()).join().unwrap());
     assert_eq!(db.get(b"send").unwrap(), Some(b"across threads".to_vec()));
     drop(db);
-    let db = open(&root.0, masstree);
+    let db = reopen();
     assert_eq!(db.get(b"a\0").unwrap(), Some(b"replace".to_vec()));
     assert_eq!(db.get(b"a\xff").unwrap(), None);
     assert_eq!(db.get(b"range-must-abort").unwrap(), None);

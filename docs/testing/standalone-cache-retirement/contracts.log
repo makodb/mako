@@ -1,0 +1,152 @@
+   Compiling mako-rocksdb-ffi v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-ffi)
+   Compiling mako-clock v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-clock)
+   Compiling sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+warning: `sto-core` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.55s
+     Running unittests src/lib.rs (build_retired/cargo/debug/deps/mako_clock-0c498a2af29eba0c)
+
+running 26 tests
+test distributed::tests::checked_decimal_boundaries_round_trip ... ok
+test distributed::tests::dependency_maximum_uses_base_not_term ... ok
+test distributed::tests::floors_never_lower_and_last_reservation_saturates ... ok
+test distributed::tests::terminal_decision_adoption_succeeds_without_allocation ... ok
+test tests::backward_physical_clock_cannot_move_hlc_backward ... ok
+test tests::first_allocation_takes_the_physical_reading ... ok
+test tests::expand_round_trips_through_the_public_timestamp ... ok
+test tests::global_clock_is_shared_across_the_process ... ok
+test tests::observe_stamp_ignores_invalid_and_older_stamps ... ok
+test tests::origin_is_one_and_constants_match_the_public_timestamp ... ok
+test tests::recovery_floor_carries_submillisecond_and_wide_logical_bounds ... ok
+test distributed::tests::concurrent_final_reservation_has_one_winner_and_observe_cannot_revive ... ok
+test tests::recovery_floor_is_not_raised_for_a_greater_origin_at_the_same_tuple ... ok
+test tests::recovery_floor_precedes_next_allocation ... ok
+test tests::recovery_leaves_the_final_timestamp_mintable ... ok
+test tests::recovery_floor_never_lowers_the_clock ... ok
+test tests::recovery_past_the_final_timestamp_reports_exhaustion ... ok
+test tests::validation_prefix_preserves_hlc_and_gate ... ok
+test timestamp::tests::be_bytes_round_trip_and_reject_zero_origin ... ok
+test tests::general_gate_is_mutually_exclusive_under_contention ... ok
+test tests::restricted_allocation_refuses_while_the_general_gate_is_held ... ok
+test tests::unreadable_physical_clock_is_reported_as_exhaustion ... ok
+test timestamp::tests::hot_stamp_round_trips_millisecond_aligned_timestamps ... ok
+test distributed::tests::concurrent_reservations_above_one_dependency_are_unique ... ok
+test tests::concurrent_hlc_allocation_is_unique_and_contiguous ... ok
+test tests::enter_general_waits_for_the_holder ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running unittests src/lib.rs (build_retired/cargo/debug/deps/mako_rocksdb_ffi-7f26fe6579b5265e)
+
+running 3 tests
+test bytes::tests::legacy_entry_visitor_propagates_get_and_callback_failures ... ok
+test bytes::tests::shared_backend_forwards_streaming_visitor_without_key_collection ... ok
+test bytes::tests::zero_limit_compatibility_scan_does_not_access_backend ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rocks.rs (build_retired/cargo/debug/deps/rocks-764c514e855d93d2)
+
+running 26 tests
+test opening_a_bad_path_reports_an_error_rather_than_panicking ... ok
+test optimistic_native_open_rejects_non_database_paths ... ok
+test empty_batches_are_a_no_op ... ok
+test binary_and_empty_values_survive ... ok
+test duplicate_keys_apply_in_slice_order ... ok
+test disk_usage_observes_database_files_without_mutating_storage ... ok
+test a_batch_is_all_or_nothing ... ok
+test entry_visitor_streams_ordered_binary_rows_and_empty_values ... ok
+test for_each_key_visits_everything_in_order ... ok
+test snapshot_lease_preserves_points_and_both_iteration_directions ... ok
+test deletes_apply_and_a_batch_may_mix_them ... ok
+test values_round_trip ... ok
+test data_survives_reopen ... ok
+test entry_visitor_releases_resources_after_error_and_panic ... ok
+test bounded_entry_seek_is_inclusive_and_stops_at_limit_or_callback ... ok
+test native_checkpoint_reopens_exact_bytes_and_missing_authority_is_not_created ... ok
+test concurrent_batches_all_land ... ok
+test optimistic_native_conflict_rolls_back_the_entire_write_set ... ok
+test optimistic_native_tracks_reads_not_just_overlapping_writes ... ok
+test optimistic_native_scan_is_bounded_ordered_and_reads_local_writes ... ok
+test optimistic_native_disjoint_transactions_do_not_spuriously_conflict ... ok
+test optimistic_native_tracks_absent_point_reads ... ok
+test optimistic_native_read_only_commit_validates_tracked_reads ... ok
+test optimistic_native_reads_local_writes_and_discards_rollback_and_drop ... ok
+test optimistic_native_scan_tracks_returned_keys_but_not_range_phantoms ... ok
+test optimistic_native_snapshot_starts_at_begin_and_multikey_commit_is_atomic ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running unittests src/lib.rs (build_retired/cargo/debug/deps/sto_rocksdb-8a91cdc60ccd5e7f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (build_retired/cargo/debug/deps/behavior-a56032602d13ae81)
+
+running 13 tests
+test real_rows_intents_rollback_and_multiple_tables ... ok
+test independent_prepared_writers_pipeline_but_pending_writer_blocks_scan ... ok
+test delayed_owner_completion_cannot_regress_newer_replica_publication ... ok
+test unknown_is_not_rollback_and_only_definite_discard_releases_reservation ... ok
+test scans_merge_sealed_intents_forward_reverse_and_detect_phantoms ... ok
+test snapshot_repeatable_reads_and_absence_aba_conflict ... ok
+test decided_replay_dedup_outcomes_and_applied_noops_survive_reopen ... ok
+test durable_tombstone_generation_exhaustion_is_checked_not_wrapped ... ok
+test ambiguous_real_atomic_batch_fences_then_recovers_without_double_effects ... ok
+test install_recovers_staging_and_durable_selector_cutpoints ... ok
+test checkpoint_staging_is_not_publication_and_old_snapshots_are_fenced ... ok
+test durability_identity_survives_reopen_and_checkpoint_install ... ok
+test native_checkpoint_larger_than_sixty_four_mebibytes_installs ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.79s
+
+     Running tests/codec.rs (build_retired/cargo/debug/deps/codec-a3caa79bea7e5992)
+
+running 3 tests
+test noncanonical_operations_and_inconsistent_counts_cannot_be_decided ... ok
+test logical_codec_preserves_full_width_identity_and_empty_binary_keys ... ok
+test encoded_limits_are_checked_without_truncating_the_request ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/distributed.rs (build_retired/cargo/debug/deps/distributed-ed9998c09e492cac)
+
+running 5 tests
+test private_import_publishes_exact_prefix_and_refuses_reuse_or_a_gap ... ok
+test ambiguous_external_batch_keeps_rows_and_metadata_together ... ok
+test materialization_rejects_gaps_overlap_and_hidden_intermediate_conflicts ... ok
+test multiple_log_positions_materialize_as_one_atomic_prefix ... ok
+test external_batch_recovery_checkpoint_and_profile ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests mako_clock
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mako_rocksdb_ffi
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sto_rocksdb
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

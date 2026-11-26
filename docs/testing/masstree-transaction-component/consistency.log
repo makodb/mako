@@ -1,0 +1,15 @@
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 0.000s
+
+OK
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.048s
+
+OK
+updated docs/architecture/component-inventory.json and docs/mako-book.md
+component census is current
+updated docs/architecture/component-inventory.json and docs/mako-book.md
+component census is current
+CI YAML, all component ownership/counts, compile-only targets and dependency evidence checked

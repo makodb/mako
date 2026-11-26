@@ -22,7 +22,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = Path(os.environ.get('BUILD_DIR', ROOT/'build_docker')).resolve()
-ALLOWED = set('mako-protocol mako-protocol-core mako-sharding shard-host-core mako-clock mako-engine-api bincode serde serde_core serde_derive proc-macro2 unicode-ident quote syn synstructure convert_case verus_builtin verus_builtin_macros verus_syn verus_prettyplease verus_state_machines_macros vstd indexmap equivalent hashbrown parking_lot lock_api scopeguard parking_lot_core cfg-if libc smallvec'.split())
+ALLOWED = set('mako-protocol mako-protocol-core mako-sharding shard-host-core mako-clock bincode serde serde_core serde_derive proc-macro2 unicode-ident quote syn synstructure convert_case verus_builtin verus_builtin_macros verus_syn verus_prettyplease verus_state_machines_macros vstd indexmap equivalent hashbrown parking_lot lock_api scopeguard parking_lot_core cfg-if libc smallvec'.split())
 ALLOWED.update(('mako-storage-api', 'mako-rocksdb'))
 PACKAGES = ['-p','mako-protocol','-p','mako-protocol-core','-p','shard-host-core','-p','mako-storage-api','-p','mako-rocksdb']
 VERSION = '0.2026.08.02.b677dd5'

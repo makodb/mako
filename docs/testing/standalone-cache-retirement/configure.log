@@ -1,0 +1,159 @@
+-- import std token: 451f2fe2-a8a2-47c3-bc32-94786d8fc91b (CMake 4.3.3)
+-- The C compiler identification is Clang 22.1.8
+-- The CXX compiler identification is Clang 22.1.8
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-22 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++-22 - skipped
+-- Detecting CXX compile features
+CMake Warning (dev) at /opt/cmake-4.3.3/share/cmake-4.3/Modules/Compiler/CMakeCommonCompilerMacros.cmake:226 (cmake_language):
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+Call Stack (most recent call first):
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeDetermineCompilerSupport.cmake:110 (cmake_cxx_find_modules_json)
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeTestCXXCompiler.cmake:83 (CMAKE_DETERMINE_COMPILER_SUPPORT)
+  CMakeLists.txt:151 (project)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Detecting CXX compile features - done
+-- Looking for sys/epoll.h
+-- Looking for sys/epoll.h - found
+-- Looking for numa.h
+-- Looking for numa.h - found
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdio.h
+-- Looking for stdio.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for sys/stat.h
+-- Looking for sys/stat.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for time.h
+-- Looking for time.h - found
+-- Looking for execinfo.h
+-- Looking for execinfo.h - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for C++ include type_traits
+-- Looking for C++ include type_traits - found
+-- Looking for getline
+-- Looking for getline - found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME - Success
+-- Looking for numa_available in numa
+-- Looking for numa_available in numa - found
+-- Performing Test _HAVE_CXX_CONSTEXPR
+-- Performing Test _HAVE_CXX_CONSTEXPR - Success
+-- Performing Test _HAVE_CXX_STATIC_ASSERT
+-- Performing Test _HAVE_CXX_STATIC_ASSERT - Success
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES - Success
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS - Success
+-- Performing Test _HAVE_STD_HASH
+-- Performing Test _HAVE_STD_HASH - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE - Success
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR - Success
+-- Performing Test _HAVE___BUILTIN_CLZ
+-- Performing Test _HAVE___BUILTIN_CLZ - Success
+-- Performing Test _HAVE___BUILTIN_CLZL
+-- Performing Test _HAVE___BUILTIN_CLZL - Success
+-- Performing Test _HAVE___BUILTIN_CLZLL
+-- Performing Test _HAVE___BUILTIN_CLZLL - Success
+-- Performing Test _HAVE___BUILTIN_CTZ
+-- Performing Test _HAVE___BUILTIN_CTZ - Success
+-- Performing Test _HAVE___BUILTIN_CTZL
+-- Performing Test _HAVE___BUILTIN_CTZL - Success
+-- Performing Test _HAVE___BUILTIN_CTZLL
+-- Performing Test _HAVE___BUILTIN_CTZLL - Success
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8 - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8 - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL - Success
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_INT64_T_IS_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG - Success
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG - Success
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG - Failed
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of long long
+-- Check size of long long - done
+-- Check size of void *
+-- Check size of void * - done
+-- Performing Test _HAVE_MADV_HUGEPAGE
+-- Performing Test _HAVE_MADV_HUGEPAGE - Success
+-- Performing Test _HAVE_MAP_HUGETLB
+-- Performing Test _HAVE_MAP_HUGETLB - Success
+-- Generated Masstree config.h via CMake: /var/tmp/mako-shard-rust/build_cache_retirement/generated/masstree/config.h
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Mako allocator: mode=1, kind=jemalloc, library=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- Configuring done (13.8s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_cache_retirement

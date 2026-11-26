@@ -24,10 +24,10 @@ COMPOSE_CMD_PREFIX="MAKO_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME} docker compose"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e CARGO_HOME=/workspace/.cargo-docker -e BUILD_DIR=build_docker)
-ROCKSDB_RAFT_DOCKER_ENV_OPTS=(
-    -e CARGO_TARGET_DIR=/workspace/target-rocksdb-raft
-    -e CARGO_HOME=/workspace/.cargo-rocksdb-raft
-    -e ROCKSDB_RAFT_BUILD_DIR=/workspace/build_rocksdb_raft
+REPLICATION_DOCKER_ENV_OPTS=(
+    -e CARGO_TARGET_DIR=/workspace/target-replication
+    -e CARGO_HOME=/workspace/.cargo-replication
+    -e REPLICATION_BUILD_DIR=/workspace/build_replication
 )
 # Forward MAKO_ASAN so CMakeLists.txt builds with -fsanitize=address + libc
 # malloc, and the mako_bench runtime sees a sane ASAN_OPTIONS for the test run.
@@ -115,7 +115,7 @@ normalize_script_build_ownership() {
         return 0
     fi
 
-    for target_path in build_docker target-docker .cargo-docker build_rocksdb_raft target-rocksdb-raft .cargo-rocksdb-raft; do
+    for target_path in build_docker target-docker .cargo-docker build_rocksdb_raft target-replication .cargo-replication; do
         if [ -e "${target_path}" ] && [ ! -w "${target_path}" ]; then
             needs_fix=1
             break
@@ -137,7 +137,7 @@ normalize_script_build_ownership() {
 
     echo -e "${YELLOW}Detected stale non-writable Docker build/cache artifacts; normalizing ownership to ${script_uid}:${script_gid}.${NC}"
     docker run --rm "${DOCKER_SECURITY_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
-        bash -lc "for d in /workspace/build_docker /workspace/target-docker /workspace/.cargo-docker /workspace/build_rocksdb_raft /workspace/target-rocksdb-raft /workspace/.cargo-rocksdb-raft; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
+        bash -lc "for d in /workspace/build_docker /workspace/target-docker /workspace/.cargo-docker /workspace/build_rocksdb_raft /workspace/target-replication /workspace/.cargo-replication; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
 }
 
 is_positive_integer() {
@@ -511,19 +511,6 @@ case "$ACTION" in
         echo -e "${GREEN}Docker image built successfully!${NC}"
         ;;
 
-    build-rocksdb-raft)
-        if [ -n "${3:-}" ] || ! is_positive_integer "${JOBS}"; then
-            echo "Usage: $0 build-rocksdb-raft [positive build jobs]" >&2
-            exit 1
-        fi
-        ensure_image
-        normalize_script_build_ownership
-        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" \
-            "${ROCKSDB_RAFT_DOCKER_ENV_OPTS[@]}" -e "CARGO_BUILD_JOBS=${JOBS}" \
-            -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
-            bash -c 'set -e; cmake -S . -B build_rocksdb_raft -G Ninja -DMAKO_BUILD_PROFILE=ROCKSDB_RAFT -DCMAKE_BUILD_TYPE=Release && cmake --build build_rocksdb_raft --target rocksdb_raft'
-        ;;
-
     build)
         if [ -n "${3:-}" ]; then
             echo -e "${RED}Error: Too many arguments for build.${NC}"
@@ -679,7 +666,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|upper|nativeRust|nativeRuntime|rustStorageGates|nativeShardingProof|nativeShardingSmoke|rocksdbRaft|rustStoBoundaryBinaries|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|srpcTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|upper|masstreeTx|nativeRust|nativeRuntime|rustStorageGates|nativeShardingProof|nativeShardingSmoke|replication|rustStoBoundaryBinaries|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -691,11 +678,16 @@ case "$ACTION" in
         ensure_image
         normalize_script_build_ownership
         case "${CI_TEST}" in
-            rocksdbRaft)
+            replication|rocksdbTests)
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" \
-                    "${ROCKSDB_RAFT_DOCKER_ENV_OPTS[@]}" -e "CI_BUILD_JOBS=${CI_JOBS}" \
+                    "${REPLICATION_DOCKER_ENV_OPTS[@]}" -e "CI_BUILD_JOBS=${CI_JOBS}" \
                     -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
-                    bash ./ci/ci.sh rocksdbRaft
+                    bash ./ci/ci.sh replication
+                ;;
+            masstreeTx)
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" \
+                    -e "CI_BUILD_JOBS=${CI_JOBS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace "${IMAGE_NAME}" \
+                    bash ./ci/ci.sh masstreeTx
                 ;;
             compile|all|nativeRust)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
@@ -742,12 +734,12 @@ case "$ACTION" in
         fi
         CI_TEST=${2:-shardNoReplication}
         case "${CI_TEST}" in
-            compile|cleanup|all|srpcTests|nativeShardingProof|rocksdbRaft)
+            compile|cleanup|all|srpcTests|nativeShardingProof|masstreeTx|replication|rocksdbTests)
                 echo -e "${RED}Error: ci-quick does not support '${CI_TEST}'.${NC}"
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
                 ;;
-            nativeRuntime|nativeShardingSmoke|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|cpuThrottlingScaling|clientServer)
+            nativeRuntime|nativeShardingSmoke|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|multiShardSingleProcess|shard2SingleProcess|cpuThrottlingScaling|clientServer)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -1352,17 +1344,17 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 {build-image|build|build-rocksdb-raft|shell|create|enter|test|ci|ci-quick|clean|compose-up|compose-down} [arg]"
+        echo "Usage: $0 {build-image|build|shell|create|enter|test|ci|ci-quick|clean|compose-up|compose-down} [arg]"
         echo ""
         echo "Commands:"
         echo "  build-image  - Build the Docker image"
         echo "  build [jobs] - Build core runtime + RocksDB quick-test binaries (default jobs: 32)"
-        echo "  build-rocksdb-raft [jobs] - Build native Rust STO + RocksDB + Raft in an isolated tree"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped unless compose duplicate-avoidance applies)"
         echo "  test         - Build native Rust and run shardNoReplication smoke test"
         echo "  ci [test] [jobs] - Build and run CI test (default: all, jobs: 32)"
+        echo "  ci masstreeTx [jobs] - Build and test the isolated Masstree transaction component"
         echo "  ci upper [cpus] - Verify upper protocol with a CPU budget (default: 4)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
         echo "  clean        - Clean build artifacts"
@@ -1372,7 +1364,7 @@ case "$ACTION" in
         echo "CI Test Names:"
         echo "  all, compile, cleanup, simpleTransaction,"
         echo "  rustStoBoundaryBinaries, makoLocalAbiGates (ci only),"
-        echo "  rocksdbRaft (isolated native Rust profile, includes build and runtime scenarios),"
+        echo "  replication (shared storage/Raft components and RocksDB runtime),"
         echo "  shardNoReplication,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"

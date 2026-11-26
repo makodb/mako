@@ -12,12 +12,13 @@ case "${1:-}" in
     compile) bash ci/native_rust.sh compile ;;
     nativeRust) bash ci/native_rust.sh all ;;
     upper) bash ci/upper.sh ;;
+    masstreeTx) bash ci/masstree_tx.sh ;;
     rustStorageGates|rustStoBoundaryBinaries) bash ci/native_rust.sh components ;;
     nativeRuntime|nativeShardingSmoke|clientServer|raftKillTest|shard1ReplicationRaftRestart)
         bash ci/native_rust.sh runtime ;;
     nativeShardingProof) bash ci/native_rust.sh proofs ;;
     srpcTests) bash ci/native_rust.sh srpc ;;
-    rocksdbRaft|rocksdbTests|raftLabTest) bash ci/rocksdb_raft.sh ;;
+    replication|rocksdbTests|raftLabTest) bash ci/replication.sh ;;
     simpleTransaction) launch transactions --workers 3 --count 100 ;;
     shardNoReplication) launch tpcc --shards 2 --workers 3 --count 500 ;;
     shard1ReplicationRaft) launch tpcc --replicas 3 --workers 2 --count 50 ;;
@@ -33,7 +34,7 @@ case "${1:-}" in
         bash ci/native_rust.sh proofs
         bash ci/native_rust.sh srpc
         bash ci/native_rust.sh all
-        bash ci/rocksdb_raft.sh
+        bash ci/replication.sh
         ;;
-    *) echo "Unknown CI target: ${1:-}. Use nativeRust, nativeRuntime, nativeShardingProof, srpcTests, rocksdbRaft, compile or all." >&2; exit 2 ;;
+    *) echo "Unknown CI target: ${1:-}. Use nativeRust, nativeRuntime, nativeShardingProof, srpcTests, masstreeTx, replication, compile or all." >&2; exit 2 ;;
 esac

@@ -1,0 +1,5 @@
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- ROCKSDB_RUNTIME: distributed STO/OCC+2PC, local/Raft logs and Rust SRPC; no Masstree compiler or archive
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_rocks_crate/runtime

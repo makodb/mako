@@ -11,7 +11,7 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
 LIBRARY_PACKAGES = (
-    "masstree", "sto-core", "mako-engine-sto", "sto-tpcc-ffi", "sto-masstree",
+    "masstree", "sto-core", "sto-tpcc-ffi", "sto-masstree",
 )
 
 

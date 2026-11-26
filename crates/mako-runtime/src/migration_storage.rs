@@ -1,5 +1,5 @@
 //! Engine-neutral storage effects for the sharding actor. The actor owns range
-//! fencing; every mutation still uses the shared OCC + 2PC journal driver.
+//! policy; its range guard authorizes every mutation before the OCC + 2PC driver.
 use crate::{
     migration::Schema,
     storage::{engine, CommitPermit, Store},
@@ -50,6 +50,7 @@ impl Worker {
         after: Option<(&[u8], &[u8])>,
     ) -> Result<Option<Row>> {
         self.store.health()?;
+        crate::migration_ranges::scan(&self.store, catalog, lo, hi)?;
         let permit = self.store.log.admit()?;
         if crate::migration_metadata::row_authority()
             .is_some_and(|term| permit.authority() != Some(term))
@@ -150,6 +151,7 @@ impl Worker {
         value: Option<&[u8]>,
     ) -> Result<()> {
         self.store.health()?;
+        crate::migration_ranges::point(&self.store, table, coordinate)?;
         let warehouse = if self.schema.spec(table)?.warehouse {
             u32::from_be_bytes(
                 coordinate

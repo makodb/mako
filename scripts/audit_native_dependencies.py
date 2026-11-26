@@ -20,7 +20,7 @@ def main():
     evidence.mkdir(exist_ok=True)
     report = {"passed": False, "programs": {}, "native_libraries": []}
     allowed_libs = {"mako_native_storage", "srpc_native", "rocksdb", "c++", "c++abi",
-                    "numa", "pthread", "jemalloc", "tcmalloc", "lz4", "dl", "m", "rt"}
+                    "numa", "pthread", "jemalloc", "tcmalloc", "lz4", "dl", "m", "rt", "stdc++", "snappy", "zstd", "z", "bz2"}
     allowed_mako = {line for line in (root / "cmake/native-storage-headers.txt").read_text().splitlines()
                     if line and not line.startswith("#")}
     dependencies = subprocess.check_output(["ninja", "-C", str(build), "-t", "deps"], text=True)
@@ -50,10 +50,6 @@ def main():
                 for name in ("mako_node", "mako_bench", "mako_transactions", "mako_redis")]
     programs += [("mako-runtime", "mako_convert", ["--features", "logging"])]
     programs += [("mako-runtime", name, []) for name in ("mako_client", "mako_admin")]
-    programs += [("mako-cache-bench", name, [])
-                 for name in ("mako-cache-bench", "engine_compare", "gc_soak")]
-    programs += [("rocksdb-raft-service", name, [])
-                 for name in ("rocksdb_raft_server", "rocksdb_raft_client", "rocksdb_raft_bench")]
     try:
         for package, name, features in programs:
             link_map = evidence / f"{name}.map"
@@ -65,9 +61,17 @@ def main():
             if result.returncode:
                 raise RuntimeError(f"Cargo failed linking {name}")
             executable = None
+            upstream_outputs = set()
             for line in result.stdout.splitlines():
                 event = json.loads(line)
                 if event.get("reason") == "build-script-executed":
+                    # Only reviewed registry dependencies may supply bundled C/C++.
+                    package_id = event["package_id"]
+                    if package_id.startswith("registry+") and any(
+                        f"#{package}@" in package_id for package in
+                        ("librocksdb-sys", "lz4-sys", "zstd-sys", "libz-sys", "bzip2-sys")
+                    ):
+                        upstream_outputs.add(Path(event["out_dir"]).resolve())
                     for library in event.get("linked_libs", []):
                         native = library.rsplit("=", 1)[-1]
                         if native not in allowed_libs:
@@ -100,7 +104,8 @@ def main():
             for archive in archives:
                 path = Path(archive)
                 if path.is_absolute() and path.is_relative_to(root):
-                    if path.name not in {"libmako_native_storage.a", "libsrpc_native.a"}:
+                    if (path.name not in {"libmako_native_storage.a", "libsrpc_native.a"}
+                            and not any(path.resolve().is_relative_to(out) for out in upstream_outputs)):
                         raise RuntimeError(f"non-storage application archive in {name}: {path}")
                     project_archives.append(str(path))
             if name in {"mako_node", "mako_bench", "mako_transactions", "mako_redis"}:
@@ -110,6 +115,10 @@ def main():
                 if "libmako_native_storage.a" in contents:
                     raise RuntimeError(f"{name} unexpectedly links native storage")
             symbols = subprocess.check_output([args.nm, "--defined-only", "--demangle", executable], text=True)
+            libraries = subprocess.check_output(["ldd", executable], text=True)
+            static_rocksdb = bool(re.search(r"\b[Tt] rocksdb_open$", symbols, re.MULTILINE))
+            if static_rocksdb and "librocksdb" in libraries:
+                raise RuntimeError(f"duplicate bundled/system RocksDB in {name}")
             # Rust's srpc:: names are expected; C++ application owners are not.
             for symbol in ("janus::", "TThread::", "ShardClient::", "ShardReceiver::", "rust_sto_tpcc_wrapper::"):
                 if symbol in symbols:

@@ -26,6 +26,9 @@ impl Default for EpochDomain {
     }
 }
 impl EpochDomain {
+    pub(crate) fn owns(&self, pin: &Pin) -> bool {
+        std::ptr::eq(self, Arc::as_ptr(&pin.domain))
+    }
     pub fn enter(self: &Arc<Self>) -> Pin {
         let mut state = self.state.lock();
         let epoch = state.current;

@@ -7,13 +7,13 @@ jobs="${2:-4}"
 [[ ! -e "$out" ]] || { echo "expected a fresh output directory: $out" >&2; exit 2; }
 mkdir -p "$out"
 out="$(cd "$out" && pwd -P)"
-archive="$out/rocksdb-8.9.1.tar.gz"
+archive="$out/rocksdb-11.8.1.tar.gz"
 curl --proto '=https' --tlsv1.2 -fL --retry 3 \
-    https://codeload.github.com/facebook/rocksdb/tar.gz/refs/tags/v8.9.1 -o "$archive"
-printf '%s  %s\n' c22d2097e7aa75629612fd020499bdae0d3e321c7bc4361960c42aaf9cbd6dc1 "$archive" \
+    https://codeload.github.com/facebook/rocksdb/tar.gz/refs/tags/v11.8.1 -o "$archive"
+printf '%s  %s\n' 618d9726a7cb1cf4ce034f4cdca49de98aa64867dda06b91371a791ae8921aff "$archive" \
     | sha256sum --check --strict
 tar -xzf "$archive" -C "$out"
-cmake -S "$out/rocksdb-8.9.1" -B "$out/build" -G Ninja \
+cmake -S "$out/rocksdb-11.8.1" -B "$out/build" -G Ninja \
     -DCMAKE_C_COMPILER="${CC:-clang-22}" -DCMAKE_CXX_COMPILER="${CXX:-clang++-22}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O1 -g -DNDEBUG -fno-omit-frame-pointer' \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DWITH_TSAN=ON -DROCKSDB_BUILD_SHARED=ON \
@@ -38,7 +38,7 @@ symbols = subprocess.check_output(['nm', '-D', '--undefined-only', library], tex
 if '__tsan_read' not in symbols or '__tsan_write' not in symbols:
     raise SystemExit('RocksDB lacks compiler TSan hooks')
 (out/'instrumentation.json').write_text(json.dumps({
-    'version': '8.9.1', 'instrumented_sources': len(selected), 'library': str(library),
+    'version': '11.8.1', 'instrumented_sources': len(selected), 'library': str(library),
     'compiler_commands': str(out/'build/compile_commands.json')}, indent=2)+'\n')
 print(f'RocksDB TSan: {len(selected)} instrumented translation units')
 PY

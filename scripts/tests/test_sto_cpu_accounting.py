@@ -3,7 +3,6 @@
 import importlib.util
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,9 +11,6 @@ SPEC = importlib.util.spec_from_file_location("sto_cpu_accounting", SCRIPTS / "s
 accounting = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = accounting
 SPEC.loader.exec_module(accounting)
-ENGINE_SPEC = importlib.util.spec_from_file_location("accounting_test_engine", SCRIPTS / "run_mako_engine_compare.py")
-engine = importlib.util.module_from_spec(ENGINE_SPEC)
-ENGINE_SPEC.loader.exec_module(engine)
 
 
 def endpoint(start, **counters):
@@ -144,27 +140,6 @@ class CpuAccountingTests(unittest.TestCase):
         with patch.object(accounting.Path, "read_text", side_effect=OSError("unavailable")), \
                 self.assertRaises(RuntimeError):
             accounting.snapshot([16])
-
-    def test_engine_quality_uses_contention_and_preserves_pmu_offcpu_reasons(self):
-        args = SimpleNamespace(perf=1, pmu_min_running_ratio=0.995,
-                               max_sibling_contention=0.01, max_worker_off_cpu_fraction=0.01)
-        stats = [{"worker": 0, "cpu_ns": 100, "diagnostic_wall_ns": 100}]
-        for counters, valid in (({"user": 1, "idle": 99}, True),
-                                ({"iowait": 100}, True), ({"steal": 2, "idle": 98}, False)):
-            result = engine.sample_quality(args, {"pmu_min_running_ratio": 1}, stats,
-                                           {"0": [16]}, endpoint(0), endpoint(2, **counters))
-            self.assertEqual(result["quality_valid"], valid)
-            self.assertEqual(result["cpu_accounting_policy"], accounting.POLICY)
-        invalid = endpoint(2, idle=100)
-        del invalid["cpus"]["16"]["iowait"]
-        result = engine.sample_quality(args, {"pmu_min_running_ratio": 0.5},
-                                       [{"worker": 0, "cpu_ns": 50, "diagnostic_wall_ns": 100}],
-                                       {"0": [16]}, endpoint(0), invalid)
-        self.assertFalse(result["quality_valid"])
-        self.assertEqual(len(result["quality_rejections"]), 3)
-        self.assertIsNone(result["sibling_cpu_contention_fraction"]["16"])
-        self.assertIn("16", result["cpu_accounting_errors"])
-
 
 if __name__ == "__main__":
     unittest.main()

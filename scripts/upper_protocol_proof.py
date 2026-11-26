@@ -15,6 +15,9 @@ ROOT = host.ROOT
 CORE = ROOT / 'crates/mako-protocol-core'
 ENTRY = 'crates/mako-protocol-core/src/lib.rs'
 ADAPTERS = {
+    'crates/mako-runtime/src/migration_ranges.rs': ['impl contract::RangeLocks for Provider', 'impl contract::RangeGuard for Guard', 'self.inner.enter()', 'active.io.point(', 'active.io.range('],
+    'crates/mako-runtime/src/migration_storage.rs': ['crate::migration_ranges::scan(', 'crate::migration_ranges::point(', 'commit::coordinate(&mut effects)'],
+    'src/cluster/runtime.rs': ['self.host.acquire_range(plan)', 'self.host.reset_ranges()', 'guard.drained()', 'guard.finish()'],
     'crates/mako-rocksdb/src/runtime.rs': ['client.begin(', 'tx.get_routed(', 'tx.mutate_routed(', 'tx.scan_routed(', 'tx.commit()', 'client::resolve_transaction('],
     'crates/sto-tpcc-ffi/src/protocol.rs': [
         'impl mako_protocol_core::coordinator::Effects for CoordinatorEffects',

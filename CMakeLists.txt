@@ -1,17 +1,13 @@
 cmake_minimum_required(VERSION 3.30)
 
-set(MAKO_BUILD_PROFILE "NATIVE_RUST" CACHE STRING "Build profile: NATIVE_RUST, ROCKSDB_RUNTIME or ROCKSDB_RAFT")
-set_property(CACHE MAKO_BUILD_PROFILE PROPERTY STRINGS NATIVE_RUST ROCKSDB_RUNTIME ROCKSDB_RAFT)
+set(MAKO_BUILD_PROFILE "NATIVE_RUST" CACHE STRING "Build profile: NATIVE_RUST, ROCKSDB_RUNTIME or MASSTREE_TX")
+set_property(CACHE MAKO_BUILD_PROFILE PROPERTY STRINGS NATIVE_RUST ROCKSDB_RUNTIME MASSTREE_TX)
 if(MAKO_BUILD_PROFILE STREQUAL "ROCKSDB_RUNTIME")
     project(mako_rocksdb_runtime LANGUAGES NONE)
     include(cmake/RocksdbRuntime.cmake)
     return()
-elseif(MAKO_BUILD_PROFILE STREQUAL "ROCKSDB_RAFT")
-    project(mako_rocksdb_raft LANGUAGES NONE)
-    include(cmake/RocksdbRaft.cmake)
-    return()
-elseif(NOT MAKO_BUILD_PROFILE STREQUAL "NATIVE_RUST")
-    message(FATAL_ERROR "Unsupported MAKO_BUILD_PROFILE: ${MAKO_BUILD_PROFILE}. The C++ application build is retired; use NATIVE_RUST in a fresh build directory.")
+elseif(NOT MAKO_BUILD_PROFILE STREQUAL "NATIVE_RUST" AND NOT MAKO_BUILD_PROFILE STREQUAL "MASSTREE_TX")
+    message(FATAL_ERROR "Unsupported MAKO_BUILD_PROFILE: ${MAKO_BUILD_PROFILE}. Use NATIVE_RUST or ROCKSDB_RUNTIME for applications, or MASSTREE_TX for the isolated component, in a fresh build directory.")
 endif()
 
 # Native storage uses C++23 standard-library modules. Configure CMake's

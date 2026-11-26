@@ -8,6 +8,7 @@ pub mod epoch;
 pub mod gateway_client;
 pub mod journal;
 pub mod participant;
+pub mod range_lock;
 pub mod redo;
 pub mod remote;
 pub mod wire;

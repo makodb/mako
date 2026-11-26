@@ -2,6 +2,7 @@
 """Check the RocksDB-only distributed runtime dependency graph and linked binaries."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -28,6 +29,11 @@ def main():
     for package in forbidden:
         if package in tree or package in api_tree:
             raise RuntimeError(f"Masstree dependency in RocksDB-only runtime: {package}")
+    for dependency_tree in (tree, api_tree):
+        for package, version in (("rocksdb", "0.25.0"), ("librocksdb-sys", "0.19.0+11.8.1")):
+            versions = set(re.findall(rf"^{package} v([^\s]+)", dependency_tree, re.MULTILINE))
+            if versions != {version}:
+                raise RuntimeError(f"expected one pinned {package}, found {versions}")
     programs = ("mako_node", "mako_admin", "mako_client", "mako_bench", "mako_transactions", "mako_redis", "mako_convert", "examples/rocksdb_transactions")
     binaries = {}
     for name in programs:
@@ -37,8 +43,12 @@ def main():
             if token in symbols:
                 raise RuntimeError(f"Forbidden backend/application symbol in {name}: {token}")
         libraries = subprocess.check_output(["ldd", str(path)], text=True)
-        if name == "mako_node" and "librocksdb" not in libraries:
-            raise RuntimeError("RocksDB runtime does not link librocksdb")
+        static_rocksdb = bool(re.search(r"\b[Tt] rocksdb_open$", symbols, re.MULTILINE))
+        dynamic_rocksdb = "librocksdb" in libraries
+        if static_rocksdb and dynamic_rocksdb:
+            raise RuntimeError(f"duplicate bundled/system RocksDB in {name}")
+        if name == "mako_node" and not (static_rocksdb or dynamic_rocksdb):
+            raise RuntimeError("RocksDB runtime lacks the native engine")
         binaries[name] = {"path": str(path), "bytes": path.stat().st_size, "dynamic_libraries": libraries.splitlines()}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({"passed": True, "dependency_tree": tree.splitlines(), "api_dependency_tree": api_tree.splitlines(), "binaries": binaries}, indent=2) + "\n")

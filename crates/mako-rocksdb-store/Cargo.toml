@@ -1,0 +1,18 @@
+[package]
+name = "mako-rocksdb-store"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Mako byte-store contracts over the maintained rocksdb crate"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+# Synchronous wrapper-level write observers for deterministic crash tests.
+# This does not expose a hook inside RocksDB's WAL implementation.
+test-hooks = []
+
+[dependencies]
+rocksdb = "=0.25.0"
+self_cell = "=1.3.0"

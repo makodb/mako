@@ -13,9 +13,10 @@ crate-type = ["rlib", "staticlib"]
 test-hooks = []
 default = ["engine-host"]
 protocol = []
-engine-host = ["protocol", "dep:parking_lot"]
+engine-host = ["protocol", "dep:parking_lot", "dep:rocksdb"]
 
 [dependencies]
+rocksdb = { version = "=0.25.0", optional = true }
 vstd = { git = "https://github.com/verus-lang/verus", rev = "b677dd5a766f25f56e9aa1e32621aa4e53304b47" }
 parking_lot = { version = "0.12", optional = true }
 

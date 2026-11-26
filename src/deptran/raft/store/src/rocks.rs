@@ -1,142 +1,50 @@
-//! The RocksDB log/base, through `rocksdb/c.h`, which Mako
-//! already links. `open_journal` enables RocksDB WAL and synchronizes each
-//! atomic batch under the default policy. The legacy base API writes with WAL
-//! off because the separately synced Raft WAL protects them until a waiting
-//! base flush. The explicit weak async policy retains RocksDB's WAL (without
-//! sync), allowing non-waiting base flushes and process-crash recovery after
-//! Raft segment reclamation. Neither async WAL promises power-crash durability.
-//! Write buffers are sized for the ingest rate (64 MB, four).
+//! RocksDB log/base through the maintained Rust crate.
+//! Journal batches use RocksDB's WAL barrier. Segmented-WAL bases with synchronous
+//! persistence disable the redundant RocksDB WAL and wait for a memtable flush;
+//! async bases retain it for process-crash recovery after segment reclamation.
+#![forbid(unsafe_code)]
 
-use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
-use std::io;
-use std::path::Path;
-
+use rocksdb::{DBCompressionType, FlushOptions, Options, WriteBatch, WriteOptions, DB};
+use std::{cell::Cell, io, marker::PhantomData, path::Path};
 use crate::base::{Base, Op};
-
-#[allow(non_camel_case_types)]
-type rocksdb_t = c_void;
-#[allow(non_camel_case_types)]
-type opts_t = c_void;
-
-extern "C" {
-    fn rocksdb_options_create() -> *mut opts_t;
-    fn rocksdb_options_destroy(o: *mut opts_t);
-    fn rocksdb_options_set_create_if_missing(o: *mut opts_t, v: c_uchar);
-    fn rocksdb_options_set_error_if_exists(o: *mut opts_t, v: c_uchar);
-    fn rocksdb_options_set_write_buffer_size(o: *mut opts_t, s: usize);
-    fn rocksdb_options_set_max_write_buffer_number(o: *mut opts_t, n: c_int);
-    fn rocksdb_options_set_compression(o: *mut opts_t, t: c_int);
-    fn rocksdb_open(o: *const opts_t, name: *const c_char, err: *mut *mut c_char) -> *mut rocksdb_t;
-    fn rocksdb_close(db: *mut rocksdb_t);
-    fn rocksdb_free(p: *mut c_void);
-
-    fn rocksdb_writebatch_create() -> *mut c_void;
-    fn rocksdb_writebatch_destroy(b: *mut c_void);
-    fn rocksdb_writebatch_put(b: *mut c_void, k: *const c_char, kl: usize, v: *const c_char, vl: usize);
-    fn rocksdb_writebatch_delete_range(b: *mut c_void, s: *const c_char, sl: usize, e: *const c_char, el: usize);
-    fn rocksdb_writeoptions_create() -> *mut c_void;
-    fn rocksdb_writeoptions_destroy(o: *mut c_void);
-    fn rocksdb_writeoptions_disable_WAL(o: *mut c_void, disable: c_int);
-    fn rocksdb_writeoptions_set_sync(o: *mut c_void, sync: c_uchar);
-    fn rocksdb_write(db: *mut rocksdb_t, o: *const c_void, b: *mut c_void, err: *mut *mut c_char);
-
-    fn rocksdb_flushoptions_create() -> *mut c_void;
-    fn rocksdb_flushoptions_destroy(o: *mut c_void);
-    fn rocksdb_flushoptions_set_wait(o: *mut c_void, v: c_uchar);
-    fn rocksdb_flush(db: *mut rocksdb_t, o: *const c_void, err: *mut *mut c_char);
-
-    fn rocksdb_readoptions_create() -> *mut c_void;
-    fn rocksdb_readoptions_destroy(o: *mut c_void);
-    fn rocksdb_get(db: *mut rocksdb_t, o: *const c_void, k: *const c_char, kl: usize, vl: *mut usize,
-                   err: *mut *mut c_char) -> *mut c_char;
-    fn rocksdb_create_iterator(db: *mut rocksdb_t, o: *const c_void) -> *mut c_void;
-    fn rocksdb_iter_destroy(it: *mut c_void);
-    fn rocksdb_iter_seek(it: *mut c_void, k: *const c_char, kl: usize);
-    fn rocksdb_iter_valid(it: *const c_void) -> c_uchar;
-    fn rocksdb_iter_next(it: *mut c_void);
-    fn rocksdb_iter_key(it: *const c_void, kl: *mut usize) -> *const c_char;
-    fn rocksdb_iter_value(it: *const c_void, vl: *mut usize) -> *const c_char;
-    fn rocksdb_iter_get_error(it: *const c_void, errptr: *mut *mut c_char);
-}
-
-fn check(err: *mut c_char) -> io::Result<()> {
-    if err.is_null() {
-        return Ok(());
-    }
-    // SAFETY: RocksDB hands back a malloc'd NUL-terminated message.
-    let msg = unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned();
-    unsafe { rocksdb_free(err as *mut c_void) };
-    Err(io::Error::other(format!("rocksdb: {msg}")))
-}
 
 /// A RocksDB base. Not `Sync`; one owner (the applier, or recovery).
 pub struct RocksBase {
-    db: *mut rocksdb_t,
-    wopts: *mut c_void,
-    ropts: *mut c_void,
+    db: DB,
+    wopts: WriteOptions,
     sync_writes: bool,
     journal: bool,
+    _not_sync: PhantomData<Cell<()>>,
 }
 
-// SAFETY: a RocksDB handle may move between threads; this type has one owner.
-unsafe impl Send for RocksBase {}
-
 impl RocksBase {
-    /// Opens the base at `path`. `create`: make a new one (only inside a
-    /// store being created); otherwise a missing or damaged base is an error,
-    /// never repaired or recreated.
-    pub fn open(path: &Path, create: bool) -> io::Result<RocksBase> {
+    /// Create a new base, or reopen an existing one without replacing missing data.
+    pub fn open(path: &Path, create: bool) -> io::Result<Self> {
         Self::open_with_sync_writes(path, create, true)
     }
 
-    /// Selects waiting durable base flushes, or weak asynchronous persistence.
-    /// Async still writes both the upstream Raft WAL and this base's WAL.
-    pub fn open_with_sync_writes(path: &Path, create: bool, sync_writes: bool) -> io::Result<RocksBase> {
+    pub fn open_with_sync_writes(path: &Path, create: bool, sync_writes: bool) -> io::Result<Self> {
         Self::open_policy(path, create, sync_writes, false)
     }
 
     /// Shared local/Raft log: RocksDB WAL owns the persistence barrier.
-    pub fn open_journal(path: &Path, create: bool, sync_writes: bool) -> io::Result<RocksBase> {
+    pub fn open_journal(path: &Path, create: bool, sync_writes: bool) -> io::Result<Self> {
         Self::open_policy(path, create, sync_writes, true)
     }
 
-    fn open_policy(path: &Path, create: bool, sync_writes: bool, journal: bool) -> io::Result<RocksBase> {
-        let name = CString::new(path.to_string_lossy().as_bytes()).map_err(io::Error::other)?;
-        // SAFETY: plain C API calls on handles created here.
-        unsafe {
-            let o = rocksdb_options_create();
-            rocksdb_options_set_create_if_missing(o, u8::from(create));
-            rocksdb_options_set_error_if_exists(o, u8::from(create));
-            // Sized for the ingest rate: the base takes every entry the WAL
-            // does, so small buffers stall the applier on flushes and it
-            // falls behind for good (a saturated G2 writes ~90 MB/s per
-            // replica). The values are Raft payloads: no compression.
-            rocksdb_options_set_write_buffer_size(o, 64 << 20);
-            rocksdb_options_set_max_write_buffer_number(o, 4);
-            rocksdb_options_set_compression(o, 0);
-            let mut err: *mut c_char = std::ptr::null_mut();
-            let db = rocksdb_open(o, name.as_ptr(), &mut err);
-            rocksdb_options_destroy(o);
-            check(err)?;
-            if db.is_null() {
-                return Err(io::Error::other("rocksdb: open returned no handle"));
-            }
-            let wopts = rocksdb_writeoptions_create();
-            rocksdb_writeoptions_disable_WAL(wopts, i32::from(sync_writes && !journal));
-            rocksdb_writeoptions_set_sync(wopts, u8::from(sync_writes && journal));
-            Ok(RocksBase { db, wopts, ropts: rocksdb_readoptions_create(), sync_writes, journal })
-        }
-    }
-}
-
-impl Drop for RocksBase {
-    fn drop(&mut self) {
-        // SAFETY: handles created in open, destroyed once.
-        unsafe {
-            rocksdb_writeoptions_destroy(self.wopts);
-            rocksdb_readoptions_destroy(self.ropts);
-            rocksdb_close(self.db);
-        }
+    fn open_policy(path: &Path, create: bool, sync_writes: bool, journal: bool) -> io::Result<Self> {
+        let mut options = Options::default();
+        options.create_if_missing(create);
+        options.set_error_if_exists(create);
+        // Preserve the ingest policy: 64 MiB buffers, four buffers, no compression.
+        options.set_write_buffer_size(64 << 20);
+        options.set_max_write_buffer_number(4);
+        options.set_compression_type(DBCompressionType::None);
+        let db = DB::open(&options, path).map_err(io::Error::other)?;
+        let mut wopts = WriteOptions::default();
+        wopts.disable_wal(sync_writes && !journal);
+        wopts.set_sync(sync_writes && journal);
+        Ok(Self { db, wopts, sync_writes, journal, _not_sync: PhantomData })
     }
 }
 
@@ -147,76 +55,36 @@ impl Base for RocksBase {
     }
 
     fn write(&mut self, ops: &[Op]) -> io::Result<()> {
-        // SAFETY: the batch borrows the slices only for each call.
-        unsafe {
-            let b = rocksdb_writebatch_create();
-            for op in ops {
-                match op {
-                    Op::Put(k, v) => rocksdb_writebatch_put(b, k.as_ptr().cast(), k.len(), v.as_ptr().cast(), v.len()),
-                    Op::DeleteRange(s, e) => {
-                        rocksdb_writebatch_delete_range(b, s.as_ptr().cast(), s.len(), e.as_ptr().cast(), e.len())
-                    }
-                }
+        let mut batch = WriteBatch::default();
+        for op in ops {
+            match op {
+                Op::Put(key, value) => batch.put(key, value),
+                Op::DeleteRange(start, end) => batch.delete_range(start, end),
             }
-            let mut err: *mut c_char = std::ptr::null_mut();
-            rocksdb_write(self.db, self.wopts, b, &mut err);
-            rocksdb_writebatch_destroy(b);
-            check(err)
         }
+        self.db.write_opt(batch, &self.wopts).map_err(io::Error::other)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // SAFETY: plain C API calls.
-        unsafe {
-            let o = rocksdb_flushoptions_create();
-            rocksdb_flushoptions_set_wait(o, u8::from(self.sync_writes || self.journal));
-            let mut err: *mut c_char = std::ptr::null_mut();
-            rocksdb_flush(self.db, o, &mut err);
-            rocksdb_flushoptions_destroy(o);
-            check(err)
-        }
+        let mut options = FlushOptions::default();
+        options.set_wait(self.sync_writes || self.journal);
+        self.db.flush_opt(&options).map_err(io::Error::other)
     }
 
     fn get(&self, key: &[u8]) -> io::Result<Option<Vec<u8>>> {
-        // SAFETY: the returned value is malloc'd and freed here.
-        unsafe {
-            let mut len = 0usize;
-            let mut err: *mut c_char = std::ptr::null_mut();
-            let v = rocksdb_get(self.db, self.ropts, key.as_ptr().cast(), key.len(), &mut len, &mut err);
-            check(err)?;
-            if v.is_null() {
-                return Ok(None);
-            }
-            let out = std::slice::from_raw_parts(v as *const u8, len).to_vec();
-            rocksdb_free(v as *mut c_void);
-            Ok(Some(out))
-        }
+        self.db.get(key).map_err(io::Error::other)
     }
 
-    /// The keys with `prefix`, in order. An iterator stops being valid at
-    /// the end or on an error (a read error, corruption); the error is
-    /// asked for, so a damaged base fails closed rather than loading short.
     fn scan(&self, prefix: &[u8]) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut out = Vec::new();
-        let mut err: *mut c_char = std::ptr::null_mut();
-        // SAFETY: the iterator's key and value are valid until the next move.
-        unsafe {
-            let it = rocksdb_create_iterator(self.db, self.ropts);
-            rocksdb_iter_seek(it, prefix.as_ptr().cast(), prefix.len());
-            while rocksdb_iter_valid(it) != 0 {
-                let (mut kl, mut vl) = (0usize, 0usize);
-                let k = std::slice::from_raw_parts(rocksdb_iter_key(it, &mut kl) as *const u8, kl);
-                if !k.starts_with(prefix) {
-                    break;
-                }
-                let v = std::slice::from_raw_parts(rocksdb_iter_value(it, &mut vl) as *const u8, vl);
-                out.push((k.to_vec(), v.to_vec()));
-                rocksdb_iter_next(it);
-            }
-            rocksdb_iter_get_error(it, &mut err);
-            rocksdb_iter_destroy(it);
+        let mut iterator = self.db.raw_iterator();
+        iterator.seek(prefix);
+        while let Some((key, value)) = iterator.item() {
+            if !key.starts_with(prefix) { break; }
+            out.push((key.to_vec(), value.to_vec()));
+            iterator.next();
         }
-        check(err)?;
+        iterator.status().map_err(io::Error::other)?;
         Ok(out)
     }
 }

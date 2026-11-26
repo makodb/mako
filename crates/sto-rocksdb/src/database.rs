@@ -4,8 +4,8 @@ use crate::{
     core, mutex, ApplyOutcome, Command, CommandBody, Error, Outcome, OutcomeKind, Position,
     RequestId, Result, Worker,
 };
-use mrx_core::{BlobOp, Blobs};
-use mrx_rocks::{Durability, RocksBlobs, Snapshot};
+use mako_rocksdb_store::{BlobOp, Blobs};
+use mako_rocksdb_store::{Durability, RocksBlobs, Snapshot};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -1,0 +1,70 @@
+    Updating crates.io index
+     Locking 41 packages to latest compatible versions
+      Adding aho-corasick v1.1.5
+      Adding bindgen v0.72.1
+      Adding bitflags v2.13.2
+      Adding bzip2-sys v0.1.13+1.0.8
+      Adding cc v1.11.3
+      Adding cexpr v0.6.0
+      Adding cfg-if v1.0.5
+      Adding clang-sys v1.9.1
+      Adding either v1.19.0
+      Adding find-msvc-tools v0.1.15
+      Adding getrandom v0.4.3
+      Adding glob v0.3.4
+      Adding itertools v0.13.0
+      Adding jobserver v0.1.35
+      Adding libc v0.2.191
+      Adding libloading v0.8.9
+      Adding librocksdb-sys v0.19.0+11.8.1
+      Adding libz-sys v1.1.33
+      Adding lz4-sys v1.11.1+lz4-1.10.0
+      Adding mako-rocksdb-store v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-store)
+      Adding memchr v2.8.3
+      Adding minimal-lexical v0.2.1
+      Adding nom v7.1.3
+      Adding pkg-config v0.3.34
+      Adding proc-macro2 v1.0.107
+      Adding quote v1.0.47
+      Adding r-efi v6.0.0
+      Adding regex v1.13.2
+      Adding regex-automata v0.4.19
+      Adding regex-syntax v0.8.12
+      Adding rocksdb v0.25.0
+      Adding rustc-hash v2.1.3
+      Adding rustflags v0.1.7
+      Adding self_cell v1.3.0
+      Adding shlex v1.3.0
+      Adding shlex v2.0.1
+      Adding syn v2.0.119
+      Adding unicode-ident v1.0.27
+      Adding vcpkg v0.2.15
+      Adding windows-link v0.2.1
+      Adding zstd-sys v2.2.0+zstd.1.6.0
+ Downloading crates ...
+  Downloaded unicode-ident v1.0.27
+  Downloaded libc v0.2.191
+   Compiling libc v0.2.191
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.5
+   Compiling bitflags v2.13.2
+   Compiling libloading v0.8.9
+   Compiling syn v2.0.119
+   Compiling jobserver v0.1.35
+   Compiling clang-sys v1.9.1
+   Compiling cc v1.11.3
+   Compiling lz4-sys v1.11.1+lz4-1.10.0
+   Compiling zstd-sys v2.2.0+zstd.1.6.0
+   Compiling libz-sys v1.1.33
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling bindgen v0.72.1
+   Compiling librocksdb-sys v0.19.0+11.8.1
+   Compiling rocksdb v0.25.0
+   Compiling mako-rocksdb-store v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-store)
+   Compiling raft-store v0.0.0 (/var/tmp/mako-shard-rust/src/deptran/raft/store)
+   Compiling rocksdb-compat-fixture v0.0.0 (/var/tmp/mako-shard-rust/build_rocks_crate/compat)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 14s
+     Running `build_rocks_crate/cargo/debug/rocksdb-compat-fixture read build_rocks_crate/legacy-8.9.1`
+legacy binary/empty rows, deletion, checkpoint and log WAL suffix preserved

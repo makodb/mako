@@ -19,18 +19,13 @@ compile() {
 components() {
     cmake --build "$build" --parallel "$jobs" --target \
         rust_sto_transaction_tests rust_support_tests rust_masstree_tests \
-        rust_application_adapter_tests rust_cache_tests
+        masstree_tx_tests masstree_tx_quality
 }
 storage() {
     cmake -S "$root" -B "$build/storage-tests" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DMAKO_STORAGE_TESTS_ONLY=ON
     cmake --build "$build/storage-tests" --parallel "$jobs"
     ctest --test-dir "$build/storage-tests" --output-on-failure --parallel "$jobs"
-}
-health() {
-    python3 scripts/ci/run_mako_engine_native_health_proof.py \
-        --build-dir "$build" --libcxx-dir "${LIBCXX_DIR:-/usr/lib/llvm-22/lib}" \
-        --output-dir "$(mktemp -d "$build/native-health-XXXXXXXX")/proof"
 }
 quality() {
     cmake --build "$build" --parallel "$jobs" --target rust_native_quality
@@ -63,7 +58,7 @@ audit() {
     cmake --build "$build" --target rust_native_dependency_audit
 }
 case "${1:-all}" in
-    compile|components|storage|health|quality|runtime|workloads|srpc|proofs|audit) "$1" ;;
-    all) compile; components; storage; health; quality; runtime; workloads; audit ;;
-    *) echo "usage: $0 [all|compile|components|storage|health|quality|runtime|workloads|srpc|proofs|audit]" >&2; exit 2 ;;
+    compile|components|storage|quality|runtime|workloads|srpc|proofs|audit) "$1" ;;
+    all) compile; components; storage; quality; runtime; workloads; audit ;;
+    *) echo "usage: $0 [all|compile|components|storage|quality|runtime|workloads|srpc|proofs|audit]" >&2; exit 2 ;;
 esac

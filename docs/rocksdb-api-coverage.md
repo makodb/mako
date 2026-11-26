@@ -1,5 +1,9 @@
 # RocksDB C API coverage
 
+> Historical document. The standalone cache API and its tooling are retired.
+> See the [supported storage composition](mako-book.md#supported-storage-composition)
+> and [Rust RocksDB compatibility](mako-book.md#rust-rocksdb-compatibility).
+
 What `mrxdb_rocksdb_compat.h` covers of `rocksdb/c.h`, and what it does
 not. Generated against the header this build actually links
 (`/usr/include/rocksdb/c.h`); regenerate with

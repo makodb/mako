@@ -1,0 +1,148 @@
+{
+  "passed": true,
+  "programs": {
+    "mako_node": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_node",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_cache_retirement/libmako_native_storage.a",
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "mako_bench": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_bench",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_cache_retirement/libmako_native_storage.a",
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "mako_transactions": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_transactions",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_cache_retirement/libmako_native_storage.a",
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "mako_redis": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_redis",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_cache_retirement/libmako_native_storage.a",
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "mako_convert": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_convert",
+      "project_archives": []
+    },
+    "mako_client": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_client",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "mako_admin": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/mako_admin",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "rocksdb_raft_server": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/rocksdb_raft_server",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "rocksdb_raft_client": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/rocksdb_raft_client",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    },
+    "rocksdb_raft_bench": {
+      "executable": "/var/tmp/mako-shard-rust/build_retired/cargo/release/rocksdb_raft_bench",
+      "project_archives": [
+        "/var/tmp/mako-shard-rust/build_retired/cargo/release/build/srpc-2e091b0dfbbdc424/out/libsrpc_native.a"
+      ]
+    }
+  },
+  "native_libraries": [
+    "c++",
+    "c++abi",
+    "jemalloc",
+    "mako_native_storage",
+    "numa",
+    "pthread",
+    "rocksdb",
+    "srpc_native"
+  ],
+  "native_compiler_dependencies": [
+    "src/mako/allocator.cc",
+    "src/mako/allocator.h",
+    "src/mako/amd64.h",
+    "src/mako/config/config-perf.h",
+    "src/mako/core.cc",
+    "src/mako/core.h",
+    "src/mako/counter.cc",
+    "src/mako/counter.h",
+    "src/mako/imstring.h",
+    "src/mako/lockguard.h",
+    "src/mako/log2.hh",
+    "src/mako/macros.h",
+    "src/mako/masstree_btree.h",
+    "src/mako/ownership_checker.h",
+    "src/mako/prefetch.h",
+    "src/mako/pxqueue.h",
+    "src/mako/rcu.cc",
+    "src/mako/rcu.h",
+    "src/mako/runtime/thread_registration.cc",
+    "src/mako/runtime/thread_registration.hh",
+    "src/mako/silo_runtime.cc",
+    "src/mako/silo_runtime.h",
+    "src/mako/silo_small_vector.h",
+    "src/mako/spinlock.h",
+    "src/mako/static_vector.h",
+    "src/mako/storage/mtree_abi.cc",
+    "src/mako/storage/mtree_abi.h",
+    "src/mako/ticker.cc",
+    "src/mako/ticker.h",
+    "src/mako/util.h",
+    "src/mako/varkey.h",
+    "src/masstree/btree_leaflink.hh",
+    "src/masstree/circular_int.hh",
+    "src/masstree/compiler.cc",
+    "src/masstree/compiler.hh",
+    "src/masstree/hashcode.hh",
+    "src/masstree/json.cc",
+    "src/masstree/json.hh",
+    "src/masstree/kpermuter.hh",
+    "src/masstree/ksearch.hh",
+    "src/masstree/kvthread.cc",
+    "src/masstree/kvthread.hh",
+    "src/masstree/masstree.hh",
+    "src/masstree/masstree_context.cc",
+    "src/masstree/masstree_context.h",
+    "src/masstree/masstree_get.hh",
+    "src/masstree/masstree_insert.hh",
+    "src/masstree/masstree_key.hh",
+    "src/masstree/masstree_print.hh",
+    "src/masstree/masstree_remove.hh",
+    "src/masstree/masstree_scan.hh",
+    "src/masstree/masstree_split.hh",
+    "src/masstree/masstree_struct.hh",
+    "src/masstree/masstree_tcursor.hh",
+    "src/masstree/memdebug.hh",
+    "src/masstree/mtcounters.hh",
+    "src/masstree/nodeversion.hh",
+    "src/masstree/small_vector.hh",
+    "src/masstree/str.cc",
+    "src/masstree/str.hh",
+    "src/masstree/straccum.cc",
+    "src/masstree/straccum.hh",
+    "src/masstree/string.cc",
+    "src/masstree/string.hh",
+    "src/masstree/string_base.hh",
+    "src/masstree/string_slice.hh",
+    "src/masstree/stringbag.hh",
+    "src/masstree/timestamp.hh"
+  ],
+  "rust_archives_checked": 33
+}

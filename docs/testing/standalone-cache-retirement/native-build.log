@@ -1,0 +1,177 @@
+[1/39] Scanning /var/tmp/mako-shard-rust/src/masstree/compiler.cc for CXX dependencies
+[2/39] Scanning /var/tmp/mako-shard-rust/src/mako/runtime/thread_registration.cc for CXX dependencies
+[3/39] Scanning /usr/lib/llvm-22/share/libc++/v1/std.compat.cppm for CXX dependencies
+[4/39] Scanning /var/tmp/mako-shard-rust/src/masstree/str.cc for CXX dependencies
+[5/39] Scanning /var/tmp/mako-shard-rust/src/masstree/string.cc for CXX dependencies
+[6/39] Scanning /var/tmp/mako-shard-rust/src/masstree/json.cc for CXX dependencies
+[7/39] Scanning /var/tmp/mako-shard-rust/src/masstree/straccum.cc for CXX dependencies
+[8/39] Scanning /var/tmp/mako-shard-rust/src/masstree/masstree_context.cc for CXX dependencies
+[9/39] Scanning /var/tmp/mako-shard-rust/src/masstree/kvthread.cc for CXX dependencies
+[10/39] Scanning /var/tmp/mako-shard-rust/src/mako/ticker.cc for CXX dependencies
+[11/39] Scanning /var/tmp/mako-shard-rust/src/mako/counter.cc for CXX dependencies
+[12/39] Scanning /var/tmp/mako-shard-rust/src/mako/allocator.cc for CXX dependencies
+[13/39] Scanning /var/tmp/mako-shard-rust/src/mako/rcu.cc for CXX dependencies
+[14/39] Scanning /var/tmp/mako-shard-rust/src/mako/core.cc for CXX dependencies
+[15/39] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc for CXX dependencies
+[16/39] Scanning /var/tmp/mako-shard-rust/src/mako/silo_runtime.cc for CXX dependencies
+[17/39] Scanning /usr/lib/llvm-22/share/libc++/v1/std.cppm for CXX dependencies
+[18/39] Generating CXX dyndep file CMakeFiles/__cmake_cxx_std_23.dir/CXX.dd
+[19/39] Generating CXX dyndep file CMakeFiles/mako_native_storage.dir/CXX.dd
+[20/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/compiler.cc.o
+[21/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/runtime/thread_registration.cc.o
+[22/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/str.cc.o
+[23/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/straccum.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.cc:45:
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.hh:25:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[24/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/ticker.cc.o
+[25/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/core.cc.o
+[26/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/json.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.cc:27:
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.hh:23:
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.hh:25:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.cc:27:
+/var/tmp/mako-shard-rust/src/masstree/json.hh:781:28: warning: binding dereferenced null pointer to reference has undefined behavior [-Wnull-dereference]
+  781 |         : value_(String(), *(Json*) 0) {
+      |                            ^~~~~~~~~~
+/var/tmp/mako-shard-rust/src/masstree/json.hh:814:42: warning: binding dereferenced null pointer to reference has undefined behavior [-Wnull-dereference]
+  814 |         : j_(j), i_(i), value_(String(), *(Json*) 0) {
+      |                                          ^~~~~~~~~~
+/var/tmp/mako-shard-rust/src/masstree/json.hh:1533:12: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+ 1533 |     memset(&x, 0, sizeof(x));
+      |            ^
+/var/tmp/mako-shard-rust/src/masstree/json.hh:1533:12: note: explicitly cast the pointer to silence this warning
+ 1533 |     memset(&x, 0, sizeof(x));
+      |            ^
+      |            (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:139:20: warning: first argument in call to 'memcpy' is a pointer to non-trivially copyable type 'ObjectItem' [-Wnontrivial-memcall]
+  139 |             memcpy(oi, ob, sizeof(ObjectItem));
+      |                    ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:139:20: note: explicitly cast the pointer to silence this warning
+  139 |             memcpy(oi, ob, sizeof(ObjectItem));
+      |                    ^
+      |                    (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:292:28: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  292 |                     memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (i + 1 - u_.a.x->size));
+      |                            ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:292:28: note: explicitly cast the pointer to silence this warning
+  292 |                     memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (i + 1 - u_.a.x->size));
+      |                            ^
+      |                            (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:367:17: warning: first argument in call to 'memmove' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  367 |         memmove(&u_.a.x->a[pos + 1], &u_.a.x->a[pos], (size - pos) * sizeof(Json));
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:367:17: note: explicitly cast the pointer to silence this warning
+  367 |         memmove(&u_.a.x->a[pos + 1], &u_.a.x->a[pos], (size - pos) * sizeof(Json));
+      |                 ^
+      |                 (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:381:21: warning: first argument in call to 'memmove' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  381 |             memmove(&u_.a.x->a[fpos], &u_.a.x->a[lpos],
+      |                     ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:381:21: note: explicitly cast the pointer to silence this warning
+  381 |             memmove(&u_.a.x->a[fpos], &u_.a.x->a[lpos],
+      |                     ^
+      |                     (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:558:20: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  558 |             memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (x + 1 - u_.a.x->size));
+      |                    ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:558:20: note: explicitly cast the pointer to silence this warning
+  558 |             memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (x + 1 - u_.a.x->size));
+      |                    ^
+      |                    (void*)
+11 warnings generated.
+[27/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/counter.cc.o
+[28/39] Building CXX object CMakeFiles/__cmake_cxx_std_23.dir/usr/lib/llvm-22/share/libc++/v1/std.cppm.o
+/usr/lib/llvm-22/share/libc++/v1/std.cppm:167:15: warning: 'std' is a reserved name for a module [-Wreserved-module-identifier]
+  167 | export module std;
+      |               ^
+1 warning generated.
+[29/39] Building CXX object CMakeFiles/__cmake_cxx_std_23.dir/usr/lib/llvm-22/share/libc++/v1/std.compat.cppm.o
+/usr/lib/llvm-22/share/libc++/v1/std.compat.cppm:83:15: warning: 'std' is a reserved name for a module [-Wreserved-module-identifier]
+   83 | export module std.compat;
+      |               ^
+1 warning generated.
+[30/39] Linking CXX static library lib__cmake_cxx_std_23.a
+[31/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_abi.cc.o
+In file included from /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc:7:
+In file included from /var/tmp/mako-shard-rust/src/mako/masstree_btree.h:31:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_scan.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_tcursor.hh:23:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_key.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree.hh:24:
+In file included from /var/tmp/mako-shard-rust/src/masstree/ksearch.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/kpermuter.hh:22:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[32/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/kvthread.cc.o
+/var/tmp/mako-shard-rust/src/masstree/kvthread.cc:49:12: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'threadinfo' [-Wnontrivial-memcall]
+   49 |     memset(this, 0, sizeof(*this));
+      |            ^
+/var/tmp/mako-shard-rust/src/masstree/kvthread.cc:49:12: note: explicitly cast the pointer to silence this warning
+   49 |     memset(this, 0, sizeof(*this));
+      |            ^
+      |            (void*)
+1 warning generated.
+[33/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/masstree_context.cc.o
+[34/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/string.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/string.cc:50:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[35/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/allocator.cc.o
+[36/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/rcu.cc.o
+In file included from /var/tmp/mako-shard-rust/src/mako/rcu.cc:12:
+In file included from /var/tmp/mako-shard-rust/src/mako/rcu.h:18:
+/var/tmp/mako-shard-rust/src/mako/pxqueue.h:78:33: warning: 'iterator<std::__1::forward_iterator_tag, rcu::delete_entry>' is deprecated [-Wdeprecated-declarations]
+   78 |   class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
+      |                                 ^
+/var/tmp/mako-shard-rust/src/mako/rcu.cc:252:20: note: in instantiation of template class 'basic_px_queue<rcu::delete_entry, 4096>::iterator_<basic_px_group<rcu::delete_entry, 4096>, rcu::delete_entry>' requested here
+  252 |   for (auto it = q.begin(); it != q.end(); ++it, ++n) {
+      |                    ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__iterator/iterator.h:23:8: note: 'iterator<std::__1::forward_iterator_tag, rcu::delete_entry>' has been explicitly marked deprecated here
+   23 | struct _LIBCPP_DEPRECATED_IN_CXX17 iterator {
+      |        ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__config:540:41: note: expanded from macro '_LIBCPP_DEPRECATED_IN_CXX17'
+  540 | #    define _LIBCPP_DEPRECATED_IN_CXX17 _LIBCPP_DEPRECATED
+      |                                         ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__config:504:49: note: expanded from macro '_LIBCPP_DEPRECATED'
+  504 | #      define _LIBCPP_DEPRECATED __attribute__((__deprecated__))
+      |                                                 ^
+1 warning generated.
+[37/39] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/silo_runtime.cc.o
+[38/39] Linking CXX static library libmako_native_storage.a
+[39/39] cd /var/tmp/mako-shard-rust && /usr/bin/python3.12 /var/tmp/mako-shard-rust/scripts/check_native_rust_build.py --build /var/tmp/mako-shard-rust/build_cache_retirement --archive /var/tmp/mako-shard-rust/build_cache_retirement/libmako_native_storage.a --nm /usr/bin/llvm-nm-22
+native source audit: 15 storage sources; no application or generated C++

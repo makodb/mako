@@ -10,9 +10,10 @@ import json
 import os
 import subprocess
 
-NAMES = ('upper','components','replication','srpc','integration','extended','miri')
+NAMES = ('upper','components','masstree_tx','replication','srpc','integration','extended','miri')
 CONTRACTS = ('crates/mako-protocol/src/contracts.rs', 'crates/mako-protocol/src/wire.rs', 'crates/mako-protocol-core/',
-             'crates/mako-engine-api/', 'crates/shard-host-core/',
+             'crates/mako-protocol/src/range_lock.rs', 'src/cluster/range_lock.rs',
+             'crates/mako-storage-api/', 'crates/shard-host-core/',
              'src/cluster/storage.rs','src/cluster/transfer.rs','src/cluster/types.rs')
 
 def select(paths, event='pull_request'):
@@ -29,7 +30,7 @@ def select(paths, event='pull_request'):
         elif path.startswith('tla/mako/'):
             gates['upper']=gates['extended']=True
         elif path.startswith(CONTRACTS):
-            for name in ('upper','components','replication','srpc','integration'): gates[name]=True
+            for name in ('upper','components','masstree_tx','replication','srpc','integration'): gates[name]=True
         elif path.startswith(('src/cluster/runtime', 'src/cluster/host', 'src/cluster/ffi',
                               'src/cluster/wire', 'src/cluster/metadata', 'src/cluster/rocks_metadata',
                               'src/cluster/gateway_ffi', 'src/cluster/lib.rs', 'src/cluster/Cargo.')):
@@ -40,14 +41,18 @@ def select(paths, event='pull_request'):
         elif path.startswith(('src/srpc/','third-party/rusty-cpp/','third-party/lion/')):
             gates['srpc']=gates['integration']=True
         elif path.startswith(('src/deptran/raft/','crates/raft-host/','crates/sto-rocksdb/',
-                              'crates/rocksdb-raft-service/','ci/rocksdb_raft.sh')):
+                              'crates/mako-rocksdb-store/','ci/replication.sh','cmake/RocksdbRuntime.cmake')):
             gates['replication']=gates['integration']=True
         elif path.startswith(('crates/mako-runtime/','examples/','tests/')):
             gates['integration']=True
+        elif path.startswith(('crates/sto-masstree/','crates/sto-tpcc-ffi/',
+                              'ci/masstree_tx.sh','cmake/MasstreeTransaction.cmake',
+                              'scripts/check_masstree_tx_component.py',
+                              'scripts/tests/test_masstree_tx_component.py')):
+            gates['masstree_tx']=gates['integration']=True
         elif path.startswith(('crates/sto-','crates/masstree/','crates/mtree-sys/',
-                              'crates/mtx-sys/','crates/mrx','crates/mako-cache',
                               'src/masstree/','src/sto/')):
-            gates['components']=gates['integration']=True
+            gates['components']=gates['masstree_tx']=gates['integration']=True
             if path.startswith(('crates/sto-core/','crates/sto-test-datatypes/')): gates['miri']=True
         else:
             for name in NAMES: gates[name]=True

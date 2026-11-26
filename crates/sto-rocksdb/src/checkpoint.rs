@@ -4,8 +4,8 @@ use crate::database::{
     durability, format_bytes, read_position, required_u64, Generation, FORMAT, GENERATION,
 };
 use crate::{mutex, Database, Error, Position, Result};
-use mrx_core::Blobs;
-use mrx_rocks::RocksBlobs;
+use mako_rocksdb_store::Blobs;
+use mako_rocksdb_store::RocksBlobs;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};

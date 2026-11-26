@@ -11,8 +11,7 @@ test-hooks = []
 
 [dependencies]
 sto-core = { path = "../sto-core", default-features = false }
-mrx-core = { path = "../mrx-core", default-features = false }
-mrx-rocks = { path = "../mrx-rocks", default-features = false, features = ["required-native"] }
+mako-rocksdb-store = { path = "../mako-rocksdb-store", default-features = false }
 sha2 = "0.10"
 
 [dev-dependencies]

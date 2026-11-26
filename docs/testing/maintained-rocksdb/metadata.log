@@ -1,0 +1,516 @@
+    Updating crates.io index
+     Locking 31 packages to latest compatible versions
+      Adding aho-corasick v1.1.5
+      Adding bindgen v0.72.1
+      Adding bzip2-sys v0.1.13+1.0.8
+      Adding cc v1.11.3
+      Adding cexpr v0.6.0
+      Adding clang-sys v1.9.1
+      Adding either v1.19.0
+      Adding find-msvc-tools v0.1.15
+      Adding getrandom v0.4.3
+      Adding glob v0.3.4
+      Adding itertools v0.13.0
+      Adding jobserver v0.1.35
+      Adding libloading v0.8.9
+      Adding librocksdb-sys v0.19.0+11.8.1
+      Adding libz-sys v1.1.33
+      Adding lz4-sys v1.11.1+lz4-1.10.0
+      Adding memchr v2.8.3
+      Adding minimal-lexical v0.2.1
+      Adding nom v7.1.3
+      Adding pkg-config v0.3.34
+      Adding r-efi v6.0.0
+      Adding regex v1.13.2
+      Adding regex-automata v0.4.19
+      Adding regex-syntax v0.8.12
+      Adding rocksdb v0.25.0
+      Adding rustc-hash v2.1.3
+      Adding rustflags v0.1.7
+      Adding shlex v1.3.0
+      Adding shlex v2.0.1
+      Adding vcpkg v0.2.15
+      Adding zstd-sys v2.2.0+zstd.1.6.0
+    Blocking waiting for file lock on build directory
+   Compiling libc v0.2.190
+   Compiling unicode-ident v1.0.26
+   Compiling cfg-if v1.0.5
+   Compiling verus_syn v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling verus_prettyplease v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling smallvec v1.16.2
+   Compiling vstd v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling verus_builtin v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling libloading v0.8.9
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v2.0.119
+   Compiling jobserver v0.1.35
+   Compiling clang-sys v1.9.1
+   Compiling parking_lot_core v0.9.12
+   Compiling cc v1.11.3
+   Compiling parking_lot v0.12.5
+   Compiling synstructure v0.13.2
+   Compiling bindgen v0.72.1
+   Compiling zstd-sys v2.2.0+zstd.1.6.0
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling libz-sys v1.1.33
+   Compiling lz4-sys v1.11.1+lz4-1.10.0
+   Compiling verus_state_machines_macros v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling verus_builtin_macros v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a)
+   Compiling librocksdb-sys v0.19.0+11.8.1
+   Compiling rocksdb v0.25.0
+   Compiling mako-sharding v0.1.0 (/var/tmp/mako-shard-rust/src/cluster)
+warning: unused import: `self`
+ --> durable_participant_history.rs:6:22
+  |
+6 | use crate::storage::{self,Image};
+  |                      ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `DurableKv`, `Namespace`, and `self`
+ --> durable_participant_history.rs:7:25
+  |
+7 | use crate::durable_kv::{self,DurableKv,Namespace};
+  |                         ^^^^ ^^^^^^^^^ ^^^^^^^^^
+
+warning: unused imports: `Operation` and `self`
+ --> durable_participant_history.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^ ^^^^^^^^^
+
+warning: unused imports: `ActorHistory`, `NativeStep`, and `self`
+ --> durable_participant_history.rs:9:28
+  |
+9 | use super::replay_proofs::{self,ActorHistory,NativeStep};
+  |                            ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `crate::leases`
+ --> durable_participant_replay.rs:7:5
+  |
+7 | use crate::leases;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `self`
+ --> durable_participant_replay.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^
+
+warning: unused variable: `n`
+   --> directory.rs:153:22
+    |
+153 |         let (mut out,n) = self.copy_prefix(lo);
+    |                      ^ help: if this is intentional, prefix it with an underscore: `_n`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `hi`
+   --> participant_metadata.rs:558:21
+    |
+558 |         if let Some(hi) = &range.hi {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_hi`
+
+warning: value assigned to `after` is never read
+   --> storage.rs:256:34
+    |
+256 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+318 |             after = Some(row);
+    |             ----- `after` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `after` is never read
+   --> storage.rs:345:34
+    |
+345 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+367 |         after = Some(row);
+    |         ----- `after` is overwritten here before the previous value is read
+
+warning: unused variable: `plan`
+   --> transfer.rs:107:22
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> transfer.rs:107:43
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                                           ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `plan`
+   --> transfer.rs:110:25
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> transfer.rs:110:46
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `cleanup`
+   --> transfer.rs:110:67
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cleanup`
+
+warning: unused variable: `raw`
+   --> transfer.rs:277:13
+    |
+277 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> transfer.rs:329:13
+    |
+329 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `value`
+   --> full_scan_core.rs:251:17
+    |
+251 |             let value = match read_blob(&mut reader) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `status`
+   --> full_scan_core.rs:951:21
+    |
+951 |                 let status = self.request.bounds.advance(last);
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `status`
+   --> full_scan_core.rs:955:13
+    |
+955 |         let status = self.completion.complete(page.count,page.eof,page.stopped);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `a`
+    --> full_scan_core.rs:1016:13
+     |
+1016 |         let a = bytes.write_u32(PAGE_TAG);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> full_scan_core.rs:1017:13
+     |
+1017 |         let b = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+    --> full_scan_core.rs:1018:13
+     |
+1018 |         let c = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+    --> full_scan_core.rs:1019:13
+     |
+1019 |         let d = bytes.write_u64(request.identity.snapshot_version);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+warning: unused variable: `a`
+    --> full_scan_core.rs:1058:13
+     |
+1058 |         let a = self.bytes.write_bytes(key);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> full_scan_core.rs:1059:13
+     |
+1059 |         let b = self.bytes.write_bytes(value);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `payload`
+   --> durable_kv.rs:413:17
+    |
+413 |             let payload = match decode_record(&bytes) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `node_count`
+   --> durable_coordinator.rs:136:9
+    |
+136 |     let node_count = nodes.len();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_count`
+
+warning: unused variable: `table_count`
+   --> durable_coordinator.rs:137:9
+    |
+137 |     let table_count = tables.len();
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_table_count`
+
+warning: unused variable: `response`
+   --> durable_coordinator.rs:174:9
+    |
+174 |     let response = match apply(actor,op) { Ok(r) => r, Err(e) => return Err(e) };
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response`
+
+warning: unused variable: `raw`
+   --> durable_engine.rs:222:9
+    |
+222 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> durable_engine.rs:256:9
+    |
+256 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: variable `status` is assigned to, but never used
+    --> durable_participant.rs:1062:13
+     |
+1062 |         let mut status=Status::Ok;
+     |             ^^^^^^^^^^
+     |
+     = note: consider using `_status` instead
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1073:17
+     |
+1073 |                 status=self.actor.deliver(&plan,command).status;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1075:48
+     |
+1075 |             Operation::Begin{id,incarnation}=>{status=self.begin_origin(id,incarnation);}
+     |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1076:38
+     |
+1076 |             Operation::Resolve(id)=>{status=self.actor.resolve(id);}
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1077:37
+     |
+1077 |             Operation::Finish(id)=>{status=self.actor.finish(id);}
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1079:17
+     |
+1079 | / ...   status=if point{
+1080 | | ...       if range.hi.is_some(){return false;}self.actor.acquire(id,range.table,&range.lo,grant)
+1081 | | ...   }else{self.actor.acquire_range(id,range.table,&range.lo,match &range.hi{Some(h)=>Some(h.as_slice()),None=>None},grant)};
+     | |_____________________________________________________________________________________________________________________________^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1083:55
+     |
+1083 |             Operation::Release{id,table,coordinate}=>{status=self.actor.release(id,table,&coordinate);}
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> durable_participant.rs:1114:63
+     |
+1114 |                 if result.certificate.is_none(){return false;}status=result.status;
+     |                                                               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: fields `query`, `expected`, and `taken` are never read
+   --> full_scan_core.rs:800:5
+    |
+793 | pub struct PageCursor<'a> {
+    |            ---------- fields in this struct
+...
+800 |     query: Ghost<Request>,
+    |     ^^^^^
+801 |     snapshot_version: u64,
+802 |     expected: Ghost<Seq<WireRow>>,
+    |     ^^^^^^^^
+803 |     taken: Ghost<Seq<WireRow>>,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `rows` is never read
+   --> full_scan_core.rs:979:5
+    |
+971 | pub struct Page {
+    |            ---- field in this struct
+...
+979 |     rows: Ghost<Seq<WireRow>>,
+    |     ^^^^
+
+warning: fields `window` and `initial` are never read
+   --> durable_engine.rs:161:5
+    |
+158 | pub struct DurableRows<'a,E:DurableEngine>{
+    |            ----------- fields in this struct
+...
+161 |     window:Ghost<KeyRange>,
+    |     ^^^^^^
+162 |     initial:Ghost<E>,
+    |     ^^^^^^^
+
+warning: fields `index`, `records`, and `fact` are never read
+  --> durable_participant.rs:84:5
+   |
+80 | pub(crate) struct ReplayCompletion<'a> {
+   |                   ---------------- fields in this struct
+...
+84 |     index:u64,
+   |     ^^^^^
+85 |     records:Ghost<Seq<Seq<u8>>>,
+   |     ^^^^^^^
+86 |     fact:Ghost<CompletionFact>,
+   |     ^^^^
+
+warning: `mako-sharding` (lib) generated 44 warnings (run `cargo fix --lib -p mako-sharding` to apply 30 suggestions)
+warning: variants `NotCommitted`, `UnknownAbort`, and `UnknownCommit` are never constructed
+  --> examples/../durable_test_store.rs:14:5
+   |
+11 | pub enum Fault {
+   |          ----- variants in this enum
+...
+14 |     NotCommitted,
+   |     ^^^^^^^^^^^^
+15 |     UnknownAbort,
+   |     ^^^^^^^^^^^^
+16 |     UnknownCommit,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `Fault` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `corrupt` is never used
+   --> examples/../durable_test_store.rs:157:12
+    |
+ 74 | impl DiskKv {
+    | ----------- method in this implementation
+...
+157 |     pub fn corrupt(&mut self, key: Vec<u8>, value: Option<Vec<u8>>) {
+    |            ^^^^^^^
+
+warning: methods `physical_version` and `decide` are never used
+   --> examples/../durable_test_engine.rs:91:12
+    |
+ 58 | impl DiskEngine {
+    | --------------- methods in this implementation
+...
+ 91 |     pub fn physical_version(&self, table: u64, coordinate: &[u8], raw: &[u8]) -> u64 {
+    |            ^^^^^^^^^^^^^^^^
+...
+141 |     pub fn decide(&mut self, id: TxnId, commit: bool) {
+    |            ^^^^^^
+
+warning: `mako-sharding` (lib test) generated 44 warnings (44 duplicates)
+warning: `mako-sharding` (example "durable_recovery") generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6m 00s
+     Running unittests lib.rs (build_rocks_crate/cargo/debug/deps/mako_sharding-39cd1d1ea9458fc7)
+
+running 69 tests
+test durable_recovery_tests::admission_exhaustion_does_not_wrap_or_overwrite_records ... ok
+test durable_recovery_tests::authority_namespaces_and_admission_tokens_cannot_alias ... ok
+test durable_recovery_tests::every_native_phase_recovers_without_resetting_nonce_or_generation ... ok
+test durable_recovery_tests::failed_engine_replay_cannot_open_a_metadata_only_participant ... ok
+test durable_recovery_tests::failed_settlement_and_unknown_admission_never_open_serving ... ok
+test durable_recovery_tests::late_ready_after_abort_recovers_the_abort_and_cleans_the_private_copy ... ok
+test durable_recovery_tests::lost_lease_reply_without_engine_work_requires_a_durable_identity_fence ... ok
+test durable_recovery_tests::missing_or_malformed_committed_record_never_becomes_fresh_state ... ok
+test durable_recovery_tests::ready_recovers_only_if_its_post_copy_completion_record_committed ... ok
+test durable_recovery_tests::recovery_retains_old_leases_until_exact_durable_transaction_settlement ... ok
+test durable_recovery_tests::uncertain_copy_never_recovers_ready_from_a_partial_destination ... ok
+test durable_recovery_tests::uncertain_native_decision_is_resolved_before_route_publication ... ok
+test durable_recovery_tests::unknown_append_replays_only_the_settled_atomic_prefix ... ok
+test durable_recovery_tests::unknown_bootstrap_is_either_absent_or_a_complete_initial_prefix ... ok
+test durable_recovery_tests::unknown_cleanup_resumes_and_old_completion_cannot_delete_returned_ownership ... ok
+test epoch_admission::tests::authoritative_copy_includes_physical_aliases_and_absences_not_routing_domain ... ok
+test epoch_admission::tests::background_control_guards_track_entire_role_and_round_without_leases ... ok
+test epoch_admission::tests::late_request_uses_receiver_capture_not_sender_snapshot_number ... ok
+test epoch_admission::tests::matching_foreign_snapshot_label_never_proves_owner_incarnation_or_coordinate ... ok
+test epoch_admission::tests::old_capture_authorizes_new_accesses_after_freeze_but_fresh_capture_rejects ... ok
+test epoch_admission::tests::whole_ranges_detect_interior_frozen_holes_and_remote_suffixes ... ok
+test ffi::read_cache_tests::admitted_views_survive_stop_or_fence_but_new_admissions_fail ... ok
+test ffi::read_cache_tests::cache_refreshes_on_owner_change_and_fails_closed_on_invalid_epoch_or_stop ... ok
+test ffi::read_cache_tests::exhausted_ids_fail_closed_and_failed_refresh_preserves_cached_view ... ok
+test ffi::read_cache_tests::exported_reads_reject_invalid_closed_and_foreign_handles ... ok
+test ffi::read_cache_tests::identity_tracks_full_views_not_epochs_or_routing_labels ... ok
+test ffi::read_cache_tests::retained_and_same_epoch_views_survive_freeze_until_refresh ... ok
+test full_scan::tests::binary_cursor_and_explicit_eof ... ok
+test full_scan::tests::byte_full_page_and_callback_stop_are_terminal_without_replay ... ok
+test full_scan::tests::exact_page_limit_and_request_roundtrip ... ok
+test full_scan::tests::identity_roundtrip_distinguishes_fixed_empty_and_rejects_relabeling ... ok
+test full_scan::tests::oversized_and_out_of_range_rows_are_errors_not_eof ... ok
+test full_scan::tests::raw_identity_does_not_bound_raw_keys_to_coordinate_capacity ... ok
+test full_scan::tests::reverse_boundary_early_stop_and_malformed_page ... ok
+test full_scan::tests::reverse_pages_resume_strictly_below_exact_binary_cursor ... ok
+test full_scan::tests::unbounded_reverse_discovers_real_maximum_and_preserves_empty_key ... ok
+test full_scan::tests::wrong_snapshot_page_is_rejected_before_callbacks ... ok
+test gateway::tests::changed_grant_and_inflight_cannot_execute ... ok
+test gateway::tests::discovery_binds_route_pair_once_and_never_invents_provenance ... ok
+test gateway::tests::lost_success_is_replayed_and_old_sequence_is_fenced ... ok
+test gateway::tests::only_forwarded_transport_ambiguity_can_resume_identical_request ... ok
+test gateway::tests::sdk_timeout_keeps_identity_and_exhaustion_never_wraps ... ok
+test gateway::tests::session_control_replays_and_never_undoes_operations ... ok
+test gateway::tests::snapshot_relabeling_cannot_resume_or_replay ... ok
+test gateway_ffi::tests::versioned_wire_preserves_pair_and_rejects_unknown_provenance ... ok
+test metadata_tests::coordinator_decision_and_nonce_survive_close_reopen_without_resuming ... ok
+test metadata_tests::existing_database_without_consumer_bootstrap_is_not_fresh_metadata ... [shard metadata] initializing metadata namespace: directory already exists; refusing replacement
+[shard metadata] initializing metadata namespace: directory already exists; refusing replacement
+ok
+test metadata_tests::live_nonce_retries_bind_every_intent_field_with_and_without_persistence ... ok
+test metadata_tests::malformed_committed_participant_payload_refuses_startup ... [shard metadata] initializing metadata namespace: directory already exists; refusing replacement
+ok
+test metadata_tests::missing_or_wrong_identity_metadata_never_falls_back_to_genesis ... [shard metadata] locating metadata namespace: No such file or directory (os error 2)
+[shard metadata] locating metadata namespace: No such file or directory (os error 2)
+ok
+test metadata_tests::participant_incomplete_journal_is_retained_without_any_append_admission ... ok
+test metadata_tests::pending_coordinator_remains_inspectable_but_cannot_be_driven_after_reopen ... ok
+test rocks_metadata::tests::lifetime_lock_and_fence_survive_a_real_close_reopen_gap ... [shard metadata] locking metadata namespace: another writer owns the namespace
+[shard metadata] reopening RocksDB metadata: Invalid argument: /tmp/mako-rocks-metadata-4787-0/owner-7/participant/CURRENT: does not exist (create_if_missing is false)
+[shard metadata] locking metadata namespace: another writer owns the namespace
+ok
+test rocks_metadata::tests::mixed_atomic_batch_retains_order_empty_values_and_deletes_on_reopen ... ok
+test rocks_metadata::tests::real_sst_corruption_is_io_not_absence ... [shard metadata] reading metadata: Corruption: block checksum mismatch: stored(context removed) = 1403045293, computed = 3001940948, type = 4  in /tmp/mako-rocks-metadata-4787-2/owner-7/participant/000009.sst offset 0 size 51, block_type = Data
+ok
+test rocks_metadata::tests::strict_creation_recovery_and_writer_exclusion ... [shard metadata] locating metadata namespace: No such file or directory (os error 2)
+[shard metadata] initializing metadata namespace: directory already exists; refusing replacement
+[shard metadata] locking metadata namespace: another writer owns the namespace
+[shard metadata] opening metadata writer lock: No such file or directory (os error 2)
+[shard metadata] initializing metadata namespace: directory already exists; refusing replacement
+ok
+test routing::tests::retained_snapshot_capture_never_relabels_old_grant ... ok
+test runtime::tests::cached_warehouse_handle_never_caches_its_ownership_grant ... ok
+test runtime::tests::captured_warehouse_selection_does_not_require_a_routing_snapshot ... ok
+test runtime::tests::captured_warehouse_selection_survives_departure_and_return_without_recapture ... ok
+test runtime::tests::concurrent_publication_keeps_retained_snapshots_whole_and_routes_current ... ok
+test runtime::tests::racing_warehouse_misses_share_one_index_without_aliasing_participants_or_proxies ... ok
+test runtime::tests::release_before_node_start_forgets_only_the_matching_raw_handle ... ok
+test transfer::tests::all_equal_final_completes_without_entering_faulting_physical_mutation ... ok
+test transfer::tests::equal_rows_do_not_consume_a_physical_fault_or_hide_a_changed_row_failure ... ok
+test transfer::tests::final_reconciles_updates_inserts_deletes_and_extras_without_rewriting_equal_rows ... ok
+test transfer::tests::native_frozen_capture_checks_metadata_without_claiming_a_lease_drain ... ok
+test transfer::tests::old_precopy_is_fenced_after_final_abort_and_a_new_generation ... ok
+test transfer::tests::precopy_checks_entire_envelope_range_and_row_before_touching_storage ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.96s
+
+   Doc-tests mako_sharding
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

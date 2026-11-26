@@ -186,6 +186,12 @@ fn migration_case(rocks_source: bool, rocks_destination: bool) {
         old.get(&old_route, b"a").unwrap().as_deref(),
         Some(b"before".as_slice())
     );
+    // The shared range guard conservatively drains earlier work on the entire
+    // destination shard too. Keep that work live until final copy has retried.
+    #[cfg(feature = "test-hooks")]
+    let destination_pin = target.epochs.enter();
+    #[cfg(feature = "test-hooks")]
+    let range_waits = mako_sharding::runtime_durability::range_waits();
     let nonce = TxnId {
         client: 900,
         sequence: 1,
@@ -228,6 +234,21 @@ fn migration_case(rocks_source: bool, rocks_destination: bool) {
     old.mutate(&old_route, Mutation::Put, b"a", b"after freeze")
         .unwrap();
     old.commit().unwrap();
+    #[cfg(feature = "test-hooks")]
+    {
+        wait(|| mako_sharding::runtime_durability::range_waits() > range_waits);
+        assert_eq!(
+            admin(
+                &network,
+                &endpoints[&0],
+                control::ADMIN_POLL,
+                control::encode_nonce(nonce).unwrap(),
+            ),
+            (generation, 0),
+            "destination drainage must wait without aborting or committing"
+        );
+        drop(destination_pin);
+    }
     wait(|| {
         admin(
             &network,

@@ -9,7 +9,7 @@ use crate::{
     mutex, Database, Error, Position, Result, Table, MAX_COMMAND_BYTES, MAX_KEY_BYTES,
     MAX_OPERATIONS,
 };
-use mrx_core::{BlobOp, Blobs};
+use mako_rocksdb_store::{BlobOp, Blobs};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{atomic::Ordering, Weak};
 
@@ -477,7 +477,7 @@ impl Database {
     }
 }
 
-pub(crate) fn read_metadata(rocks: &mrx_rocks::RocksBlobs) -> Result<Metadata> {
+pub(crate) fn read_metadata(rocks: &mako_rocksdb_store::RocksBlobs) -> Result<Metadata> {
     let mut rows = Vec::new();
     rocks.for_each_entry_from(METADATA, usize::MAX, &mut |key, value| {
         if !key.starts_with(METADATA) {

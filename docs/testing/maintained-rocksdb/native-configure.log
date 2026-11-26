@@ -1,0 +1,11 @@
+-- import std token: 451f2fe2-a8a2-47c3-bc32-94786d8fc91b (CMake 4.3.3)
+-- Generated Masstree config.h via CMake: /var/tmp/mako-shard-rust/build_cache_retirement/generated/masstree/config.h
+-- Mako allocator: mode=1, kind=jemalloc, library=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+-- Configuring done (2.1s)
+CMake Warning (dev) in CMakeLists.txt:
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_cache_retirement

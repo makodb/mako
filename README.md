@@ -27,8 +27,11 @@ cmake --build build --parallel 4
 BUILD_DIR=build bash ci/native_rust.sh all
 ```
 
-`NATIVE_RUST` is the default CMake profile. `ROCKSDB_RAFT` builds the direct
-RocksDB service without Masstree. The retired `MAKO` profile is rejected.
+`NATIVE_RUST` is the default CMake profile. `ROCKSDB_RUNTIME` builds the same
+distributed runtime without Masstree. Both support one shard or multiple shards
+with local or replicated logging. The separate RocksDB/Raft service is retired.
+All persistent adapters use the maintained `rocksdb` crate and its pinned native
+RocksDB build. See [dependency ownership](docs/mako-book.md#rocksdb-dependency-ownership).
 
 For everyday upper-layer protocol work, run `./docker_build.sh ci upper`.
 It verifies distributed transaction, sharding and migration decisions against
@@ -59,8 +62,6 @@ configuration, duration and CPU-throttling options. The familiar
 | `mako_transactions` | Distributed transaction example and invariant checks |
 | `mako_redis` | Redis-compatible server, including transactional MULTI/EXEC |
 | `mako_client`, `mako_admin` | Gateway operations and sharding administration |
-| `mako-cache-bench`, `engine_compare`, `gc_soak` | Storage/cache measurements |
-| `rocksdb_raft_server`, `rocksdb_raft_client`, `rocksdb_raft_bench` | Direct RocksDB/Raft service and measurements |
 
 Each program documents its arguments with `--help`. Runtime configuration and
 CLI compatibility live in `crates/mako-runtime/src/configuration.rs` and `configuration/cli.rs`.
@@ -68,9 +69,15 @@ CLI compatibility live in `crates/mako-runtime/src/configuration.rs` and `config
 ## Tests and proofs
 
 Transaction-manager tests use synthetic datatypes and do not link Masstree.
-Masstree component tests, application adapters and runtime integration run as
+Masstree index tests, Masstree transaction support and runtime integration run as
 separate gates. Tests that poison process-wide native state run in fresh
 processes.
+
+The Masstree transaction component (`sto-masstree` and `sto-tpcc-ffi`) has its
+own build and local tests: `./docker_build.sh ci masstreeTx 32`. It compiles no
+RocksDB, Raft, SRPC or application runtime. See the
+[component profile](docs/developer/development.md#masstree-transaction-component)
+for compilation without tests and individual targets.
 
 ```sh
 # Inside the container, after building:
@@ -81,13 +88,13 @@ BUILD_DIR=build bash ci/native_rust.sh workloads
 BUILD_DIR=build bash ci/native_rust.sh audit
 bash ci/native_rust.sh srpc
 bash ci/native_rust.sh proofs
-bash ci/rocksdb_raft.sh
+bash ci/replication.sh
 ```
 
 The sanitizer workflow runs ASan, UBSan and TSan separately. ASan/TSan use a
 pinned nightly and an instrumented standard library. UBSan instruments the
 native code; stable Rust has no UBSan compiler mode. See
-[sanitizer instructions](scripts/ci/rust_sto_cache_sanitizers.md).
+[sanitizer driver and coverage contract](scripts/ci/run_rust_sto_sanitizer.sh).
 
 ## Current behavior and limits
 
@@ -98,9 +105,10 @@ native code; stable Rust has no UBSan compiler mode. See
   transaction-log interface. Local and replicated logs use the same RocksDB
   format. Production selects local persistence or Raft; `MemoryLog` is for tests
   and requires `volatile: true` in native node configuration.
-- Live migration supports volatile, unreplicated shards. Replicated or locally
-  persistent migration is rejected. Reopening migration metadata alone does
-  not recover row data.
+- Live migration uses shared transactional range guards with either data engine.
+  Durable migration requires synchronous LocalLog or ReplicatedLog recovery of
+  rows, prepared transactions and control state. Reopening migration metadata
+  alone does not recover row data.
 - The gateway's operation API commits each operation. Its session grouping does
   not undo already committed operations. Redis MULTI/EXEC uses a distributed
   transaction.

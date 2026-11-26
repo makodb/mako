@@ -1,5 +1,9 @@
 # The Storage Interface
 
+> Historical document. The standalone cache API and its tooling are retired.
+> See the [supported storage composition](mako-book.md#supported-storage-composition)
+> and [Rust RocksDB compatibility](mako-book.md#rust-rocksdb-compatibility).
+
 How Mako's table layer is shaped today. (Design history lives in git:
 the plan documents `silo-masstree-api-unification.md`,
 `mako-nontxn-api-plan.md`, and `ordered-index-trait-plan.md` were

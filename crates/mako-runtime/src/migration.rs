@@ -250,7 +250,7 @@ fn checked(status: Status) -> Result<()> {
         Err(shard_error(status))
     }
 }
-fn status(error: Error) -> Status {
+pub(crate) fn status(error: Error) -> Status {
     match error.code {
         ErrorCode::RouteChanged | ErrorCode::Conflict => Status::Retry,
         ErrorCode::Busy => Status::Busy,
@@ -431,13 +431,14 @@ impl RunningMigration {
                     put: Some(put),
                     remove: Some(remove),
                     peer_call: Some(peer),
-                    epoch_cut: Some(cut),
-                    epoch_drained: Some(drained),
+                    epoch_cut: None,
+                    epoch_drained: None,
                 },
                 anchor.clone(),
             )
         }
         .map_err(shard_error)?;
+        let host = host.with_range_locks(crate::migration_ranges::provider(&state.store));
         let host = if state.store.log.persistent() {
             if !state.store.log.durable() {
                 return Err(Error::new(
@@ -753,26 +754,6 @@ unsafe extern "C" fn peer(
                 ErrorCode::Transport,
                 "unexpected migration peer reply",
             )),
-        }
-    })
-}
-unsafe extern "C" fn cut(context: *mut c_void) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
-        unsafe { state(context) }
-            .and_then(|state| state.store.epochs.cut())
-            .unwrap_or(0)
-    }))
-    .unwrap_or(0)
-}
-unsafe extern "C" fn drained(context: *mut c_void, cut: u64) -> u32 {
-    boundary(|| {
-        if unsafe { state(context) }?.store.epochs.drained(cut)? {
-            Ok(())
-        } else {
-            Err(Error::new(
-                ErrorCode::Busy,
-                "prior admission epochs are active",
-            ))
         }
     })
 }

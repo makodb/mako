@@ -1,30 +1,8 @@
-//! Mako's local hybrid logical clock (HLC), the general certification gate,
-//! and the dense cache sequence, in safe Rust.
+//! Shared hybrid logical clock and certification gate for Rust STO.
 //!
-//! This is a port of the clock in `src/mako/sto/Transaction.cc`: one 64-bit
-//! word holds `(stamp << 1) | general_gate`, where the stamp packs a 44-bit
-//! Unix millisecond reading and a 19-bit logical counter, and a second word
-//! holds the dense cache sequence. Both engines must produce identical
-//! stamps for identical physical readings, so the port keeps every rule:
-//!
-//! - allocation takes `max(physical << 19, previous + 1)`, never reuses a
-//!   stamp, and reports exhaustion at the 63-bit ceiling;
-//! - the restricted profile refuses to allocate while the general gate is
-//!   held (`GeneralLocked`) instead of waiting;
-//! - the general gate is a spin-acquired bit that preserves the stamp;
-//! - the order pair allocates the timestamp first and the sequence second so
-//!   a failed sequence leaves a harmless timestamp gap, never a queue hole;
-//! - `order_validation_prefix` is an acquire RMW cut on the packed word;
-//! - reseeding the sequence is refused while the gate is held and never
-//!   lowers the clock;
-//! - `advance_past` raises the floor so the next allocation compares strictly
-//!   after the observed full timestamp, including the origin tie-break.
-//!
-//! The clock is process-global in production ([`global`]) because one process
-//! owns one cache-order namespace. Tests construct private [`Clock`]s.
-//!
-//! With the default `distributed` feature, distributed transaction bases and
-//! decimal terms use an independent authority, never HLC stamps or cache sequences.
+//! A packed atomic word contains the HLC stamp and general gate. Timestamp
+//! allocation preserves monotonicity, detects exhaustion and respects the gate.
+//! Distributed transaction bases and decimal terms use a separate authority.
 
 #![forbid(unsafe_code)]
 
@@ -35,7 +13,8 @@ use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub use mako_engine_api::MakoTimestamp;
+mod timestamp;
+pub use timestamp::MakoTimestamp;
 
 /// Allocator origin of every timestamp minted by this process's local clock.
 pub const ORIGIN: NonZeroU32 = match NonZeroU32::new(1) {
@@ -51,8 +30,6 @@ pub const LOGICAL_MASK: u64 = MakoTimestamp::HOT_LOGICAL_MASK;
 pub const PHYSICAL_MS_MAX: u64 = MakoTimestamp::HOT_PHYSICAL_MS_MAX;
 /// Largest valid stamp; the word's top bit is never part of a stamp.
 pub const STAMP_MAX: u64 = MakoTimestamp::HOT_STAMP_MAX;
-/// Largest dense cache sequence.
-pub const SEQUENCE_MAX: u64 = (1u64 << 48) - 1;
 
 const STAMP_SHIFT: u32 = 1;
 const GENERAL_LOCK: u64 = 1;
@@ -89,25 +66,6 @@ pub enum StampAllocation {
     GeneralLocked,
     /// The stamp space is exhausted or the physical clock is unreadable.
     TimestampExhausted,
-}
-
-/// Result of allocating a `(sequence, stamp)` cache-order pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderPairAllocation {
-    /// Both values were minted; the sequence follows the timestamp.
-    Accepted {
-        /// Dense cache sequence.
-        sequence: u64,
-        /// Private HLC stamp.
-        stamp: u64,
-    },
-    /// The general gate is held.
-    GeneralLocked,
-    /// No timestamp could be minted.
-    TimestampExhausted,
-    /// A timestamp was minted but the dense sequence is exhausted; the
-    /// timestamp gap is harmless.
-    SequenceExhausted,
 }
 
 /// Physical clock reading used as the HLC's wall input.
@@ -168,10 +126,9 @@ impl Default for PhysicalClock {
     }
 }
 
-/// One HLC/gate word plus one dense sequence word.
+/// One packed HLC and certification-gate word.
 pub struct Clock {
     hlc: AtomicU64,
-    sequence: AtomicU64,
     physical: PhysicalClock,
 }
 
@@ -182,11 +139,10 @@ impl Default for Clock {
 }
 
 impl Clock {
-    /// A fresh clock: stamp zero (unassigned), gate free, sequence zero.
+    /// A fresh clock: stamp zero (unassigned), gate free.
     pub const fn new() -> Self {
         Self {
             hlc: AtomicU64::new(0),
-            sequence: AtomicU64::new(0),
             physical: PhysicalClock::new(),
         }
     }
@@ -269,45 +225,6 @@ impl Clock {
         self.allocate_stamp(true)
     }
 
-    /// Mint the next dense cache sequence.
-    pub fn try_allocate_sequence(&self) -> Option<u64> {
-        let mut current = self.sequence.load(Ordering::Acquire);
-        loop {
-            if current >= SEQUENCE_MAX {
-                return None;
-            }
-            let desired = current + 1;
-            match self.sequence.compare_exchange_weak(
-                current,
-                desired,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return Some(desired),
-                Err(observed) => current = observed,
-            }
-        }
-    }
-
-    /// Mint the next dense sequence while the caller holds the general gate.
-    pub fn try_allocate_locked_sequence(&self) -> Option<u64> {
-        debug_assert!(self.general_gate_held());
-        self.try_allocate_sequence()
-    }
-
-    /// Mint a `(stamp, sequence)` pair for a restricted one-put commit:
-    /// timestamp first, then sequence.
-    pub fn try_allocate_order_pair(&self) -> OrderPairAllocation {
-        match self.allocate_stamp(true) {
-            StampAllocation::Accepted(stamp) => match self.try_allocate_sequence() {
-                Some(sequence) => OrderPairAllocation::Accepted { sequence, stamp },
-                None => OrderPairAllocation::SequenceExhausted,
-            },
-            StampAllocation::GeneralLocked => OrderPairAllocation::GeneralLocked,
-            StampAllocation::TimestampExhausted => OrderPairAllocation::TimestampExhausted,
-        }
-    }
-
     /// Acquire the general certification gate, spinning while it is held.
     ///
     /// Callers already hold their complete write set, so waiting here cannot
@@ -348,24 +265,6 @@ impl Clock {
     /// read-only commits to order themselves after every preceding writer.
     pub fn order_validation_prefix(&self) -> u64 {
         self.hlc.fetch_add(0, Ordering::Acquire)
-    }
-
-    /// Cold snapshot of the dense sequence.
-    pub fn sequence_snapshot(&self) -> u64 {
-        self.sequence.load(Ordering::Acquire)
-    }
-
-    /// Reset only the dense sequence during namespace admission. Refused
-    /// above the maximum or while the gate is held. Never lowers the clock.
-    pub fn reseed_sequence(&self, sequence: u64) -> bool {
-        if sequence > SEQUENCE_MAX {
-            return false;
-        }
-        if self.general_gate_held() {
-            return false;
-        }
-        self.sequence.store(sequence, Ordering::Release);
-        true
     }
 
     /// Catch the clock up to an observed private stamp.
@@ -448,11 +347,6 @@ pub struct GeneralGate<'clock> {
 }
 
 impl GeneralGate<'_> {
-    /// Mint the dense sequence while holding the gate.
-    pub fn try_allocate_locked_sequence(&self) -> Option<u64> {
-        self.clock.try_allocate_locked_sequence()
-    }
-
     /// Mint the general-profile stamp while holding the gate.
     pub fn try_allocate_timestamp(&self) -> Option<u64> {
         self.clock.try_allocate_timestamp()
@@ -494,7 +388,6 @@ mod tests {
         assert_eq!(LOGICAL_MASK, (1 << 19) - 1);
         assert_eq!(PHYSICAL_MS_MAX, (1 << 44) - 1);
         assert_eq!(STAMP_MAX, u64::MAX >> 1);
-        assert_eq!(SEQUENCE_MAX, (1 << 48) - 1);
     }
 
     #[test]
@@ -659,26 +552,15 @@ mod tests {
     }
 
     #[test]
-    fn validation_prefix_preserves_hlc_gate_and_sequence() {
+    fn validation_prefix_preserves_hlc_and_gate() {
         let clock = clock_at(1000);
         clock.observe_stamp(12345);
-        assert!(clock.reseed_sequence(77));
         let gate = clock.general();
         let state = (12345u64 << 1) | 1;
         assert_eq!(clock.order_validation_prefix(), state);
         assert_eq!(clock.hlc.load(Ordering::Acquire), state);
-        assert_eq!(clock.sequence_snapshot(), 77);
         drop(gate);
         assert_eq!(clock.hlc.load(Ordering::Acquire), 12345u64 << 1);
-    }
-
-    #[test]
-    fn concurrent_sequence_stops_at_rust_lane_boundary() {
-        let clock = Clock::new();
-        assert!(clock.reseed_sequence(SEQUENCE_MAX - 1));
-        assert_eq!(clock.try_allocate_sequence(), Some(SEQUENCE_MAX));
-        assert_eq!(clock.try_allocate_sequence(), None);
-        assert!(!clock.reseed_sequence(SEQUENCE_MAX + 1));
     }
 
     #[test]
@@ -689,52 +571,16 @@ mod tests {
             clock.try_allocate_restricted_timestamp(),
             StampAllocation::GeneralLocked
         );
-        assert_eq!(
-            clock.try_allocate_order_pair(),
-            OrderPairAllocation::GeneralLocked
-        );
         // The general profile still allocates under the gate and the gate
         // survives its CAS.
         assert_eq!(gate.try_allocate_timestamp(), Some(1000 << LOGICAL_BITS));
         assert!(clock.general_gate_held());
-        assert_eq!(gate.try_allocate_locked_sequence(), Some(1));
         drop(gate);
         assert!(!clock.general_gate_held());
         assert_eq!(
             clock.try_allocate_restricted_timestamp(),
             StampAllocation::Accepted((1000 << LOGICAL_BITS) | 1)
         );
-    }
-
-    #[test]
-    fn order_pair_allocates_the_timestamp_before_the_sequence() {
-        let clock = clock_at(1000);
-        assert!(clock.reseed_sequence(SEQUENCE_MAX - 1));
-        assert_eq!(
-            clock.try_allocate_order_pair(),
-            OrderPairAllocation::Accepted {
-                sequence: SEQUENCE_MAX,
-                stamp: 1000 << LOGICAL_BITS
-            }
-        );
-        assert_eq!(
-            clock.try_allocate_order_pair(),
-            OrderPairAllocation::SequenceExhausted
-        );
-        // The failed pair still consumed a timestamp: a harmless gap.
-        assert_eq!(clock.current_stamp(), (1000 << LOGICAL_BITS) | 1);
-    }
-
-    #[test]
-    fn reseed_is_refused_while_the_gate_is_held() {
-        let clock = clock_at(1000);
-        assert!(clock.reseed_sequence(5));
-        let gate = clock.general();
-        assert!(!clock.reseed_sequence(9));
-        drop(gate);
-        assert_eq!(clock.sequence_snapshot(), 5);
-        assert!(clock.reseed_sequence(9));
-        assert_eq!(clock.try_allocate_sequence(), Some(10));
     }
 
     #[test]

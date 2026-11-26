@@ -2,8 +2,8 @@
 
 The application now runs through Cargo/rustc. Root CMake builds its native
 storage dependency and invokes Cargo; it does not translate Rust to C++.
-`NATIVE_RUST` is the default production profile. `ROCKSDB_RAFT` remains the
-separate direct-storage service profile.
+`NATIVE_RUST` is the default production profile. `ROCKSDB_RUNTIME` builds the
+same distributed applications without Masstree. The standalone service is retired.
 
 The migration is complete. The [completed plan](../plans/native-rust-production.md#completion-evidence)
 records the production build, dependency audits, regression/proof gates and
@@ -11,12 +11,14 @@ full ASan, UBSan and TSan qualification, with their tested revisions.
 
 ## Remaining native code
 
-`cmake/native-storage-sources.txt` lists the 16 first-party C++ production
-translation units: Masstree implementation, `mtree_abi`, `mtx_abi`, storage
+`cmake/native-storage-sources.txt` lists the 15 first-party C++ production
+translation units: Masstree implementation, `mtree_abi`, storage
 thread registration, allocator, counters, RCU, ticker and storage runtime.
 `cmake/native-storage-headers.txt` records the required Mako header closure.
 Root `third-party/rusty-cpp` supplies handwritten storage utility headers.
-Its transpiler is not built or invoked. RocksDB uses its external C ABI.
+Its transpiler is not built or invoked. The maintained `rocksdb` crate owns the
+external RocksDB C ABI and pinned native engine build. Mako's three storage
+adapters contain no handwritten FFI.
 
 Masstree's separate C++ tests and benchmark remain under `src/masstree/tests`.
 Their vector/map/set oracles use the C++ standard library, so running the tree
@@ -44,8 +46,8 @@ third-party code. The dependency audit checks what executables actually link.
 | `dbtest`, `sto_tpcc_bench`, simple transaction binaries | `mako_bench`, `mako_transactions`, `mako_node`; all five TPC-C operations, concurrent orders, counters, micro workload and native topology matrix |
 | C++ gateway and Redis wrapper | `mako_client`, `mako_admin`, `mako_redis`; native process tests for clients, migration administration, binary values and transactional MULTI/EXEC |
 | C++ SRPC runtime and generated adapter tests | Canonical Rust SRPC workspace tests/doctests; copied-source independence with C++ tools disabled, native kernel inventory and negative controls |
-| C++ RocksDB service glue and old kill-test driver | `rocksdb-raft-service`; `ci/rocksdb_raft.sh`, process fault boundaries, missing-peer snapshots and recovery |
-| Legacy Raft performance launchers | `rocksdb_raft_bench` and `scripts/rocksdb_raft/performance.py`; matched native OCC/STO and replicated-service measurements |
+| C++ RocksDB service glue and old kill-test driver | `mako-runtime`; `ci/replication.sh`, single-shard transactions, failover, missing-peer snapshots and recovery |
+| Legacy Raft performance launchers | `mako_bench` and `scripts/ci/weekly_performance.py`; the separate service and its native optimistic baseline are retired |
 | Old C++ TPC-C PGO/relink scripts | Removed with their C++ executable graph. Native workload measurement uses `mako_bench`; Rust-only tree PGO remains in `build_sto_masstree_pgo.sh`. Old PGO artifacts are not claimed as native results. |
 
 The obsolete C++ launcher scripts have been removed. Familiar supported
@@ -57,7 +59,9 @@ they do not start a supported application.
 
 `ci/native_rust.sh audit` checks the compiler source/header closure, native
 archive symbols, Cargo link metadata, Rust archive members and link maps for
-all 12 production programs. Rust archives cannot hide bundled C++ objects.
+all seven production programs. First-party Rust archives cannot hide bundled
+C++ objects. Reviewed upstream RocksDB/compression archives are allowed, and
+an executable must not mix bundled and system RocksDB implementations.
 The external gateway/admin clients must not link Masstree.
 
 Transaction-manager tests never receive native linkage settings. Tree tests

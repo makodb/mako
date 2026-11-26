@@ -1,0 +1,50 @@
+    Blocking waiting for file lock on build directory
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+    Checking typenum v1.20.1
+    Checking self_cell v1.3.0
+    Checking bitflags v2.13.1
+    Checking linux-raw-sys v0.12.1
+    Checking cpufeatures v0.2.17
+    Checking mako-clock v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-clock)
+    Checking fastrand v2.5.0
+    Checking once_cell v1.21.4
+   Compiling proc-macro2 v1.0.107
+    Checking arc-swap v1.9.2
+   Compiling libloading v0.8.9
+   Compiling quote v1.0.47
+   Compiling syn v2.0.119
+    Checking rustix v1.1.5
+    Checking sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sto-core` (lib) generated 1 warning
+    Checking generic-array v0.14.7
+   Compiling jobserver v0.1.35
+   Compiling clang-sys v1.9.1
+    Checking getrandom v0.4.3
+   Compiling cc v1.11.3
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+    Checking tempfile v3.27.0
+   Compiling bindgen v0.72.1
+   Compiling zstd-sys v2.2.0+zstd.1.6.0
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling libz-sys v1.1.33
+   Compiling lz4-sys v1.11.1+lz4-1.10.0
+   Compiling librocksdb-sys v0.19.0+11.8.1
+    Checking rocksdb v0.25.0
+    Checking mako-rocksdb-store v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-store)
+    Checking sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6m 07s

@@ -22,7 +22,6 @@ Environment:
   MAKO_SANITIZER_BUILD_DIR=PATH Override the fresh sanitizer build path. The
                                 selected path must not already exist.
   MAKO_SANITIZER_JOBS=N         Parallel build jobs. Default: 4.
-  MAKO_SANITIZER_FOCUS=cache    Run only the native Rust adapter/cache gate.
   CMAKE_GENERATOR=Ninja         This gate audits Ninja's generated commands.
 
 Coverage contract:
@@ -36,10 +35,7 @@ Coverage contract:
   * UBSan instruments native C/C++; stable Rust has no UBSan compiler mode.
   * ASan retains leak detection. Only exact inventoried intentional-quarantine
     cases disable leak reporting; all remain compiler-instrumented and execute.
-  * The cache gate retains its allocation-root suppressions, leak tripwire,
-    exact quarantine inventories and separately executed Loom models.
   * Native Masstree TSan/UBSan suppressions remain explicit and recorded.
-    Cache tests remove them and use their own narrower qualification.
 
 EOF
 }
@@ -195,8 +191,8 @@ if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
     echo "MAKO_SANITIZER_JOBS must be a positive integer, got: ${jobs}" >&2
     exit 2
 fi
-if [[ -n "${MAKO_SANITIZER_FOCUS:-}" && "${MAKO_SANITIZER_FOCUS}" != "cache" ]]; then
-    echo "MAKO_SANITIZER_FOCUS must be unset or cache" >&2
+if [[ -n "${MAKO_SANITIZER_FOCUS:-}" ]]; then
+    echo "MAKO_SANITIZER_FOCUS is retired with the standalone cache gate" >&2
     exit 2
 fi
 
@@ -743,6 +739,7 @@ if [[ "${sanitizer}" == thread ]]; then
     run_logged rocksdb-build env "CC=${rust_linker}" "CXX=${cxx_compiler}" \
         bash "${repo_root}/scripts/ci/build_tsan_rocksdb.sh" "${build_dir}/tsan-rocksdb" "${jobs}"
     export ROCKSDB_LIB_DIR="${build_dir}/tsan-rocksdb/build"
+    export ROCKSDB_INCLUDE_DIR="${build_dir}/tsan-rocksdb/rocksdb-11.8.1/include"
     export LD_LIBRARY_PATH="${ROCKSDB_LIB_DIR}:${libcxx_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 fi
 export CC="${native_cc}" CXX="${cxx_compiler}"
@@ -773,7 +770,7 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "asan_options=${ASAN_OPTIONS:-}"
     echo "ubsan_options=${UBSAN_OPTIONS:-}"
     echo "tsan_options=${TSAN_OPTIONS:-}"
-    echo "rocksdb_library_dir=${ROCKSDB_LIB_DIR:-system}"
+    echo "rocksdb_library_dir=${ROCKSDB_LIB_DIR:-upstream-bundled}"
     echo "gate_status=running"
 } >"${manifest}"
 trap 'status=$?; if (( status != 0 )); then echo "gate_status=failed:${status}" >>"${manifest}"; fi' EXIT
@@ -782,25 +779,19 @@ runner=(python3 "${repo_root}/scripts/ci/run_native_sanitizer_tests.py"
     --cargo "${selected_cargo}" --manifest "${repo_root}/crates/Cargo.toml" --target "${rust_target}"
     --quarantine "${quarantine_allowlist}"
     --quarantine "${repo_root}/scripts/ci/native-adapter-quarantine-tests.txt")
-if [[ "${MAKO_SANITIZER_FOCUS:-}" != cache ]]; then
-    # No native environment in the transaction-manager gate. The following
-    # process groups explicitly exercise Masstree and the application adapter.
-    run_logged transactions env --unset=MAKO_MTREE_NATIVE_INTEGRATION \
-        --unset=MAKO_MTREE_NATIVE_LIB_DIRS --unset=MAKO_MTREE_NATIVE_LIBS \
-        "${runner[@]}" --package sto-core --package sto-test-datatypes --all-features \
-        --report "${build_dir}/sanitizer-logs/transactions.json"
-    run_logged tree "${runner[@]}" --package masstree --package sto-masstree --all-features \
-        --report "${build_dir}/sanitizer-logs/tree.json"
-    run_logged adapter "${runner[@]}" --package sto-tpcc-ffi --all-features \
-        --report "${build_dir}/sanitizer-logs/adapter.json"
-    run_logged runtime "${runner[@]}" --package mako-runtime --features replication \
-        --report "${build_dir}/sanitizer-logs/runtime.json"
-fi
-# Retains its separate unsanitized Loom executions, exact quarantine reruns,
-# two checked startup allocation roots and the unrelated-lost-buffer tripwire.
-run_logged cache python3 "${repo_root}/scripts/ci/run_rust_sto_cache_tests.py" \
-    --cargo "${selected_cargo}" --manifest-path "${repo_root}/crates/Cargo.toml" \
-    --target "${rust_target}" --report "${build_dir}/sanitizer-logs/cache.json"
+# No native environment in the transaction-manager gate. The following
+# process groups explicitly exercise Masstree and the application adapter.
+run_logged transactions env --unset=MAKO_MTREE_NATIVE_INTEGRATION \
+    --unset=MAKO_MTREE_NATIVE_LIB_DIRS --unset=MAKO_MTREE_NATIVE_LIBS \
+    "${runner[@]}" --package sto-core --package sto-test-datatypes --all-features \
+    --report "${build_dir}/sanitizer-logs/transactions.json"
+run_logged tree "${runner[@]}" --package masstree --package sto-masstree --all-features \
+    --report "${build_dir}/sanitizer-logs/tree.json"
+run_logged adapter "${runner[@]}" --package sto-tpcc-ffi --all-features \
+    --report "${build_dir}/sanitizer-logs/adapter.json"
+run_logged runtime "${runner[@]}" --package mako-runtime --package mako-rocksdb \
+    --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine \
+    --report "${build_dir}/sanitizer-logs/runtime.json"
 
 # Inspect instrumented objects and every target executable, including binaries
 # Cargo built for the native process tests. Host build scripts are separate.
@@ -812,15 +803,14 @@ esac
 "${cmake_nm}" -u "${build_dir}/libmako_native_storage.a" >"${build_dir}/sanitizer-logs/native-hooks.txt"
 grep -Eq "${native_hook}" "${build_dir}/sanitizer-logs/native-hooks.txt"
 if [[ "${rust_compiler_instrumented}" == 1 ]]; then
-    python3 - "${cmake_nm}" "${CARGO_TARGET_DIR}/${rust_target}" "${native_hook}" "${MAKO_SANITIZER_FOCUS:-}" <<'PY'
+    python3 - "${cmake_nm}" "${CARGO_TARGET_DIR}/${rust_target}" "${native_hook}" <<'PY'
 from pathlib import Path
 import re
 import subprocess
 import sys
-nm, target, pattern, focus = sys.argv[1:]
-required = ['sto_core', 'sto_masstree', 'masstree', 'mako_engine_sto', 'mako_cache']
-if focus != 'cache':
-    required += ['sto_tpcc_ffi', 'mako_runtime']
+nm, target, pattern = sys.argv[1:]
+required = ['sto_core', 'sto_masstree', 'masstree', 'sto_tpcc_ffi',
+            'mako_runtime', 'mako_rocksdb', 'mako_rocksdb_store', 'sto_rocksdb']
 for crate in required:
     # Stable Cargo uses debug/deps; the pinned nightly also uses per-crate
     # debug/build/.../out directories. Both are under this instrumented target.

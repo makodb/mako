@@ -1,4 +1,4 @@
-//! Native orchestration. Immutable admission and the host's existing STO epoch
+//! Native orchestration. Immutable admission and transactional range guards
 //! protect production readers; checked actors retain control/transfer metadata.
 //! Optional metadata persistence permits inspection, never data serving, on restart.
 use std::collections::{HashMap, HashSet};
@@ -34,15 +34,11 @@ struct Local {
     snapshot: Arc<Snapshot>,
     store: EngineStore,
     plans: HashMap<u64,Vec<u8>>,
-    cuts: HashMap<u64,SourceCut>,
+    guards: HashMap<u64,Arc<dyn crate::range_lock::RangeGuard>>,
     ready: HashSet<u64>,
     metadata: ParticipantLog,
 }
 struct Job { operation: u32, payload: Vec<u8>, completion: Completion }
-// A cut is created only after publishing this generation's Frozen metadata.
-// The full encoded plan lives in Local::plans; current Frozen state is rechecked
-// before completion/capture. No lease-book emptiness implies engine completion.
-struct SourceCut { epoch: u64, completed: bool }
 pub struct Node {
     owner: u32, nodes: u32, migration: bool, host: Host, hello: Vec<u8>,
     local: Mutex<Local>, master: Option<Mutex<Master>>,
@@ -338,6 +334,7 @@ impl Runtime {
         Ok(w.into_bytes())
     }
     pub fn start(&self, owner: u32, count: u32, migration: bool, host: Host) -> Result<(),Status> {
+        if migration { host.range_locks()?; }
         let _lifecycle = self.lifecycle.lock();
         if count == 0 || owner >= count || !self.configured.load(Ordering::Acquire) { return Err(Status::Invalid); }
         if migration && host.recovery().is_none() && self.replication_replay.load(Ordering::Acquire) { return Err(Status::Invalid); }
@@ -387,7 +384,7 @@ impl Runtime {
         // Persistent identity format stays unchanged. The live handshake also
         // binds the new paired-routing request ABI, rejecting mixed old peers.
         let mut hello = identity;
-        hello.extend_from_slice(&5u32.to_le_bytes());
+        hello.extend_from_slice(&6u32.to_le_bytes());
         hello.push(u8::from(recovery.is_some()));
         let (tx,rx) = mpsc::channel();
         let (migration_tx,migration_rx) = mpsc::channel();
@@ -395,7 +392,7 @@ impl Runtime {
         let admission = Arc::new(AdmissionSnapshot::capture(participant.actor()?,Arc::clone(&snapshot)));
         let node = Arc::new(Node { owner, nodes: count, migration, host: host.clone(), hello,
             local: Mutex::new(Local { participant,snapshot,
-                store: EngineStore {owner,host},plans: HashMap::new(),cuts: HashMap::new(),
+                store: EngineStore {owner,host},plans: HashMap::new(),guards: HashMap::new(),
                 ready: HashSet::new(),metadata: participant_log }),
             admission: RwLock::new(admission),
             master, queue: Mutex::new(Some(tx)), migrations: Mutex::new(Some(migration_tx)),
@@ -498,7 +495,7 @@ impl Node {
     }
     /// Capture after entering the host admission epoch. The host retains that
     /// epoch through every engine effect and cleanup performed under this view.
-    /// Migration freezes this view before taking its host epoch cut.
+    /// Migration freezes this view before acquiring its transactional range guard.
     pub fn admission_view(&self) -> Result<Arc<AdmissionSnapshot>,Status> {
         self.admission_ready()?;
         let view = Arc::clone(&self.admission.read());
@@ -533,12 +530,13 @@ impl Node {
         // Drop its namespace handle before asking for a new incarnation.
         let mut local = self.local.lock();
         local.participant = ParticipantState::live(self.owner,runtime().initial_tables(self.nodes)?)?;
-        local.plans.clear(); local.cuts.clear(); local.ready.clear();
+        local.plans.clear(); local.guards.clear(); local.ready.clear();
         let mut master = self.master.as_ref().map(|master|master.lock());
         if let Some(master) = &mut master {
             master.actor = CoordinatorState::new((0..self.nodes).collect(),runtime().initial_tables(self.nodes)?,None,false,&[])?;
         }
         recovery.row_barrier(authority)?;
+        self.host.reset_ranges()?;
         local.participant = ParticipantState::recover(self.owner,runtime().initial_tables(self.nodes)?,
             self.host.clone(),recovery.clone(),authority)?;
         let mut publication = None;
@@ -554,11 +552,11 @@ impl Node {
         for encoded in local.participant.plans()? {
             let plan = wire::decode_plan(&encoded,self.nodes)?;
             if local.participant.actor()?.frozen_source(&plan) {
-                local.cuts.insert(plan.generation,SourceCut {epoch:self.host.epoch_cut()?,completed:false});
+                self.range_guard(&mut local,&plan)?;
             }
             local.plans.insert(plan.generation,encoded);
         }
-        // Recovery pins precede every reconstructed cut and admission publication.
+        // Recovery pins precede every reconstructed guard and serving admission.
         if !recovery.transactions_restored()? || recovery.authority()? != authority {return Err(Status::Retry);}
         drop(master); drop(local);
         self.metadata_fenced.store(false,Ordering::Release);
@@ -708,14 +706,17 @@ impl Node {
         }
         wait_for_shutdown_marker(&control_done)
     }
-    fn complete_source_cut(&self, local: &mut Local, plan: &MigrationPlan) -> Result<(),Status> {
+    fn range_guard(&self, local: &mut Local, plan: &MigrationPlan) -> Result<Arc<dyn crate::range_lock::RangeGuard>,Status> {
+        if let Some(guard) = local.guards.get(&plan.generation) { return Ok(guard.clone()); }
+        let guard = self.host.acquire_range(plan)?;
+        local.guards.insert(plan.generation,guard.clone());
+        Ok(guard)
+    }
+    fn source_range(&self, local: &mut Local, plan: &MigrationPlan) -> Result<Arc<dyn crate::range_lock::RangeGuard>,Status> {
         if !local.participant.actor()?.frozen_source(plan) { return Err(Status::Retry); }
-        let cut = local.cuts.get_mut(&plan.generation).ok_or(Status::Retry)?;
-        if !cut.completed {
-            if !self.host.epoch_drained(cut.epoch)? { return Err(Status::Busy); }
-            cut.completed = true;
-        }
-        Ok(())
+        let guard = self.range_guard(local,plan)?;
+        if !guard.drained()? { return Err(Status::Busy); }
+        Ok(guard)
     }
     // One synchronous round-0 job owns every accepted destination effect until
     // its reply. The same worker/metadata borrow serializes Final and Abort;
@@ -727,6 +728,7 @@ impl Node {
         #[cfg(feature = "test-hooks")]
         if std::env::var_os("MAKO_TEST_SKIP_PRECOPY").is_some() {return Ok(());}
         if !local.participant.actor()?.background_destination(plan) { return Err(Status::Retry); }
+        let _range = self.range_guard(local,plan)?.enter()?;
         local.store.materialize(plan.range.table)?;
         let mut after = None;
         loop {
@@ -785,15 +787,16 @@ impl Node {
             if local.plans.get(&plan.generation).is_some_and(|old|old.as_slice() != encoded) {
                 return Err(Status::Invalid);
             }
-            if operation == wire::LIVE_CAPTURE {
+            let _range = if operation == wire::LIVE_CAPTURE {
                 if !local.participant.actor()?.background_source(&plan) { return Err(Status::Retry); }
                 local.plans.entry(plan.generation).or_insert_with(||encoded.to_vec());
+                None
             } else {
                 if local.plans.get(&plan.generation).map(Vec::as_slice) != Some(encoded) {
                     return Err(Status::Retry);
                 }
-                self.complete_source_cut(&mut local,&plan)?;
-            }
+                Some(self.source_range(&mut local,&plan)?.enter()?)
+            };
             let mut rows = Vec::new();
             let mut bytes = 20usize;
             let mut eof = false;
@@ -803,7 +806,7 @@ impl Node {
                     // Each committed lookahead is only an advisory observation.
                     local.store.scan(&plan.range,after)?
                 } else {
-                    // The real generation-bound STO cut completed above, with
+                    // The generation-bound range guard is held above, with
                     // Frozen metadata held unchanged through this exact scan.
                     local.participant.capture(&local.store,&plan,after)?
                 };
@@ -826,16 +829,22 @@ impl Node {
         }
         let mut result = if let Some(command) = wire::command(operation) {
             if command == Command::Retire && local.participant.actor()?.frozen_source(&plan) {
-                self.complete_source_cut(&mut local,&plan)?;
+                self.source_range(&mut local,&plan)?;
             }
             local.participant.deliver(&plan,command)?
         } else if operation == wire::DRAIN {
-            self.complete_source_cut(&mut local,&plan)?;
+            self.source_range(&mut local,&plan)?;
             ControlResult { status: Status::Ok, certificate: Some(Certificate::Drained),cleanup: Cleanup::None }
         } else if operation == wire::FINAL_COPY {
             if local.ready.contains(&plan.generation) {
                 ControlResult { status: Status::Ok, certificate: Some(Certificate::Ready),cleanup: Cleanup::None }
             } else {
+                // A recovered durable Ready receipt may replay without I/O.
+                // Only an authorized transfer may reserve a new range; invalid
+                // or stale controls cannot freeze unrelated serving data.
+                let _range = if local.participant.actor()?.authorize_transfer(&plan,false) == Status::Ok {
+                    Some(self.range_guard(&mut local,&plan)?.enter()?)
+                } else { None };
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:None})?;
                 let source = RemoteSource::new(self.host.clone(),&payload);
                 let Local {participant,store,..} = &mut *local;
@@ -853,21 +862,32 @@ impl Node {
                 self.publish_admission(&local)?;
             }
             if wire::command(operation) == Some(Command::Freeze)
-                && local.participant.actor()?.frozen_source(&plan)
-                && !local.cuts.contains_key(&plan.generation) {
+                && local.participant.actor()?.frozen_source(&plan) {
                 #[cfg(feature = "test-hooks")]
                 crate::runtime_durability::test_pause("freeze-published");
-                // Publication above is ordered before this SAME engine clock cut.
-                let epoch = self.host.epoch_cut()?;
-                local.cuts.insert(plan.generation,SourceCut {epoch,completed:false});
+                // Non-serving publication precedes reservation/drain.
+                self.range_guard(&mut local,&plan)?;
+            }
+            if wire::command(operation) == Some(Command::Start)
+                && local.participant.actor()?.background_destination(&plan) {
+                self.range_guard(&mut local,&plan)?;
             }
             if result.cleanup != Cleanup::None {
                 // Delivery already changed metadata. An I/O failure here is NOT
                 // a whole-handler stutter; its retained cleanup is resumed later.
+                checked(local.participant.actor()?.authorize_transfer(&plan,true))?;
+                let _range = self.range_guard(&mut local,&plan)?.enter()?;
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:None})?;
                 let Local {participant,store,..} = &mut *local;
                 result = participant.cleanup(store,&plan)?;
                 self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:Some(&result)})?;
+            }
+            if matches!(wire::command(operation),Some(Command::Commit | Command::Abort))
+                && result.status == Status::Ok && result.certificate.is_some() {
+                // Publication and cleanup precede explicit release. Ordinary
+                // admission still rejects retired owners and stale route grants.
+                if let Some(guard) = local.guards.get(&plan.generation) { guard.finish()?; }
+                local.guards.remove(&plan.generation);
             }
             local.plans.entry(plan.generation).or_insert(payload);
         }
@@ -997,7 +1017,18 @@ impl Node {
         }
         if matches!(self.phase(generation)?,Phase::Final) {
             self.control(generation,destination,Command::Final,wire::command_operation(Command::Final),encoded,None)?;
-            self.control(generation,destination,Command::Final,wire::FINAL_COPY,encoded,Some(Certificate::Ready))?;
+            loop {
+                if self.abort_requested() {return Err(Status::Retry);}
+                match self.control(generation,destination,Command::Final,wire::FINAL_COPY,encoded,Some(Certificate::Ready)) {
+                    Ok(()) => break,
+                    Err(Status::Busy | Status::Retry) => {
+                        #[cfg(feature = "test-hooks")]
+                        crate::runtime_durability::record_range_wait();
+                        thread::sleep(Duration::from_millis(10));
+                    },
+                    Err(error) => return Err(error),
+                }
+            }
             self.request(Request::Retire)?;
         }
         if matches!(self.phase(generation)?,Phase::Retiring) {

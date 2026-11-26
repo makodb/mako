@@ -12,10 +12,16 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 ```
 
-`MAKO_BUILD_PROFILE=NATIVE_RUST` compiles the 16 explicitly listed Masstree
+`MAKO_BUILD_PROFILE=NATIVE_RUST` compiles the 15 explicitly listed Masstree
 storage support files and builds the Rust applications with Cargo. The native
-archive is linked explicitly; Rust archives must not bundle C++ objects.
-`MAKO_BUILD_PROFILE=ROCKSDB_RAFT` builds the direct RocksDB service.
+archive is linked explicitly; first-party Rust archives must not bundle C++ objects.
+The maintained `rocksdb` crate builds its pinned native engine and compression
+codecs. Upstream dependency archives are audited separately from Mako code.
+Do not point it at the container's older system RocksDB. A sanitizer override must
+provide matching 11.8.1 library and headers via `ROCKSDB_LIB_DIR` and
+`ROCKSDB_INCLUDE_DIR`.
+`MAKO_BUILD_PROFILE=ROCKSDB_RUNTIME` builds the same distributed runtime without
+Masstree. One-shard and multi-shard deployments use the same transaction path.
 
 Use a separate build directory for storage's C++ component tests:
 
@@ -28,6 +34,42 @@ ctest --test-dir build_storage --output-on-failure
 The production source audit deliberately excludes these test objects.
 `BUILD_DIR=build bash ci/native_rust.sh storage` manages the same separate
 profile under `build/storage-tests`.
+
+### Masstree transaction component
+
+`sto-masstree` and `sto-tpcc-ffi` own the transaction adapter and its Rust/native
+wrapper. They share `sto-core` and the underlying Masstree index but have their
+own compilation and local-test entry point:
+
+```sh
+./docker_build.sh ci masstreeTx 32
+# Or inside the container:
+CI_BUILD_JOBS=32 bash ci/masstree_tx.sh
+```
+
+This uses `build_masstree_tx/cargo`, independently of application builds. Set
+`MASSTREE_TX_BUILD_DIR` for a different component directory. For compilation
+without tests, run inside the container:
+
+```sh
+cmake -S . -B build_masstree_tx -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DMAKO_BUILD_PROFILE=MASSTREE_TX -DMAKO_NATIVE_CARGO_PROFILE=dev
+cmake --build build_masstree_tx --parallel 32
+# Explicit local test and quality targets:
+cmake --build build_masstree_tx --parallel 32 --target masstree_tx_tests masstree_tx_quality
+```
+
+The default build compiles the two libraries and audits their dependency graph
+and actual artifacts. No application targets, RocksDB, SRPC or Raft are built.
+The only native archive is the audited Masstree/index support closure. Pure
+protocol and storage-host decision crates are shared dependencies.
+
+Local tests cover both adapter packages, including optional `fixed-u64` cases,
+owned lifetimes, participant transitions, replay/checkpoints and migration
+storage effects. Native cases run in fresh processes. Doctests and the wrapper's
+strict Clippy check retain their existing coverage. Core OCC tests, Rust/native
+index tests and distributed runtime integration remain separate suites. The
+compatibility target `rust_application_adapter_tests` delegates to this suite.
 
 ## Test selection
 
@@ -73,7 +115,7 @@ recompilation. Plain `cmake --build` and Cargo compilation run no test suites.
 
 | Gate | Coverage |
 | --- | --- |
-| `components` | Independent STO, support libraries, tree/ABI, adapters and cache |
+| `components` | Shared OCC, support libraries, tree/ABI and the separately owned Masstree transaction suite |
 | `storage` | C++ Masstree and storage runtime tests; C11 ABI header checks |
 | `health` | Actual native poison transition with a separate test-only helper |
 | `quality` | Runtime/adapter Clippy and compile-fail API doctests |
@@ -88,8 +130,9 @@ never receives native linkage settings. Adapter and runtime tests explicitly
 link storage. Fresh-process runners preserve tests that intentionally fence or
 poison process-global state.
 
-For direct RocksDB/Raft, `bash ci/rocksdb_raft.sh` runs native unit tests and
-process tests for leader loss, commit boundaries, snapshots and restart.
+`./docker_build.sh ci replication` runs shared storage/Raft component tests and
+the distributed RocksDB runtime suite, including one-shard transactions, leader
+loss, uncertain outcomes, snapshots and restart.
 For sanitizer qualification, use `scripts/ci/run_rust_sto_sanitizer.sh` and
 its checked-in workflow. Sanitizer builds require fresh output directories.
 

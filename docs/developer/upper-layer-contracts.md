@@ -32,6 +32,33 @@ Sharding/migration proofs establish routing, admission, drain, transfer,
 reconciliation and publication properties under their own storage contracts.
 Production and isolated drivers call the same actors.
 
+## Migration range-lock contract
+
+`mako-sharding::range_lock` defines the provider contract. The shared transaction
+layer implements it in `mako-protocol::range_lock`, exposed through
+`mako-storage-api` for either storage mode. Sharding publishes non-serving
+admission before reserving the range. Acquisition blocks new overlapping
+ordinary access; existing admitted transactions may finish. Guarded migration
+I/O waits for their pins to drain, including retained prepares and uncertain
+transactions. The initial implementation conservatively waits for all earlier
+shard pins, even those unrelated to the selected range.
+
+An I/O scope binds the exact logical range, canonical migration identity and
+physical shard. Runtime migration mutations reject missing or mismatched
+scopes. Final source scans, destination copy and cleanup hold scopes; live
+source precopy is advisory. Physical row effects still use OCC + 2PC and the
+selected journal. A guard's drop never unlocks the range. Explicit finish
+requires terminal ownership publication and completed cleanup; the published
+metadata continues to fence retired owners after release. Recovery resets the
+guard incarnation with admission closed and old effects settled, then rebuilds
+reservations using restored transaction pins.
+
+These provider and publication-ordering facts are adapter obligations. The new
+range manager is ordinary Rust checked by local boundary, lifecycle and race
+tests in the upper gate. It does not add a trusted Verus axiom or claim a proof
+of the physical lock implementation. Storage-specific and recovery integration
+tests check the real callback scopes for both engines.
+
 ## OCC storage contract
 
 Each participant collects a fixed read/write set before its lock acknowledgement.
@@ -167,8 +194,10 @@ supply exclusion for that window, not for unrelated ranges.
 
 The storage host maps ambiguous raw installation or cleanup to fail-stop because
 its callback contract has no Unknown variant. Transaction participants do have
-Unknown and retain their native protection and migration pin. Live migration
-with Raft or local persistence remains unsupported and is rejected.
+Unknown and retain their native protection and migration pin. Durable migration
+uses the selected synchronous LocalLog or ReplicatedLog and restores control
+state together with rows and prepared protection. The older standalone metadata
+inspection path does not provide application recovery or serving authority.
 
 A timestamp proposal must be positive, encodable and greater than its read
 dependencies. Allocation cannot wrap. The distributed row/redo timestamp is

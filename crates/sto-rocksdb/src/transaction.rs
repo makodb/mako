@@ -1,8 +1,8 @@
 use crate::command::{encode_transaction, MutationRef};
 use crate::database::{data_key, optional_u64, required_u64, table_key, version_key, GENERATION};
 use crate::{core, Database, Error, Position, RequestId, Result, MAX_COMMAND_BYTES, MAX_KEY_BYTES};
-use mrx_core::Blobs;
-use mrx_rocks::Snapshot;
+use mako_rocksdb_store::Blobs;
+use mako_rocksdb_store::Snapshot;
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},

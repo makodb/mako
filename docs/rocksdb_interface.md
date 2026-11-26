@@ -1,3 +1,11 @@
+# Historical RocksDB service interface
+
+The standalone RocksDB/Raft service described below is retired. Use the
+distributed runtime with one shard or multiple shards and the
+[current Rust RocksDB-compatible API](mako-book.md#rust-rocksdb-compatibility).
+The old service RPC/C ABI and its data-directory contract are not compatibility
+entry points for the current runtime. Historical documentation follows.
+
 # Mako RocksDB-Compatible Interface
 
 This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/rocks_interface/idb.hh`. It covers three things:

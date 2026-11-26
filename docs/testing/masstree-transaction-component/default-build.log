@@ -1,0 +1,20 @@
+[0/1] Re-running CMake...
+-- import std token: 451f2fe2-a8a2-47c3-bc32-94786d8fc91b (CMake 4.3.3)
+-- Generated Masstree config.h via CMake: /var/tmp/mako-shard-rust/build_masstree_tx/generated/masstree/config.h
+-- Mako allocator: mode=1, kind=jemalloc, library=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+-- MASSTREE_TX: transaction adapter and wrapper; no application, RocksDB, SRPC or Raft build
+-- Configuring done (1.8s)
+CMake Warning (dev) in CMakeLists.txt:
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_masstree_tx
+[1/23] Generating CXX dyndep file CMakeFiles/__cmake_cxx_std_23.dir/CXX.dd
+[2/20] Generating CXX dyndep file CMakeFiles/mako_native_storage.dir/CXX.dd
+[3/4] cd /var/tmp/mako-shard-rust && /usr/bin/python3.12 /var/tmp/mako-shard-rust/scripts/check_native_rust_build.py --build /var/tmp/mako-shard-rust/build_masstree_tx --archive /var/tmp/mako-shard-rust/build_masstree_tx/libmako_native_storage.a --nm /usr/bin/llvm-nm-22
+native source audit: 15 storage sources; no application or generated C++
+[3/4] cd /var/tmp/mako-shard-rust && /opt/cmake-4.3.3/bin/cmake -E env CARGO_TARGET_DIR=/var/tmp/mako-shard-rust/build_masstree_tx/cargo MAKO_BUILD_DIR=/var/tmp/mako-shard-rust/build_masstree_tx LIBCXX_DIR=/usr/lib/llvm-22/lib MAKO_MTREE_NATIVE_INTEGRATION=1 MAKO_MTREE_NATIVE_LIB_DIRS=/var/tmp/mako-shard-rust/build_masstree_tx:/usr/lib/llvm-22/lib:/usr/lib/x86_64-linux-gnu MAKO_MTREE_NATIVE_LIBS=static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread,dylib=jemalloc /usr/bin/python3.12 /var/tmp/mako-shard-rust/scripts/check_masstree_tx_component.py --cargo /opt/rust/bin/cargo --output /var/tmp/mako-shard-rust/build_masstree_tx/masstree-tx-dependencies.json
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+Masstree transaction component: 25 compiled packages; no application, RocksDB, SRPC or Raft

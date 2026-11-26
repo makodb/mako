@@ -1,0 +1,168 @@
+    Updating crates.io index
+     Locking 35 packages to latest compatible versions
+      Adding aho-corasick v1.1.5
+      Adding bindgen v0.72.1
+      Adding bitflags v2.13.2
+      Adding bzip2-sys v0.1.13+1.0.8
+      Adding cc v1.11.3
+      Adding cexpr v0.6.0
+      Adding cfg-if v1.0.5
+      Adding clang-sys v1.9.1
+      Adding either v1.19.0
+      Adding find-msvc-tools v0.1.15
+      Adding getrandom v0.4.3
+      Adding glob v0.3.4
+      Adding itertools v0.13.0
+      Adding jobserver v0.1.35
+      Adding libc v0.2.191
+      Adding libloading v0.8.9
+      Adding librocksdb-sys v0.19.0+11.8.1
+      Adding libz-sys v1.1.33
+      Adding lz4-sys v1.11.1+lz4-1.10.0
+      Adding memchr v2.8.3
+      Adding minimal-lexical v0.2.1
+      Adding nom v7.1.3
+      Adding pkg-config v0.3.34
+      Adding r-efi v6.0.0
+      Adding regex v1.13.2
+      Adding regex-automata v0.4.19
+      Adding regex-syntax v0.8.12
+      Adding rocksdb v0.25.0
+      Adding rustc-hash v2.1.3
+      Adding rustflags v0.1.7
+      Adding shlex v1.3.0
+      Adding shlex v2.0.1
+      Adding vcpkg v0.2.15
+      Adding windows-link v0.2.1
+      Adding zstd-sys v2.2.0+zstd.1.6.0
+    Blocking waiting for file lock on build directory
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling syn v2.0.119
+   Compiling bindgen v0.72.1
+   Compiling librocksdb-sys v0.19.0+11.8.1
+   Compiling rocksdb v0.25.0
+   Compiling raft-store v0.0.0 (/var/tmp/mako-shard-rust/src/deptran/raft/store)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 58s
+     Running unittests src/lib.rs (build_rocks_crate/cargo/debug/deps/raft_store-69213333c5bd69e7)
+
+running 14 tests
+test crash::tests::parses ... ok
+test crc::tests::check_value ... ok
+test crc::tests::hardware_matches_table ... ok
+test fs::policy_tests::async_wal_still_reports_write_failures ... ok
+test fs::policy_tests::truncation_obeys_persistence_policy ... ok
+test fs::policy_tests::wal_policy_preserves_writes_but_only_sync_survives_powercut ... ok
+test queue::tests::numbers_in_push_order ... ok
+test record::tests::last_after ... ok
+test record::tests::roundtrips ... ok
+test segment::tests::header_roundtrip_and_damage ... ok
+test segment::tests::names ... ok
+test segment::tests::torn_tail_versus_corruption ... ok
+test state::tests::snapshots_and_refusals ... ok
+test state::tests::the_design_s_follower_step ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/base_crash.rs (build_rocks_crate/cargo/debug/deps/base_crash-03f9ba16e0eac34d)
+
+running 2 tests
+test checkpoints_bound_the_wal_and_recovery_folds ... ok
+test failures_anywhere_recover_to_a_fold ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.33s
+
+     Running tests/base_ops.rs (build_rocks_crate/cargo/debug/deps/base_ops-724aba3751d7b30f)
+
+running 1 test
+test deletes_follow_top ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/create.rs (build_rocks_crate/cargo/debug/deps/create-c0c189a0041cfa66)
+
+running 6 tests
+test a_new_data_directory_survives_a_power_cut ... ok
+test a_segment_named_zero_is_refused ... ok
+test crash_at_every_creation_step ... ok
+test missing_store_needs_the_flag ... ok
+test the_flag_refuses_a_store_with_records_and_reopens_an_empty_one ... ok
+test what_recovery_acknowledges_survives_a_power_cut ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/flusher.rs (build_rocks_crate/cargo/debug/deps/flusher-2a87514d4475d25b)
+
+running 2 tests
+test concurrent_pushes_recover_in_queue_order ... ok
+test real_disk_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/held.rs (build_rocks_crate/cargo/debug/deps/held-989ee03d1a29c626)
+
+running 2 tests
+test a_durable_tail_sends_at_once_and_order_is_kept ... ok
+test holds_racing_the_flusher_are_never_stranded ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/images.rs (build_rocks_crate/cargo/debug/deps/images-27477d0ac40cdfdd)
+
+running 2 tests
+test a_power_cut_before_the_directory_sync_leaves_no_image ... ok
+test write_read_damage_cleanup ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/journal.rs (build_rocks_crate/cargo/debug/deps/journal-7040e7a4845bc43e)
+
+running 6 tests
+test both_drivers_use_rocks_wal_without_destructor_flush ...
+running 1 test
+ok
+test corrupt_committed_prefix_and_snapshot_bounds_fail_closed ... ok
+test format_cutover_preserves_existing_data_and_refuses_concurrent_owners ... ok
+test malformed_records_cannot_change_authority_or_committed_history ... ok
+test same_log_bytes_preserve_local_and_replicated_committed_prefixes ... ok
+test uncertain_batch_fences_until_recovery_and_never_acknowledges_unsynced_data ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/local.rs (build_rocks_crate/cargo/debug/deps/local-e8181d4e8006c20f)
+
+running 2 tests
+test this_host ... ok
+test verdicts ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rocks.rs (build_rocks_crate/cargo/debug/deps/rocks-c4bb601da9175414)
+
+running 2 tests
+test async_base_wal_survives_process_exit ...
+running 1 test
+ok
+test rocks_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/wal_crash.rs (build_rocks_crate/cargo/debug/deps/wal_crash-ec388bb23b3c48b8)
+
+running 8 tests
+test a_bad_last_header_with_data_after_it_fails_closed ... ok
+test a_checkpoint_mid_rotation_keeps_the_last_good_segment ... ok
+test a_fresh_store_survives_a_crashed_recovery ... ok
+test a_last_segment_without_a_header_is_deleted ... ok
+test a_published_rotation_frees_the_segment_before_it ... ok
+test crash_at_every_operation ... ok
+test damaged_stores_fail_closed ... ok
+test interrupted_recovery_converges ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+   Doc-tests raft_store
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -45,7 +45,7 @@ while IFS= read -r QUARANTINE_CASE || [[ -n "${QUARANTINE_CASE}" ]]; do
         # unknown package here would otherwise run its exact quarantine case
         # while silently omitting the rest of its library.
         case "${QUARANTINE_PACKAGE}" in
-            masstree|sto-core|mako-engine-sto|sto-tpcc-ffi|sto-masstree) ;;
+            masstree|sto-core|sto-tpcc-ffi|sto-masstree) ;;
             *)
                 echo "quarantine library package has no dedicated Miri lane: ${QUARANTINE_PACKAGE}" >&2
                 exit 2
@@ -185,10 +185,6 @@ done
 run_miri_library masstree --lib --
 run_miri_library sto-core --lib --
 run_miri -p sto-core --test local_versions
-
-# The engine adapter's record encoder and cross-thread holder/publication
-# generation test require no native calls. Keep leak checking enabled.
-run_miri_library mako-engine-sto --lib --
 
 for QUARANTINE_SUITE_KEY in "${QUARANTINE_SUITE_KEYS[@]}"; do
     IFS='|' read -r QUARANTINE_PACKAGE QUARANTINE_SUITE \
