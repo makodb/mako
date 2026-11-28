@@ -2,12 +2,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "mako-clock",
     "mako-history",
     "mako-runtime",
+    "mako-workloads",
     "mako-rocksdb",
-    "mako-protocol",
-    "mako-protocol-core",
     "mako-storage-api",
     "mako-storage-masstree",
     "mako-storage-rocksdb",
@@ -20,7 +18,7 @@ members = [
     "sto-masstree",
     "sto-rocksdb",
     "sto-test-datatypes",
-    "sto-tpcc-ffi",
+    "sto-masstree-api",
 ]
 
 [workspace.package]

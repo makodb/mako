@@ -495,6 +495,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
     local_log
         .start_engine(
             raft_host::LocalConfig {
+                initial_state: [0; 32],
                 group: 1,
                 directory: root.path().join("coordinator-log"),
                 create: true,
@@ -605,7 +606,7 @@ fn clients_discover_new_leaders_and_recover_durable_gateway_receipts() {
 
 #[test]
 fn elected_replica_restores_prepared_intent_and_obeys_the_saved_decision() {
-    use mako_protocol::journal::{self, Member, Outcome, Record, Transaction, TransactionId};
+    use sto_core::protocol::journal::{self, Member, Outcome, Record, Transaction, TransactionId};
     use mako_runtime::receiver::RunningShard;
     for saved in [Some(Outcome::Commit), None] {
         let root = tempfile::tempdir().unwrap();

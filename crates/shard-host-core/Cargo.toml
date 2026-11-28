@@ -1,8 +1,7 @@
-# shard-host-core: the decisions of the sharding storage host on the Rust
-# engine that Verus checks. sto-tpcc-ffi's shard_host.rs is the shell around
-# it: it owns the FFI, the raw pointers, the thread-locals, the panic
-# containment and the calls into the engine, and it calls in here for every
-# decision this crate holds.
+# Verified migration/storage rules. The production runtime migration adapter
+# calls the scan-bound functions. The retired C migration shell no longer
+# implements the E1-E7 effects; their generic proofs remain for the contracts.
+# See scripts/shard_host_core_trusted.txt for the actual production mapping.
 #
 # Verified by scripts/verify_shard_host_core.sh with the pinned Verus release.
 # Under plain cargo the verus! macro erases the ghost code, and what is left

@@ -13,6 +13,8 @@ fn external(p: sto::Position) -> api::LogPosition {
     }
 }
 impl api::PersistentApplication for Application {
+    fn initial_state_id(&self) -> api::Result<[u8;32]> { self.0.initial_state_id().map_err(error) }
+    fn complete_bootstrap(&self) -> api::Result<()> { self.0.complete_bootstrap().map_err(error) }
     fn durable(&self) -> bool {
         self.0.distributed_durable()
     }

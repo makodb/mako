@@ -1,0 +1,402 @@
+-- import std token: 451f2fe2-a8a2-47c3-bc32-94786d8fc91b (CMake 4.3.3)
+-- The C compiler identification is Clang 22.1.8
+-- The CXX compiler identification is Clang 22.1.8
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-22 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++-22 - skipped
+-- Detecting CXX compile features
+CMake Warning (dev) at /opt/cmake-4.3.3/share/cmake-4.3/Modules/Compiler/CMakeCommonCompilerMacros.cmake:226 (cmake_language):
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+Call Stack (most recent call first):
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeDetermineCompilerSupport.cmake:110 (cmake_cxx_find_modules_json)
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeTestCXXCompiler.cmake:83 (CMAKE_DETERMINE_COMPILER_SUPPORT)
+  CMakeLists.txt:147 (project)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Detecting CXX compile features - done
+-- Looking for sys/epoll.h
+-- Looking for sys/epoll.h - found
+-- Looking for numa.h
+-- Looking for numa.h - found
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdio.h
+-- Looking for stdio.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for sys/stat.h
+-- Looking for sys/stat.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for time.h
+-- Looking for time.h - found
+-- Looking for execinfo.h
+-- Looking for execinfo.h - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for C++ include type_traits
+-- Looking for C++ include type_traits - found
+-- Looking for getline
+-- Looking for getline - found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME - Success
+-- Looking for numa_available in numa
+-- Looking for numa_available in numa - found
+-- Performing Test _HAVE_CXX_CONSTEXPR
+-- Performing Test _HAVE_CXX_CONSTEXPR - Success
+-- Performing Test _HAVE_CXX_STATIC_ASSERT
+-- Performing Test _HAVE_CXX_STATIC_ASSERT - Success
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES - Success
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS - Success
+-- Performing Test _HAVE_STD_HASH
+-- Performing Test _HAVE_STD_HASH - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE - Success
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR - Success
+-- Performing Test _HAVE___BUILTIN_CLZ
+-- Performing Test _HAVE___BUILTIN_CLZ - Success
+-- Performing Test _HAVE___BUILTIN_CLZL
+-- Performing Test _HAVE___BUILTIN_CLZL - Success
+-- Performing Test _HAVE___BUILTIN_CLZLL
+-- Performing Test _HAVE___BUILTIN_CLZLL - Success
+-- Performing Test _HAVE___BUILTIN_CTZ
+-- Performing Test _HAVE___BUILTIN_CTZ - Success
+-- Performing Test _HAVE___BUILTIN_CTZL
+-- Performing Test _HAVE___BUILTIN_CTZL - Success
+-- Performing Test _HAVE___BUILTIN_CTZLL
+-- Performing Test _HAVE___BUILTIN_CTZLL - Success
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8 - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8 - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL - Success
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_INT64_T_IS_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG - Success
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG - Success
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG - Failed
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of long long
+-- Check size of long long - done
+-- Check size of void *
+-- Check size of void * - done
+-- Performing Test _HAVE_MADV_HUGEPAGE
+-- Performing Test _HAVE_MADV_HUGEPAGE - Success
+-- Performing Test _HAVE_MAP_HUGETLB
+-- Performing Test _HAVE_MAP_HUGETLB - Success
+-- Generated Masstree config.h via CMake: /var/tmp/mako-shard-rust/build_native_rows_undefined/generated/masstree/config.h
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Mako allocator: mode=0, kind=system, library=
+-- Native storage sanitizer: undefined
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- MASSTREE_TX: transaction adapter and wrapper; no application, RocksDB, SRPC or Raft build
+-- Configuring done (13.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_native_rows_undefined
+[1/41] Scanning /var/tmp/mako-shard-rust/src/mako/runtime/thread_registration.cc for CXX dependencies
+[2/41] Scanning /var/tmp/mako-shard-rust/src/masstree/compiler.cc for CXX dependencies
+[3/41] Scanning /usr/lib/llvm-22/share/libc++/v1/std.compat.cppm for CXX dependencies
+[4/41] Scanning /var/tmp/mako-shard-rust/src/masstree/str.cc for CXX dependencies
+[5/41] Scanning /var/tmp/mako-shard-rust/src/masstree/straccum.cc for CXX dependencies
+[6/41] Scanning /var/tmp/mako-shard-rust/src/masstree/json.cc for CXX dependencies
+[7/41] Scanning /var/tmp/mako-shard-rust/src/masstree/string.cc for CXX dependencies
+[8/41] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_rows.cc for CXX dependencies
+[9/41] Scanning /var/tmp/mako-shard-rust/src/masstree/kvthread.cc for CXX dependencies
+[10/41] Scanning /var/tmp/mako-shard-rust/src/masstree/masstree_context.cc for CXX dependencies
+[11/41] Scanning /var/tmp/mako-shard-rust/src/mako/ticker.cc for CXX dependencies
+[12/41] Scanning /var/tmp/mako-shard-rust/src/mako/core.cc for CXX dependencies
+[13/41] Scanning /var/tmp/mako-shard-rust/src/mako/allocator.cc for CXX dependencies
+[14/41] Scanning /var/tmp/mako-shard-rust/src/mako/rcu.cc for CXX dependencies
+[15/41] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc for CXX dependencies
+[16/41] Scanning /var/tmp/mako-shard-rust/src/mako/counter.cc for CXX dependencies
+[17/41] Scanning /var/tmp/mako-shard-rust/src/mako/silo_runtime.cc for CXX dependencies
+[18/41] Scanning /usr/lib/llvm-22/share/libc++/v1/std.cppm for CXX dependencies
+[19/41] Generating CXX dyndep file CMakeFiles/__cmake_cxx_std_23.dir/CXX.dd
+[20/41] Generating CXX dyndep file CMakeFiles/mako_native_storage.dir/CXX.dd
+[21/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/compiler.cc.o
+[22/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/runtime/thread_registration.cc.o
+[23/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/str.cc.o
+[24/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/straccum.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.cc:45:
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.hh:25:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[25/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_rows.cc.o
+[26/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/ticker.cc.o
+[27/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/core.cc.o
+[28/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/counter.cc.o
+[29/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/json.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.cc:27:
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.hh:23:
+In file included from /var/tmp/mako-shard-rust/src/masstree/straccum.hh:25:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+In file included from /var/tmp/mako-shard-rust/src/masstree/json.cc:27:
+/var/tmp/mako-shard-rust/src/masstree/json.hh:781:28: warning: binding dereferenced null pointer to reference has undefined behavior [-Wnull-dereference]
+  781 |         : value_(String(), *(Json*) 0) {
+      |                            ^~~~~~~~~~
+/var/tmp/mako-shard-rust/src/masstree/json.hh:814:42: warning: binding dereferenced null pointer to reference has undefined behavior [-Wnull-dereference]
+  814 |         : j_(j), i_(i), value_(String(), *(Json*) 0) {
+      |                                          ^~~~~~~~~~
+/var/tmp/mako-shard-rust/src/masstree/json.hh:1533:12: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+ 1533 |     memset(&x, 0, sizeof(x));
+      |            ^
+/var/tmp/mako-shard-rust/src/masstree/json.hh:1533:12: note: explicitly cast the pointer to silence this warning
+ 1533 |     memset(&x, 0, sizeof(x));
+      |            ^
+      |            (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:139:20: warning: first argument in call to 'memcpy' is a pointer to non-trivially copyable type 'ObjectItem' [-Wnontrivial-memcall]
+  139 |             memcpy(oi, ob, sizeof(ObjectItem));
+      |                    ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:139:20: note: explicitly cast the pointer to silence this warning
+  139 |             memcpy(oi, ob, sizeof(ObjectItem));
+      |                    ^
+      |                    (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:292:28: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  292 |                     memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (i + 1 - u_.a.x->size));
+      |                            ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:292:28: note: explicitly cast the pointer to silence this warning
+  292 |                     memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (i + 1 - u_.a.x->size));
+      |                            ^
+      |                            (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:367:17: warning: first argument in call to 'memmove' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  367 |         memmove(&u_.a.x->a[pos + 1], &u_.a.x->a[pos], (size - pos) * sizeof(Json));
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:367:17: note: explicitly cast the pointer to silence this warning
+  367 |         memmove(&u_.a.x->a[pos + 1], &u_.a.x->a[pos], (size - pos) * sizeof(Json));
+      |                 ^
+      |                 (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:381:21: warning: first argument in call to 'memmove' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  381 |             memmove(&u_.a.x->a[fpos], &u_.a.x->a[lpos],
+      |                     ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:381:21: note: explicitly cast the pointer to silence this warning
+  381 |             memmove(&u_.a.x->a[fpos], &u_.a.x->a[lpos],
+      |                     ^
+      |                     (void*)
+/var/tmp/mako-shard-rust/src/masstree/json.cc:558:20: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'Json' [-Wnontrivial-memcall]
+  558 |             memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (x + 1 - u_.a.x->size));
+      |                    ^
+/var/tmp/mako-shard-rust/src/masstree/json.cc:558:20: note: explicitly cast the pointer to silence this warning
+  558 |             memset(&u_.a.x->a[u_.a.x->size], 0, sizeof(Json) * (x + 1 - u_.a.x->size));
+      |                    ^
+      |                    (void*)
+11 warnings generated.
+[30/41] Building CXX object CMakeFiles/__cmake_cxx_std_23.dir/usr/lib/llvm-22/share/libc++/v1/std.cppm.o
+/usr/lib/llvm-22/share/libc++/v1/std.cppm:167:15: warning: 'std' is a reserved name for a module [-Wreserved-module-identifier]
+  167 | export module std;
+      |               ^
+1 warning generated.
+[31/41] Building CXX object CMakeFiles/__cmake_cxx_std_23.dir/usr/lib/llvm-22/share/libc++/v1/std.compat.cppm.o
+/usr/lib/llvm-22/share/libc++/v1/std.compat.cppm:83:15: warning: 'std' is a reserved name for a module [-Wreserved-module-identifier]
+   83 | export module std.compat;
+      |               ^
+1 warning generated.
+[32/41] Linking CXX static library lib__cmake_cxx_std_23.a
+[33/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/masstree_context.cc.o
+[34/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/kvthread.cc.o
+/var/tmp/mako-shard-rust/src/masstree/kvthread.cc:49:12: warning: first argument in call to 'memset' is a pointer to non-trivially copyable type 'threadinfo' [-Wnontrivial-memcall]
+   49 |     memset(this, 0, sizeof(*this));
+      |            ^
+/var/tmp/mako-shard-rust/src/masstree/kvthread.cc:49:12: note: explicitly cast the pointer to silence this warning
+   49 |     memset(this, 0, sizeof(*this));
+      |            ^
+      |            (void*)
+1 warning generated.
+[35/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_abi.cc.o
+In file included from /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc:7:
+In file included from /var/tmp/mako-shard-rust/src/mako/masstree_btree.h:31:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_scan.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_tcursor.hh:23:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_key.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree.hh:24:
+In file included from /var/tmp/mako-shard-rust/src/masstree/ksearch.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/kpermuter.hh:22:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[36/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/allocator.cc.o
+[37/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/masstree/string.cc.o
+In file included from /var/tmp/mako-shard-rust/src/masstree/string.cc:50:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[38/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/rcu.cc.o
+In file included from /var/tmp/mako-shard-rust/src/mako/rcu.cc:12:
+In file included from /var/tmp/mako-shard-rust/src/mako/rcu.h:18:
+/var/tmp/mako-shard-rust/src/mako/pxqueue.h:78:33: warning: 'iterator<std::__1::forward_iterator_tag, rcu::delete_entry>' is deprecated [-Wdeprecated-declarations]
+   78 |   class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
+      |                                 ^
+/var/tmp/mako-shard-rust/src/mako/rcu.cc:252:20: note: in instantiation of template class 'basic_px_queue<rcu::delete_entry, 4096>::iterator_<basic_px_group<rcu::delete_entry, 4096>, rcu::delete_entry>' requested here
+  252 |   for (auto it = q.begin(); it != q.end(); ++it, ++n) {
+      |                    ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__iterator/iterator.h:23:8: note: 'iterator<std::__1::forward_iterator_tag, rcu::delete_entry>' has been explicitly marked deprecated here
+   23 | struct _LIBCPP_DEPRECATED_IN_CXX17 iterator {
+      |        ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__config:540:41: note: expanded from macro '_LIBCPP_DEPRECATED_IN_CXX17'
+  540 | #    define _LIBCPP_DEPRECATED_IN_CXX17 _LIBCPP_DEPRECATED
+      |                                         ^
+/usr/lib/llvm-22/bin/../include/c++/v1/__config:504:49: note: expanded from macro '_LIBCPP_DEPRECATED'
+  504 | #      define _LIBCPP_DEPRECATED __attribute__((__deprecated__))
+      |                                                 ^
+1 warning generated.
+[39/41] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/silo_runtime.cc.o
+[40/41] Linking CXX static library libmako_native_storage.a
+[41/41] cd /var/tmp/mako-shard-rust && /usr/bin/python3.12 /var/tmp/mako-shard-rust/scripts/check_native_rust_build.py --build /var/tmp/mako-shard-rust/build_native_rows_undefined --archive /var/tmp/mako-shard-rust/build_native_rows_undefined/libmako_native_storage.a --nm /usr/bin/llvm-nm-22
+native source audit: 16 storage sources; no application or generated C++
+   Compiling masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/masstree)
+   Compiling mtree-sys v0.0.0 (/var/tmp/mako-shard-rust/crates/mtree-sys)
+   Compiling sto-masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree)
+   Compiling sto-masstree-api v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree-api)
+   Compiling mako-history v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-history)
+   Compiling sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+   Compiling sto-test-datatypes v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-test-datatypes)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.40s
+PASS masstree|lib|native::tests::failed_insert_results_preserve_only_proven_consistent_metadata
+PASS masstree|lib|native::tests::scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena
+PASS masstree|lib|native::tests::scan_decoder_rejects_invalid_ids_order_bounds_offsets_and_resume
+PASS masstree|lib|native::tests::scan_decoder_requires_exclusive_last_resume_after_progress
+PASS masstree|lib|native::tests::successful_insert_results_require_an_exact_shape
+PASS masstree|lib|native::tests::trusted_scan_layout_still_rejects_every_borrowing_hazard
+PASS masstree|lib|native::tests::typed_opaque_handles_are_send_sync_without_unsafe_impls
+PASS masstree|lib|tests::every_known_native_status_is_classified_without_boolean_loss
+PASS masstree|lib|tests::fixed_insert_result_matches_native_layout_and_rejects_hostile_fields
+PASS masstree|lib|tests::packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility
+PASS masstree|lib|tests::point_read_result_is_one_native_record_id_slot
+PASS masstree|lib|tests::record_ids_reject_the_reserved_zero
+PASS masstree|lib|tests::runtime_config_builders_preserve_explicit_limits
+PASS masstree|lib|tests::scan_request_builders_preserve_binary_bounds_and_capacities
+PASS masstree|lib|tests::shareable_facades_are_send_sync_without_unsafe_impls
+PASS masstree|native_integration|copied_scan_bounds_directions_and_resumption_round_trip
+PASS masstree|native_integration|negotiated_point_directory_round_trip_and_cross_worker_read
+PASS masstree|native_integration|one_shot_fixed_reads_reuse_results_and_end_native_guards
+PASS masstree|native_integration|scoped_reads_end_before_insert_and_drop_during_unwind
+PASS masstree|native_integration|structure_seal_keeps_reads_open_and_rejects_every_publication_lane
+PASS masstree|native_integration|trusted_bounded_record_id_scan_keeps_bounds_and_inclusive_next_continuation
+PASS masstree|native_integration|trusted_fixed_insert_batch_preserves_order_and_reuses_scratch
+PASS masstree|native_integration|worker_rcu_scope_spans_trees_and_drops_during_unwind
+PASS masstree|native_rows|abandoning_a_native_lock_fences_the_table
+PASS masstree|native_rows|exhausted_budget_rejects_before_directory_allocation_and_reclaims_row_owners
+PASS masstree|native_rows|historical_tombstones_pruning_and_failed_watermarks_are_native
+PASS masstree|native_rows|locks_abort_and_checkpoint_obey_native_ownership
+PASS masstree|native_rows|native_buffers_are_retained_without_copy_and_outlive_rows
+PASS masstree|native_rows|native_directory_owns_binary_keys_and_enforces_capacity
+PASS sto-masstree|history_oracle|native_masstree_histories_are_strictly_serializable
+PASS sto-masstree|local_versions_native|native_local_versions_mix_with_ordered_tables_and_cells
+PASS sto-masstree|native_integration|native_distributed_history_replay_and_retained_participant
+PASS sto-masstree|native_integration|native_point_commit_read_and_abort_round_trip
+PASS sto-masstree|native_integration|native_transactional_scan_resumes_and_rejects_a_phantom
+PASS sto-masstree|native_integration|private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones
+PASS sto-masstree|public_contract|native_table_and_values_are_shared_owners
+PASS sto-masstree-api|capacity|commit_lock_capacity_releases_acquired_locks_without_installing
+PASS sto-masstree-api|capacity|native_row_budget_is_shared_and_exhaustion_preserves_existing_tables
+PASS sto-masstree-api|capacity|scalar_capacity_aborts_staged_changes_and_preserves_existing_access
+PASS sto-masstree-api|capacity|scan_capacity_failure_cannot_commit_prior_writes
+PASS sto-masstree-api|lib|native::tests::post_install_failure_marks_runtime_indeterminate
+PASS sto-masstree-api|native_api|forgotten_guard_keeps_tables_alive_until_explicit_cleanup
+PASS sto-masstree-api|native_api|owned_api_preserves_crud_scan_abort_and_table_lifetime
+PASS sto-masstree-api|native_api|owned_replay_preserves_source_metadata_tombstones_and_clock
+PASS sto-masstree-api|native_api|prepared_rows_freezes_payload_without_installing_or_releasing_the_participant
+PASS sto-masstree-api|native_api|shared_tables_preserve_conflicts_between_affine_workers
+PASS sto-masstree-api|native_api|table_from_another_database_is_rejected_before_access
+PASS sto-masstree-api|native_contract|binary_values_and_sequential_duplicate_mutations_preserve_cross_table_atomicity
+PASS sto-masstree-api|native_contract|sealed_directory_keeps_rows_mutable_and_rejects_new_keys
+PASS sto-masstree-api|participant|abandoned_installed_participant_fences_worker_and_preserves_publication
+PASS sto-masstree-api|participant|checkpoint_exports_committed_tombstones_behind_retained_prepare_locks
+PASS sto-masstree-api|participant|historical_mutations_publish_tombstones_without_corrupting_physical_cardinality
+PASS sto-masstree-api|participant|retained_participant_repeated_locking_installs_copied_final_payload_and_metadata
+Native sanitizer tests: 53 passed

@@ -23,16 +23,21 @@ controls under `src/srpc/scripts`.
 
 ## Code ownership
 
-- `crates/sto-core`: transaction manager, independent of Masstree.
+- `crates/sto-core`: distributed STO, including clocks, OCC+2PC driver and verified
+  decisions. Independent of runtime, sharding, RPC, Raft and concrete engines.
+  `protocol` enables wire/journal/coordination; storage wrappers use `distributed`.
 - `crates/sto-test-datatypes`: synthetic transaction test datatypes.
 - `crates/masstree`, `mtree-sys`: index and ABI layers, separate from transaction support.
-- `crates/sto-masstree`, `sto-tpcc-ffi`: Masstree transaction component. Owns
-  versioned rows/scans, Rust database/worker/table/transaction API and migration
-  storage adapter. The wrapper retains a C storage ABI.
+- `crates/sto-masstree`, `sto-masstree-api`: Masstree transaction component. Owns
+  native C++ byte rows/locks/history and thin Rust STO callbacks, safe database/worker/table/transaction API and retained local participant support. The redundant Rust C storage ABI is retired.
+  Native row ownership is in `src/mako/storage/mtree_rows.{cc,h}`; safe FFI handles
+  are in `crates/masstree/src/native_rows.rs`, counted with this component.
 - `src/cluster`: native sharding and migration actors and proofs.
 - `crates/shard-host-core`: storage-independent host rules and proofs.
 - `crates/mako-runtime`: workers, participants, native SRPC, migration host,
-  gateway, Redis, workloads, configuration and production programs.
+  gateway, Redis, generic configuration and production programs.
+- `crates/mako-workloads`: Rust TPC-C, micro workload, benchmark configuration and
+  `mako_bench`. No component may depend on this leaf package.
 - `src/deptran/raft/{core,store,replay}`: Raft state machine and durable formats.
   The former C++ host and Rust transpiler shell have been removed.
 - `crates/raft-host`: native Raft runtime using SRPC.

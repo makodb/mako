@@ -3,7 +3,7 @@
 
 use super::*;
 #[cfg(feature = "distributed")]
-use mako_clock::distributed::DistributedTimeTerm;
+use crate::clock::distributed::DistributedTimeTerm;
 
 pub(super) type DriverStep = Result<(), Result<CommitOutcome, CommitFailure>>;
 

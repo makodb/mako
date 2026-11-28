@@ -124,53 +124,6 @@ fn ambiguous_external_batch_keeps_rows_and_metadata_together() {
     }
 }
 
-#[test]
-fn private_import_publishes_exact_prefix_and_refuses_reuse_or_a_gap() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("good");
-    let history = vec![
-        Prefix {
-            position: Position { index: 1, term: 2 },
-            fingerprint: [1; 32],
-        },
-        Prefix {
-            position: Position { index: 2, term: 5 },
-            fingerprint: [9; 32],
-        },
-    ];
-    let db = Database::open_distributed(&root, 7, true).unwrap();
-    db.bind_distributed_identity(b"schema").unwrap();
-    db.distributed_table(1).unwrap();
-    db.apply_distributed(None, &[row(None, 50)], &Vec::new())
-        .unwrap();
-    let metadata = vec![(b"pending".to_vec(), b"prepare".to_vec())];
-    db.finish_distributed_import(&history, &metadata).unwrap();
-    drop(db);
-    let db = Database::open_distributed(&root, 7, true).unwrap();
-    assert_eq!(db.applied().unwrap(), history[1].position);
-    assert_eq!(
-        db.distributed_page(1, None, 8).unwrap().0,
-        vec![row(None, 50)]
-    );
-    assert_eq!(db.distributed_metadata().unwrap(), metadata);
-    let saved = db.entry_history().unwrap();
-    for (a, b) in saved.iter().zip(&history) {
-        assert_eq!(a.position, b.position);
-        assert_eq!(a.fingerprint, b.fingerprint);
-    }
-    assert!(db.finish_distributed_import(&history, &metadata).is_err());
-    assert!(db.distributed_metadata().is_err(), "failed import fences");
-    let bad = Database::open_distributed(dir.path().join("gap"), 7, true).unwrap();
-    assert!(bad
-        .finish_distributed_import(&history[1..], &metadata)
-        .is_err());
-    assert_eq!(
-        bad.applied().unwrap(),
-        Position::default(),
-        "invalid prefix was never published"
-    );
-}
-
 fn prefix(index: u64) -> Prefix {
     Prefix {
         position: Position {

@@ -11,6 +11,12 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+/// The generation controller beside a public native RocksDB data path.
+#[cfg(any(feature = "logging", feature = "rocksdb-engine"))]
+pub fn native_data_control_path(path: &std::path::Path) -> PathBuf {
+    sto_rocksdb::control_path(path)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplicaPeer {
@@ -117,6 +123,19 @@ impl Config {
             identity.extend_from_slice(b"MAKO-MIGRATION-CONTROL-01");
         }
         Ok(identity)
+    }
+    #[cfg(any(feature = "logging", feature = "rocksdb-engine"))]
+    pub(crate) fn native_tables(&self) -> Result<Vec<sto_rocksdb::Table>> {
+        let schema = self.schema()?;
+        // Warehouse workloads use their existing physical log IDs. Native
+        // directory adoption is the raw column-family API, not a TPC-C loader.
+        if self.tables.iter().any(|t| t.warehouse) { return Ok(Vec::new()); }
+        let mut tables = self.tables.iter().map(|t| Ok(sto_rocksdb::Table {
+            id: u64::from(schema.log_id(TableKey { table: t.id, warehouse: 0 })?),
+            name: t.name.clone(),
+        })).collect::<Result<Vec<_>>>()?;
+        tables.sort_by_key(|t| t.id);
+        Ok(tables)
     }
     pub fn schema(&self) -> Result<Arc<Schema>> {
         if let EngineConfig::RocksDb { directory, .. } = &self.engine {
@@ -319,11 +338,11 @@ impl RunningNode {
                     EngineConfig::RocksDb { directory, .. } => directory.clone(),
                 };
                 if root.join("rows").exists() || root.join("raft").exists()
-                    || (!data.join("CURRENT").is_file() && (root.join("log").exists() || root.join("log.bootstrap").exists()))
+                    || (!(data.join("CURRENT").is_file() || sto_rocksdb::control_path(&data).join("CURRENT").is_file()) && (root.join("log").exists() || root.join("log.bootstrap").exists()))
                 {
-                    return Err(Error::new(ErrorCode::Invalid, "legacy or missing RocksDB image requires offline conversion; existing files retained"));
+                    return Err(Error::new(ErrorCode::Invalid, "unsupported or missing RocksDB image; restore current-format data and log together"));
                 }
-                if !create && (!data.join("CURRENT").is_file() || !root.join("log/FORMAT").is_file()) {
+                if !create && (!(data.join("CURRENT").is_file() || sto_rocksdb::control_path(&data).join("CURRENT").is_file()) || !root.join("log/FORMAT").is_file()) {
                     return Err(Error::new(ErrorCode::Invalid, "RocksDB data/log missing; creation must be explicit"));
                 }
                 Ok(data)
@@ -356,17 +375,18 @@ impl RunningNode {
                                 .map(|p| (p.create, p.sync_writes))
                         });
                     if settings.is_some_and(|(create, _)| !create)
-                        && !directory.join("CURRENT").is_file()
+                        && !(directory.join("CURRENT").is_file() || sto_rocksdb::control_path(directory).join("CURRENT").is_file())
                     {
                         return Err(Error::new(
                             ErrorCode::Invalid,
                             "RocksDB data directory missing; creation must be explicit",
                         ));
                     }
-                    mako_storage_rocksdb::database(
+                    mako_storage_rocksdb::database_with_tables(
                         directory,
                         u64::from(config.owner),
                         settings.is_some_and(|(_, sync)| sync),
+                        &config.native_tables()?,
                     )
                     .map_err(engine)?
                 }
@@ -453,6 +473,7 @@ impl RunningNode {
                 } else {
                     let settings = config.persistence.as_ref().expect("configured durable log");
                     let mode = crate::log::Mode::Local(raft_host::LocalConfig {
+                        initial_state: [0; 32],
                         group: u64::from(config.owner),
                         directory: settings.directory.join("log"),
                         create: settings.create,
@@ -469,13 +490,25 @@ impl RunningNode {
             let identity = config.storage_identity()?;
             let backing = match store.database.persistent() {
                 Some(application) => application,
-                None => mako_storage_rocksdb::backing(
+                None => mako_storage_rocksdb::backing_with_tables(
                     data_path.as_ref().expect("persistent data path"),
                     u64::from(config.owner),
                     sync_writes,
+                    &config.native_tables()?,
                 )
                 .map_err(engine)?,
             };
+            if backing.initial_state_id().map_err(engine)? != [0;32]
+                && backing.position().map_err(engine)?.index == 0 {
+                for spec in &config.tables {
+                    if !spec.warehouse && spec.kind != crate::migration::Kind::Replicated && spec.initial_owner != config.owner {
+                        let id = schema.log_id(TableKey { table:spec.id, warehouse:0 })?;
+                        if !backing.page(id,None,1).map_err(engine)?.rows.is_empty() {
+                            return Err(Error::new(ErrorCode::Invalid,"adopted rows belong to another shard; partition the initial database before bootstrap"));
+                        }
+                    }
+                }
+            }
             match mode {
                 crate::log::Mode::Local(settings) => local_log
                     .as_ref()

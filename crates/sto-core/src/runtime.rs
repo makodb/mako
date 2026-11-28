@@ -374,7 +374,7 @@ impl Runtime {
 ///
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
-/// require_send::<sto_core::WorkerContext>();
+/// require_send::<crate::WorkerContext>();
 /// ```
 #[derive(Debug)]
 pub struct WorkerContext {

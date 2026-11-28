@@ -301,23 +301,23 @@ fn global_lock_barrier_rejects_point_absence_and_scan_write_skew() {
 #[test]
 fn a_busy_discovery_health_snapshot_does_not_refuse_an_authoritative_completion() {
     struct Log(MemoryLog);
-    impl mako_protocol::journal::Journal for Log {
+    impl sto_core::protocol::journal::Journal for Log {
         fn durable(&self) -> bool {
             false
         }
         fn apply(
             &self,
-            record: &mako_protocol::journal::Record,
-        ) -> Result<mako_protocol::journal::Entry> {
+            record: &sto_core::protocol::journal::Record,
+        ) -> Result<sto_core::protocol::journal::Entry> {
             self.0.apply(record)
         }
         fn lookup(
             &self,
-            id: mako_protocol::journal::TransactionId,
-        ) -> Result<Option<mako_protocol::journal::Entry>> {
+            id: sto_core::protocol::journal::TransactionId,
+        ) -> Result<Option<sto_core::protocol::journal::Entry>> {
             self.0.lookup(id)
         }
-        fn entries(&self) -> Result<Vec<mako_protocol::journal::Entry>> {
+        fn entries(&self) -> Result<Vec<sto_core::protocol::journal::Entry>> {
             self.0.entries()
         }
     }

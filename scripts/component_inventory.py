@@ -35,18 +35,26 @@ PROOF_PATHS = {'src/deptran/raft/core/src/coupling.rs'}
 SUPPORT = {
     'native-masstree': 'src/masstree',
     'native-storage-support': 'src/mako',
+    'native-masstree-rows': 'src/mako/storage',
     'protocol-models': 'tla/mako',
     'historical-models': 'tla',
     'system-tests': 'tests',
     'repository-tooling': '.',
     'srpc-native': 'src/srpc',
 }
+# These files implement the transaction component's native row contract even
+# though its safe FFI module is compiled inside the low-level Masstree crate.
+# Explicit ownership prevents a language move from hiding component size.
+FILE_OWNERS = {path: 'native-masstree-rows' for path in (
+    'src/mako/storage/mtree_rows.cc', 'src/mako/storage/mtree_rows.h',
+    'crates/masstree/src/native_rows.rs', 'crates/masstree/tests/native_rows.rs',
+)}
 CONTRACTS = {
     'src/cluster/range_lock.rs': ['RangeLocks', 'RangeGuard'],
     'crates/mako-rocksdb/src/backend.rs': ['Backend', 'Session'],
-    'crates/mako-protocol/src/commit.rs': ['Effects'],
-    'crates/mako-protocol/src/contracts.rs': ['Transport', 'ParticipantEngine', 'CommitLog', 'CommitPermit'],
-    'crates/mako-protocol/src/journal.rs': ['Journal'],
+    'crates/sto-core/src/protocol/commit.rs': ['Effects'],
+    'crates/sto-core/src/protocol/contracts.rs': ['Transport', 'ParticipantEngine', 'CommitLog', 'CommitPermit'],
+    'crates/sto-core/src/protocol/journal.rs': ['Journal'],
     'crates/mako-storage-api/src/lib.rs': ['Backend', 'PersistentApplication', 'TableBackend',
                                          'WorkerBackend', 'LocalTransaction', 'ParticipantBackend'],
     'crates/sto-core/src/object.rs': ['TObject'],
@@ -82,14 +90,13 @@ def category(path, text, owner):
         return 'tests'
     if (owner in {'protocol-models', 'historical-models', 'srpc-verify'}
             and path.suffix in {'.rs', '.tla'}
+            or 'verification' in path.parts
             or path.stem.endswith(('_proofs', '_refinement'))
             or path.name in PROOF_FILES or path.as_posix() in PROOF_PATHS):
         return 'proofs'
     if (path.suffix not in {'.rs', '.c', '.cc', '.cpp', '.cppm', '.h', '.hh', '.hpp', '.S', '.s'}
             or set(path.parts) & {'bin', 'examples', 'benches', 'bench', 'scripts'}
-            or path.name == 'build.rs' or owner in {'repository-tooling'}
-            or path.as_posix().startswith('crates/mako-runtime/src/tpcc/')
-            or path.as_posix() == 'crates/mako-runtime/src/benchmark.rs'):
+            or path.name == 'build.rs' or owner in {'repository-tooling'}):
         return 'auxiliary'
     return 'source'
 
@@ -133,14 +140,16 @@ def collect(root=ROOT):
             excluded.append({'path': str(path), 'reason': reason})
             continue
         inputs.add(path)
-        if str(path).startswith('src/srpc/') and path.suffix in {'.c', '.h', '.S'} and 'tests' not in path.parts:
+        if str(path) in FILE_OWNERS:
+            owner = FILE_OWNERS[str(path)]
+        elif str(path).startswith('src/srpc/') and path.suffix in {'.c', '.h', '.S'} and 'tests' not in path.parts:
             owner = 'srpc-native'
         else:
             matches = [p for p in names if path.is_relative_to(p)]
             if matches:
                 owner = names[max(matches, key=lambda p: len(p.parts))]
             else:
-                matches = [n for n, p in SUPPORT.items() if path.is_relative_to(Path(p)) and n != 'srpc-native']
+                matches = [n for n, p in SUPPORT.items() if path.is_relative_to(Path(p)) and n not in {'srpc-native', 'native-masstree-rows'}]
                 owner = max(matches, key=lambda n: len(Path(SUPPORT[n]).parts))
                 if owner == 'native-storage-support' and path.suffix in {'.py', '.sh'}:
                     owner = 'repository-tooling'

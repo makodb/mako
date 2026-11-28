@@ -1,0 +1,648 @@
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling libc v0.2.189
+   Compiling parking_lot_core v0.9.12
+   Compiling cfg-if v1.0.4
+   Compiling smallvec v1.15.2
+   Compiling zmij v1.0.23
+   Compiling scopeguard v1.2.0
+   Compiling winnow v1.0.4
+   Compiling serde_json v1.0.151
+   Compiling target-triple v1.0.1
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling glob v0.3.4
+   Compiling termcolor v1.4.1
+   Compiling syn v3.0.4
+   Compiling lock_api v0.4.14
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling parking_lot v0.12.5
+   Compiling serde_derive v1.0.229
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling bincode v1.3.3
+   Compiling trybuild v1.0.120
+   Compiling sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 07s
+     Running unittests src/lib.rs (build_masstree_tx/cargo/debug/deps/sto_core-ef0a046e2273abb3)
+
+running 146 tests
+test clock::distributed::tests::checked_decimal_boundaries_round_trip ... ok
+test clock::distributed::tests::dependency_maximum_uses_base_not_term ... ok
+test clock::distributed::tests::floors_never_lower_and_last_reservation_saturates ... ok
+test clock::distributed::tests::terminal_decision_adoption_succeeds_without_allocation ... ok
+test clock::tests::backward_physical_clock_cannot_move_hlc_backward ... ok
+test clock::tests::expand_round_trips_through_the_public_timestamp ... ok
+test clock::tests::global_clock_is_shared_across_the_process ... ok
+test clock::distributed::tests::concurrent_final_reservation_has_one_winner_and_observe_cannot_revive ... ok
+test clock::tests::origin_is_one_and_constants_match_the_public_timestamp ... ok
+test clock::tests::observe_stamp_ignores_invalid_and_older_stamps ... ok
+test clock::tests::recovery_floor_carries_submillisecond_and_wide_logical_bounds ... ok
+test clock::tests::recovery_floor_never_lowers_the_clock ... ok
+test clock::tests::first_allocation_takes_the_physical_reading ... ok
+test clock::tests::recovery_past_the_final_timestamp_reports_exhaustion ... ok
+test clock::tests::restricted_allocation_refuses_while_the_general_gate_is_held ... ok
+test clock::tests::unreadable_physical_clock_is_reported_as_exhaustion ... ok
+test clock::timestamp::tests::hot_stamp_round_trips_millisecond_aligned_timestamps ... ok
+test clock::distributed::tests::concurrent_reservations_above_one_dependency_are_unique ... ok
+test clock::tests::recovery_floor_precedes_next_allocation ... ok
+test clock::tests::general_gate_is_mutually_exclusive_under_contention ... ok
+test clock::tests::recovery_leaves_the_final_timestamp_mintable ... ok
+test clock::tests::validation_prefix_preserves_hlc_and_gate ... ok
+test clock::timestamp::tests::be_bytes_round_trip_and_reject_zero_origin ... ok
+test direct_commit::tests::borrowed_u64_lock_token_is_exactly_two_words ... ok
+test direct_commit::tests::destructor_free_token_guard_recycles_during_successful_release ... ok
+test direct_commit::tests::exact_identity_index_resolves_hash_collisions_with_full_identity ... ok
+test direct_commit::tests::exact_identity_index_reuses_storage_with_generation_reset ... ok
+test direct_commit::tests::small_identity_sets_keep_the_single_word_filter_lane ... ok
+test error::tests::callback_conversions_preserve_fault_and_capacity_classes ... ok
+test clock::tests::recovery_floor_is_not_raised_for_a_greater_origin_at_the_same_tuple ... ok
+test error::tests::indeterminate_failure_is_a_separate_non_retryable_shape ... ok
+test error::tests::only_version_exhaustion_is_terminal ... ok
+test error::tests::poisoned_failure_always_carries_a_definite_outcome ... ok
+test identity::tests::lock_identity_uses_every_field_and_a_total_key_order ... ok
+test identity::tests::versions_advance_without_wrapping ... ok
+test identity::tests::checked_identifiers_reject_reserved_and_unrepresentable_values ... ok
+test identity::tests::planning_hash_spreads_aligned_and_sequential_scalar_keys ... ok
+test lock::tests::canonical_identities_are_contiguous_and_not_stored_in_typed_frames ... ok
+test lock::tests::contexts_return_the_exact_retained_target_with_the_guard ... ok
+test lock::tests::atomic_version_detached_guard_uses_the_frame_retained_target ... ok
+test lock::tests::acquisition_panic_quarantines_uncertain_frame_and_abort_releases_prior_guards ... ok
+test lock::tests::deduplicates_only_the_same_typed_arc_target ... ok
+test lock::tests::definite_acquisition_abort_returns_frames_to_the_pool ... ok
+test lock::tests::definitely_released_plan_reuses_vectors_and_typed_frame_boxes ... ok
+test lock::tests::direct_atomic_version_lock_publishes_the_commit_generation ... ok
+test lock::tests::enforces_the_unique_lock_limit_without_rejecting_deduplication ... ok
+test lock::tests::erased_lock_use_rejects_wrong_type_runtime_plan_and_slot ... ok
+test lock::tests::erased_lock_use_resolves_in_each_held_context ... ok
+test lock::tests::identity_index_does_not_sort_acquisition_and_release_is_reverse ... ok
+test lock::tests::lock_plan_rejects_mixing_canonical_and_unique_planning ... ok
+test lock::tests::lock_use_slot_encoding_checks_capacity_and_supplies_an_enum_niche ... ok
+test lock::tests::nth_acquisition_failure_releases_prior_locks_once_in_reverse ... ok
+test lock::tests::pooled_frame_acquires_with_the_current_sidecar_identity ... ok
+test lock::tests::prepared_free_validation_context_carries_no_lock_plan_pointer ... ok
+test lock::tests::rejects_a_lock_identity_from_another_runtime ... ok
+test lock::tests::rejects_same_identity_with_another_target_or_type ... ok
+test lock::tests::rejects_stale_and_wrongly_typed_uses_without_unchecked_casts ... ok
+test lock::tests::release_panic_is_not_retried_and_remaining_guards_publish_indeterminate ... ok
+test lock::tests::sorted_identity_lookup_distinguishes_nearby_byte_keys ... ok
+test lock::tests::target_and_guard_access_rejects_stale_typed_and_wrong_plan_uses ... ok
+test lock::tests::unique_acquisition_failure_releases_only_the_request_order_prefix ... ok
+test lock::tests::unique_planning_acquires_in_request_order_and_releases_in_reverse ... ok
+test lock::tests::unique_planning_filter_collisions_still_accept_distinct_identities ... ok
+test lock::tests::unique_planning_rejects_duplicate_identity_without_mutating_the_plan ... ok
+test object::tests::no_predicate_satisfies_the_token_bound ... ok
+test object::tests::phase_views_expose_only_borrows_until_finish ... ok
+test protocol::admission::tests::committed_receipt_survives_retries_and_abort_cannot_relabel_it ... ok
+test protocol::admission::tests::duplicates_require_identical_payload_and_stale_packets_cannot_adopt_a_new_attempt ... ok
+test protocol::admission::tests::higher_term_cancels_uninstalled_attempt_and_abort_creates_cancellation_fence ... ok
+test protocol::admission::tests::install_requires_validation_and_unknown_fences_even_newer_terms ... ok
+test protocol::admission::tests::stream_handoff_requires_cleanup_and_stale_open_cannot_revive_old_packets ... ok
+test protocol::epoch::tests::cut_never_wraps_or_accepts_future_epochs ... ok
+test protocol::epoch::tests::cut_waits_for_all_prior_pins_but_not_new_arrivals ... ok
+test protocol::redo::tests::redo_validates_entire_unit_before_exposing_rows ... ok
+test runtime::tests::commit_clock_exhaustion_is_terminal_and_refuses_new_transactions ... ok
+test runtime::tests::opaque_runtime_is_rejected_instead_of_downgraded ... ok
+test runtime::tests::exhausted_plan_generation_never_wraps_and_fails_before_preflight ... ok
+test runtime::tests::owner_detach_and_reuse_preserves_the_next_plan_generation ... ok
+test runtime::tests::preflight_abort_consumes_a_generation_before_the_next_transaction ... ok
+test runtime::tests::runtime_ids_and_object_ids_are_nonzero_and_distinct ... ok
+test runtime::tests::preflight_panic_after_lock_use_creation_consumes_its_generation ... ok
+test runtime::tests::successful_transactions_receive_distinct_lock_plan_nonces ... ok
+test runtime::tests::worker_capacity_is_checked_and_released ... ok
+test trans_item::tests::observation_state_exposes_each_legal_borrow_shape ... ok
+test trans_item::tests::active_binding_filter_resolves_collisions_exactly_and_resets ... ok
+test trans_item::tests::typed_batch_intent_sidecar_stays_empty_at_high_water_before_reuse ... ok
+test trans_item::tests::typed_batch_keeps_intent_and_preparation_out_of_the_execution_stride ... ok
+test transaction::frame_reuse_tests::rejected_begin_leaves_the_idle_frame_owned_and_reusable ... ok
+test transaction::frame_reuse_tests::frame_reuse_after_clean_failure_does_not_bypass_runtime_poison ... ok
+test transaction::frame_reuse_tests::frame_reuse_resets_metadata_after_typed_materialized_and_doomed_attempts ... ok
+test transaction::item_index_tests::compact_index_entry_remains_two_machine_words ... ok
+test transaction::item_index_tests::colliding_entries_remain_distinct_across_generation_reuse ... ok
+test transaction::frame_reuse_tests::frame_reuse_survives_caller_unwind_and_keeps_terminal_pool_separate ... ok
+test transaction::frame_reuse_tests::frame_reuse_preserves_one_allocation_across_commit_abort_and_drop ... ok
+test transaction::item_index_tests::empty_session_and_batch_restore_the_prior_live_binding_cache ... ok
+test transaction::item_index_tests::failed_or_unwound_access_is_doomed_before_a_cached_address_can_be_reused ... ok
+test transaction::item_index_tests::fresh_index_probe_reuses_vacancy_and_recomputes_it_after_growth ... ok
+test transaction::item_index_tests::impossible_index_growth_reports_the_public_item_limit ... ok
+test transaction::item_index_tests::terminal_read_frame_remains_independent_and_minimal ... ok
+test transaction::item_index_tests::four_resource_round_robin_keeps_latest_binding_and_new_attempt_resets_it ... ok
+test transaction::item_index_tests::exact_resource_item_query_covers_typed_and_materialized_storage ... ok
+test transaction::item_index_tests::same_adapter_bindings_remain_typed_until_adapter_type_changes ... ok
+test transaction::item_index_tests::validated_binding_cache_keeps_only_the_most_recent_binding ... ok
+test transaction::item_index_tests::unique_key_index_generation_wrap_clears_stale_buckets ... ok
+test transaction::item_index_tests::wrong_runtime_binding_is_not_admitted_or_allowed_to_run ... ok
+test txn_array::tests::abort_discards_every_staged_slot_replacement ... ok
+test txn_array::tests::bounds_are_inner_outcomes_and_do_not_doom_the_transaction ... ok
+test txn_array::tests::multi_index_commit_and_repeated_item_access_are_transaction_local ... ok
+test txn_cell::tests::commit_publishes_and_get_observes_read_your_writes ... ok
+test txn_cell::tests::distinct_cells_receive_distinct_objects_and_lock_namespaces ... ok
+test txn_cell::tests::cell_handles_are_send_sync_and_clones_preserve_identity ... ok
+test txn_array::tests::concurrent_disjoint_indices_commit_without_a_coarse_array_lock ... ok
+test txn_cell::tests::observation_is_ordered_by_the_native_occ_generation ... ok
+test txn_cell::tests::explicit_abort_never_changes_the_shared_value ... ok
+test txn_cell::tests::observation_ref_shape_remains_point_read_only ... ok
+test txn_array::tests::stale_reader_aborts_after_a_concurrent_slot_publication ... ok
+test txn_array::tests::stale_read_then_write_is_a_retryable_conflict_not_a_runtime_fault ... ok
+test txn_cell::tests::a_stale_reader_aborts_after_another_worker_publishes ... ok
+test txn_cell::tests::resource_clones_retain_the_object_lease_until_the_last_handle ... ok
+test txn_counter::tests::blind_increment_keeps_the_item_unobserved_until_a_get ... ok
+test txn_cell::tests::registered_resource_handle_is_one_arc_wide ... ok
+test txn_cell::tests::snapshot_validation_detects_publication ... ok
+test txn_counter::tests::increment_before_get_overlays_the_staged_delta_and_abort_is_invisible ... ok
+test txn_counter::tests::counter_and_cell_commit_through_two_erased_adapter_types ... ok
+test txn_counter::tests::repeated_increments_compose_with_explicit_wrapping_semantics ... ok
+test version::tests::acquire_and_own_validation_preserve_the_observed_generation ... ok
+test version::tests::commit_release_requires_and_publishes_a_newer_generation ... ok
+test version::tests::abort_release_restores_the_exact_observation ... ok
+test version::tests::detached_commit_and_indeterminate_release_match_owned_guards ... ok
+test version::tests::detached_guard_acquires_and_abort_releases_the_exact_target ... ok
+test version::tests::detached_guard_fails_closed_if_the_atomic_is_moved ... ok
+test version::tests::detached_guard_is_a_plain_static_token_with_bounded_layout ... ok
+test txn_counter::tests::stale_read_then_increment_is_a_retryable_conflict_not_a_runtime_fault ... ok
+test version::tests::detached_guard_rejects_a_different_target_without_touching_either_word ... ok
+test version::tests::dropping_a_held_detached_guard_deliberately_leaves_the_lock_held ... ok
+test version::tests::indeterminate_exhaustion_fails_closed_with_the_lock_held ... ok
+test version::tests::indeterminate_release_advances_and_never_abort_restores ... ok
+test version::tests::maximum_owner_round_trips_through_the_packed_state ... ok
+test version::tests::observed_detached_acquisition_rejects_stale_and_busy_words_without_a_leak ... ok
+test version::tests::stable_target_abort_restores_and_rejects_a_second_release ... ok
+test version::tests::stable_target_commit_rejects_stale_and_publishes_newer_generation ... ok
+test version::tests::stable_target_indeterminate_advances_and_exhaustion_fails_closed ... ok
+test version::tests::only_one_contending_owner_acquires_the_version ... ok
+test version::tests::stable_target_release_rejects_wrong_target_and_mismatched_word ... ok
+test clock::tests::concurrent_hlc_allocation_is_unique_and_contiguous ... ok
+test clock::tests::enter_general_waits_for_the_holder ... ok
+
+test result: ok. 146 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running unittests src/bin/sto_core_array_bench.rs (build_masstree_tx/cargo/debug/deps/sto_core_array_bench-b4f66a72c4e244b4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/commit_hook.rs (build_masstree_tx/cargo/debug/deps/commit_hook-69a45c4a943084fd)
+
+running 6 tests
+test hook_panics_are_contained_as_poisoned_definite_aborts ... ok
+test post_install_hook_panic_is_indeterminate ... ok
+test read_only_commit_skips_the_upper_hook ... ok
+test pre_install_rejection_is_definite_and_installs_nothing ... ok
+test writing_commit_invokes_all_hook_phases_once ... ok
+test reservation_rejection_and_capacity_are_definite_aborts ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compile_fail.rs (build_masstree_tx/cargo/debug/deps/compile_fail-d4956246c85b108d)
+
+running 1 test
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling verus_prettyplease v0.0.0-2026-08-02-0125
+   Compiling libc v0.2.189
+   Compiling parking_lot_core v0.9.12
+   Compiling hashbrown v0.17.1
+   Compiling rustversion v1.0.23
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.2
+    Checking scopeguard v1.2.0
+    Checking cfg-if v1.0.4
+   Compiling vstd v0.0.0-2026-08-02-0125
+   Compiling convert_case v0.4.0
+    Checking smallvec v1.15.2
+    Checking verus_builtin v0.0.0-2026-08-02-0125
+    Checking lock_api v0.4.14
+   Compiling indexmap v2.14.2
+    Checking arc-swap v1.9.2
+   Compiling verus_syn v0.0.0-2026-08-02-0125
+   Compiling syn v2.0.119
+   Compiling syn v3.0.4
+    Checking parking_lot v0.12.5
+   Compiling serde_derive v1.0.229
+   Compiling synstructure v0.13.2
+   Compiling verus_state_machines_macros v0.0.0-2026-08-02-0125
+   Compiling verus_builtin_macros v0.0.0-2026-08-02-0125
+    Checking bincode v1.3.3
+    Checking sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+    Checking sto-core-tests v0.0.0 (/var/tmp/mako-shard-rust/build_masstree_tx/cargo/tests/trybuild/sto-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.63s
+
+
+test tests/ui/acquire_context.rs ... ok
+test tests/ui/entry.rs ... ok
+test tests/ui/execution_check_context.rs ... ok
+test tests/ui/finish_context.rs ... ok
+test tests/ui/finish_item.rs ... ok
+test tests/ui/install_context.rs ... ok
+test tests/ui/install_item.rs ... ok
+test tests/ui/non_send_guard.rs ... ok
+test tests/ui/predicate_context.rs ... ok
+test tests/ui/preflight_context.rs ... ok
+test tests/ui/preflight_free_validation_context.rs ... ok
+test tests/ui/preflight_item.rs ... ok
+test tests/ui/release_context.rs ... ok
+test tests/ui/resolved_item_session.rs ... ok
+test tests/ui/terminal_read_typestate.rs ... ok
+test tests/ui/unique_item_keys.rs ... ok
+test tests/ui/validation_context.rs ... ok
+test tests/ui/worker_context.rs ... ok
+
+
+test scoped_and_thread_local_capabilities_do_not_escape ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 36.51s
+
+     Running tests/failure_protocol.rs (build_masstree_tx/cargo/debug/deps/failure_protocol-e662d27d704a1968)
+
+running 105 tests
+test abort_finish_panic_is_poisoned_with_a_definite_aborted_outcome ... ok
+test abort_release_panic_is_definitely_aborted_but_skips_finish_under_uncertain_lock ... ok
+test borrowed_direct_plan_rejects_a_changed_target_before_acquisition ... ok
+test acquisition_failures_release_prior_guards_and_panic_quarantines_items ... ok
+test direct_acquisition_failure_releases_the_held_prefix_and_definitely_aborts ... ok
+test direct_capability_falls_back_after_typed_batch_materialization ... ok
+test direct_capability_panic_on_second_binding_aborts_the_live_prefix_once ... ok
+test colliding_binding_filter_bits_still_contribute_each_exact_capability ... ok
+test direct_capability_panic_is_contained_during_first_binding_activation ... ok
+test direct_capability_summary_resets_after_generic_commit_and_explicit_abort ... ok
+test direct_terminal::singleton_hook_rejections_abort_without_installing_and_keep_worker_reusable ... ok
+test direct_install_release_and_finish_panics_preserve_commit_boundaries ... ok
+test direct_terminal::singleton_conflicts_and_faults_keep_exact_cleanup ... ok
+test direct_terminal::singleton_panic_payload_outlives_abort_cleanup_even_when_its_drop_panics ... ok
+test direct_terminal::single_and_multi_direct_hooks_preserve_phase_order ... ok
+test direct_terminal::singleton_preinstall_panics_preserve_definite_abort_and_poison ... ok
+test direct_typed_commit_uses_request_order_and_finishes_without_generic_preparation ... ok
+test direct_validation_conflict_releases_every_guard_before_abort_finish ... ok
+test direct_terminal::singleton_repeated_write_retires_one_commit_item_and_reuses_the_worker ... ok
+test distinct_resource_unique_groups_remain_direct_commit_eligible ... ok
+test drop_only_direct_abort_still_runs_finish_for_conflicts_faults_and_panics ... ok
+test distinct_resource_direct_capability_mismatch_uses_generic_commit ... ok
+test drop_only_direct_commit_skips_finish_and_tears_down_owned_state_in_reverse ... ok
+test drop_only_direct_install_panic_keeps_indeterminate_state_quarantined ... ok
+test drop_only_direct_teardown_panic_is_a_definite_committed_failure ... ok
+test drop_only_preflight_free_abort_still_runs_regular_finish_once ... ok
+test drop_only_preflight_free_read_mixes_with_normal_write_cleanup ... ok
+test drop_only_preflight_free_commit_skips_callbacks_and_tears_down_exactly_once ... ok
+test drop_only_preflight_free_teardown_panic_is_contained_after_commit ... ok
+test empty_transaction_commits_without_a_lock_plan_or_hook ... ok
+test explicit_abort_and_drop_finish_once_in_reverse_without_preflight ... ok
+test explicit_abort_never_selects_preflight_free_commit_callbacks ... ok
+test finish_panic_after_publication_is_poisoned_but_definitely_committed ... ok
+test guard_destructor_panic_is_contained_without_dropping_another_guard ... ok
+test indexed_direct_plan_rejects_a_late_physical_identity_alias_before_acquisition ... ok
+test indexed_typed_prefix_and_unique_suffix_apply_drop_only_committed_finish ... ok
+test indexed_typed_prefix_and_unique_suffix_remain_direct_commit_eligible ... ok
+test injective_borrowed_direct_plan_commits_distinct_items_in_request_order ... ok
+test injective_borrowed_direct_plan_still_checks_both_intent_shapes ... ok
+test injective_borrowed_direct_plan_still_enforces_the_lock_limit ... ok
+test injective_borrowed_direct_plan_still_rejects_a_wrong_runtime ... ok
+test injective_token_acquire_failures_release_prefix_and_preserve_certainty ... ok
+test injective_token_plan_rejects_a_changed_target_before_acquisition ... ok
+test injective_token_release_panic_quarantines_the_uncertain_guard ... ok
+test injective_token_released_guard_drop_panic_is_contained ... ok
+test install_observer::borrowed_direct_batches_stop_after_one_of_two_real_installs ... ok
+test install_observer::materialized_batch_stops_after_one_of_two_real_installs ... ok
+test injective_token_rollback_release_panic_quarantines_the_plan ... ok
+test install_observer::owned_direct_batch_stops_after_one_of_two_real_installs ... ok
+test install_observer::typed_batch_stops_after_one_of_two_real_installs ... ok
+test install_panic_is_indeterminate_and_never_uses_aborted_disposition ... ok
+test item_init_fault_and_panic_are_contained_and_doom_the_transaction ... ok
+test installed_participant_cleanup_failure_is_definitely_committed ... ok
+test later_fallback_conflict_aborts_an_already_certified_preflight_free_read ... ok
+test local_committed_cleanup_failure_is_not_an_abort_and_completion_is_exactly_once ... ok
+test local_certification_failure_is_definite_abort_before_external_submission ... ok
+test local_committed_publication_failure_preserves_external_decision ... ok
+test local_whole_batch_unwind_is_fenced_and_cannot_be_retried ... ok
+test normal_commit_releases_lock_order_and_finishes_reverse_item_order_once ... ok
+test observation_destructor_panic_retains_the_separate_upgraded_predicate ... ok
+test local_unsubmitted_drop_aborts_but_submitted_drop_runs_no_release_or_cleanup ... ok
+test one_distinct_resource_without_direct_capability_uses_generic_commit ... ok
+test pooled_adapter_destructor_panic_is_contained_on_different_type_replacement ... ok
+test pooled_adapter_destructor_panic_is_contained_on_same_type_rebind ... ok
+test pooled_adapter_destructor_panic_is_contained_when_worker_drops ... ok
+test post_install_hook_runs_after_install_and_before_release_in_both_write_lanes ... ok
+test predicate_upgrade_success_is_validated_and_conflict_installs_nothing ... ok
+test preflight_free_capability_falls_back_for_intent_predicate_and_unobserved_items ... ok
+test preflight_failure_at_item_n_tracks_prepared_state_and_reverse_finish ... ok
+test preflight_free_committed_finish_panic_is_definitely_committed_and_poisoned ... ok
+test preflight_free_read_keeps_final_certification_and_mixes_with_normal_locks ... ok
+test rebound_unique_batch_queries_direct_capability_once_for_its_binding ... ok
+test predicate_and_validation_faults_or_panics_abort_before_install ... ok
+test preflight_free_validation_conflict_fault_and_panic_keep_definite_abort ... ok
+test retained_participant_preserves_poisoned_and_unknown_outcomes ... ok
+test release_panic_quarantines_uncertain_frame_and_advances_remaining_guards ... ok
+test rollback_panic_during_acquisition_quarantines_items_and_releases_other_guards ... ok
+test singleton_view::singleton_changed_targets_keep_each_failure_phase ... ok
+test swallowed_access_error_dooms_and_finishes_the_inserted_item ... ok
+test singleton_view::singleton_guard_and_finish_panics_keep_cleanup_boundaries ... ok
+test singleton_view::prepared_view_preserves_target_callback_positions_and_pool_reuse ... ok
+test singleton_view::singleton_target_borrow_panics_keep_each_failure_phase ... ok
+test target_destructor_runs_after_its_guard_and_stops_before_another_frame ... ok
+test terminal_read_operation_unwind_aborts_recorded_prefix_and_reuses_worker ... ok
+test typed_batch_materialization_preserves_ordinary_pool_tail_lifetime ... ok
+test unique_batch_contains_pooled_adapter_panic_on_same_type_rebind ... ok
+test unique_batch_install_and_finish_panics_keep_boundary_classification ... ok
+test swallowed_fault_poison_and_internal_access_errors_poison_definite_abort ... ok
+test wholly_preflight_free_read_commit_uses_only_certification_and_committed_finish ... ok
+test terminal_read_commit_uses_only_validation_and_reverse_drop_cleanup ... ok
+test terminal_read_pool_contains_adapter_panic_when_worker_drops ... ok
+test terminal_read_pool_contains_adapter_panic_on_rebind ... ok
+test terminal_read_post_certification_drop_panic_is_definitely_committed ... ok
+test typed_unique_batch_pool_contains_same_type_rebind_panic ... ok
+test terminal_read_validation_failures_keep_definite_abort_classification ... ok
+test unique_batch_item_init_failure_aborts_only_the_initialized_prefix ... ok
+test terminal_read_explicit_abort_and_operation_failure_are_drop_only ... ok
+test terminal_read_requires_its_stronger_explicit_capability ... ok
+test unique_batch_preflight_failure_tracks_typed_prefix_and_outcome ... ok
+test typed_unique_batch_pool_contains_adapter_panic_when_worker_drops ... ok
+test unique_batch_commit_preserves_phase_lock_and_reverse_finish_order ... ok
+test unique_batch_preflight_free_path_is_typed_ordered_and_contained ... ok
+test terminal_read_preparation_errors_abort_and_apply_runtime_poison_policy ... ok
+test validation_conflict_is_a_definite_abort_and_installs_nothing ... ok
+test unique_batch_predicate_and_validation_callbacks_preserve_failure_semantics ... ok
+
+test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/frame_allocations.rs (build_masstree_tx/cargo/debug/deps/frame_allocations-6ce693ec47a157f4)
+
+running 1 test
+test reused_frames_do_not_allocate_at_transaction_boundaries ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/legacy_coordinator.rs (build_masstree_tx/cargo/debug/deps/legacy_coordinator-16ebed34b4c670c9)
+
+running 5 tests
+test a_backend_close_cannot_relabel_installed_rows_as_a_retryable_abort ... ok
+test every_preinstallation_refusal_leaves_rows_unchanged_and_closes_both_sides ... ok
+test successful_commit_publishes_both_rows_and_log_above_every_dependency ... ok
+test failures_before_or_after_an_install_effect_are_unknown_and_never_rolled_back ... ok
+test timestamp_exhaustion_does_not_wrap_or_install ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/legacy_tid.rs (build_masstree_tx/cargo/debug/deps/legacy_tid-c309205d7de6a39c)
+
+running 5 tests
+test accepts_the_observed_version_or_the_same_version_locked_here ... ok
+test advances_opaque_and_unflagged_versions_with_cpp_wrapping_semantics ... ok
+test classifies_unlocked_owned_and_foreign_versions ... ok
+test layout_matches_the_existing_sto_version_word ... ok
+test opacity_check_uses_the_signed_wrapping_delta_and_rejects_flags ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/local_versions.rs (build_masstree_tx/cargo/debug/deps/local_versions-f925cceebff24e10)
+
+running 7 tests
+test local_acquisition_checks_capacity_without_changing_exhausted_words ... ok
+test local_observed_acquisition_does_not_turn_stale_or_busy_words_into_exhaustion ... ok
+test binding_write_union_survives_mixed_types_and_worker_pool_reuse ... ok
+test local_stable_release_rejects_wrong_targets_and_repeated_release ... ok
+test local_exhaustion_precedes_hooks_and_refuses_later_commit_starts ... ok
+test local_writes_without_commit_id_still_run_every_writing_hook ... ok
+test local_versions_preserve_final_read_validation ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/participant.rs (build_masstree_tx/cargo/debug/deps/participant-6dce28a545ea9a5b)
+
+running 5 tests
+test incremental_counter_reads_and_repeated_writes_keep_the_same_attempt ... ok
+test installed_drop_commits_but_collecting_and_validated_drop_abort ... ok
+test operation_unwind_restores_frame_ownership_and_drop_releases_held_locks ... ok
+test partial_lock_conflict_releases_prior_guards_and_preserves_payloads ... ok
+test read_only_participant_certifies_and_terminates_without_install ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_delivery.rs (build_masstree_tx/cargo/debug/deps/protocol_delivery-00af57f0de3db59b)
+
+running 5 tests
+test delayed_abort_cannot_cancel_successor_and_retired_lease_cannot_execute ... ok
+test lost_install_reply_replays_exact_receipt_without_repeating_effects ... ok
+test lost_stage_reply_still_enrolls_peer_and_cleanup_visits_every_peer ... ok
+test uncertain_install_survives_lane_destruction_and_prevents_migration_drain ... ok
+test stale_reply_is_rejected_and_changed_target_cannot_rebind_an_attempt ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_log_contract.rs (build_masstree_tx/cargo/debug/deps/protocol_log_contract-1be06401a9efaaa6)
+
+running 1 test
+test memory_log_obeys_the_common_contract_without_restart_durability ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_occ_histories.rs (build_masstree_tx/cargo/debug/deps/protocol_occ_histories-915bca5b3b93e689)
+
+running 2 tests
+test independent_transactions_can_all_commit_without_a_shard_wide_reservation ... ok
+test point_absence_and_range_cycles_have_a_serial_order_under_every_small_schedule ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/protocol_publication.rs (build_masstree_tx/cargo/debug/deps/protocol_publication-ba9cf2b63ee75ca3)
+
+running 1 test
+test cell_and_counter_publish_during_install_while_the_later_array_stays_locked ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_range_lock.rs (build_masstree_tx/cargo/debug/deps/protocol_range_lock-f177757932d73f4f)
+
+running 6 tests
+test cancelling_pending_migration_preserves_old_transaction_protection ... ok
+test invalid_and_foreign_access_fail_and_adjacent_ranges_do_not_overlap ... ok
+test duplicate_identity_overlap_and_terminal_replay_are_checked ... ok
+test reset_invalidates_old_guards_without_releasing_recovered_work ... ok
+test frozen_range_waits_for_old_work_and_blocks_new_points_absences_and_scans ... ok
+test concurrent_admission_and_acquisition_have_no_unprotected_gap ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/protocol_two_phase.rs (build_masstree_tx/cargo/debug/deps/protocol_two_phase-cf7fbb4785ed3184)
+
+running 9 tests
+test lock_failures_clean_every_member_without_validation_or_installation ... ok
+test preparing_or_prepared_work_cannot_autonomously_abort_or_release_protection ... ok
+test journal_rejects_changed_intents_decisions_membership_and_durability ... ok
+test repeated_votes_cannot_replace_other_members_or_skip_the_lock_barrier ... ok
+test successful_commit_has_a_global_lock_barrier_and_saved_decision_before_rows ... ok
+test uncertain_decision_never_aborts_and_recovery_obeys_the_saved_record ... ok
+test lost_prepare_acknowledgements_resolve_with_authoritative_abort ... ok
+test partial_commit_delivery_is_completed_idempotently_after_restart ... ok
+test volatile_aggregate_intents_do_not_expand_rpc_or_durable_frame_limits ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/protocol_wire_compatibility.rs (build_masstree_tx/cargo/debug/deps/protocol_wire_compatibility-d3d0e21f5a7b9640)
+
+running 1 test
+test existing_v2_control_envelopes_keep_their_wire_tags ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/public_adapter_contract.rs (build_masstree_tx/cargo/debug/deps/public_adapter_contract-e119f060121bebeb)
+
+running 11 tests
+test local_commit_visits_authoritative_final_intents_and_publishes_once ... ok
+test local_completion_disables_single_item_install_time_unlock ... ok
+test downstream_adapter_uses_two_resource_classes_and_one_typed_physical_lock ... ok
+test local_committed_apply_error_retains_locks_and_cannot_retry_or_abort ... ok
+test local_read_only_completion_uses_ordinary_validation_without_submission ... ok
+test local_sealed_read_only_item_is_retained_without_fabricated_intent ... ok
+test local_certification_rechecks_reads_after_lock_acquisition ... ok
+test local_sealed_views_can_be_collected_without_copying_core_owned_intents ... ok
+test local_definite_rejection_restores_versions_even_after_unknown ... ok
+test local_submitted_unknown_and_committed_drop_never_restore_aborted_versions ... ok
+test participant_refreshes_preparation_and_retains_aliased_guards_until_finish ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reference_history.rs (build_masstree_tx/cargo/debug/deps/reference_history-9664cc7e7b807c96)
+
+running 4 tests
+test lock_capacity_failure_cannot_partially_publish_a_cross_object_write ... ok
+test a_concurrent_reader_never_commits_a_torn_cross_object_snapshot ... ok
+test cross_object_histories_commit_or_abort_as_one_reference_step ... ok
+test same_item_histories_match_a_wrapping_reference_model ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/transactions.rs (build_masstree_tx/cargo/debug/deps/transactions-b360a45ddc3c3cfc)
+
+running 47 tests
+test caught_access_error_permanently_dooms_the_transaction ... ok
+test body_panic_runs_drop_abort_before_unwinding ... ok
+test cell_commit_abort_drop_and_read_your_writes ... ok
+test configured_item_limit_dooms_access_before_aliasing_an_item ... ok
+test configured_lock_limit_is_a_definite_preinstall_abort ... ok
+test consecutive_exact_item_access_bypasses_rehashing ... ok
+test direct_unique_group_rejects_a_previously_used_resource_binding ... ok
+test distinct_binding_scalars_extend_the_unindexed_typed_suffix ... ok
+test distinct_resource_unique_groups_append_without_key_hashing ... ok
+test distinct_resource_unique_groups_check_total_capacity_before_initialization ... ok
+test full_key_equality_survives_hash_collisions_and_reuses_items ... ok
+test hashed_unique_item_keys_resolve_collisions_and_reuse_generations ... ok
+test indexed_prefix_unique_suffix_operation_error_aborts_every_activated_item ... ok
+test indexed_prefix_suffix_hash_unwind_aborts_every_item_and_worker_recovers ... ok
+test indexed_typed_prefix_materializes_only_the_unique_suffix_into_ordinary_storage ... ok
+test indexed_unique_item_key_order_unwind_leaves_scratch_reusable ... ok
+test indexed_unique_item_keys_scale_exactly_and_reuse_scratch ... ok
+test multiple_unique_groups_survive_scalar_and_mixed_adapter_materialization ... ok
+test one_transaction_commits_across_two_independent_objects ... ok
+test resolved_item_session_latches_errors_and_checks_capacity_before_create ... ok
+test pooled_slots_rebind_across_mixed_types_resources_and_colliding_keys ... ok
+test resolved_item_session_reuses_items_and_resolver_contexts ... ok
+test resolved_session_unique_batch_latches_its_first_error ... ok
+test resolved_session_falls_back_after_same_resource_unique_group ... ok
+test resolved_session_unique_batch_can_fall_back_without_dooming ... ok
+test second_resource_group_init_failure_aborts_prefix_and_pool_recovers ... ok
+test scalar_typed_append_error_aborts_the_activated_item ... ok
+test same_binding_typed_pool_recovers_after_item_init_capacity_failure ... ok
+test second_resource_group_unwind_aborts_all_active_items_and_worker_recovers ... ok
+test shorter_typed_batch_after_long_disposed_prefix_materializes_coherently ... ok
+test streaming_unique_batch_reports_capacity_after_its_successful_prefix ... ok
+test streaming_unique_batch_retains_only_the_stopped_prefix ... ok
+test typed_batch_intent_drop_panic_is_contained_before_pool_reuse ... ok
+test typed_batch_intent_sidecar_reuses_three_one_three_high_water ... ok
+test unindexed_scalar_prefix_accepts_unique_suffix_and_materializes_on_lookup ... ok
+test unique_batch_checks_whole_capacity_before_initializing_an_item ... ok
+test unique_batch_error_aborts_only_the_initialized_prefix ... ok
+test unique_batch_hash_unwind_after_materialization_aborts_complete_prefix ... ok
+test two_read_modify_write_transactions_cannot_both_commit ... ok
+test unique_batch_lazily_materializes_an_exact_index_for_later_access ... ok
+test unique_batch_materializes_before_mixed_resource_and_adapter_access ... ok
+test unique_batch_requires_an_empty_transaction_and_dooms_misuse ... ok
+test unique_batch_replaces_a_different_typed_pooled_slot ... ok
+test unique_item_keys_use_exact_equality_without_hashes ... ok
+test unique_batch_unwind_runs_drop_abort_and_leaves_the_worker_reusable ... ok
+test validated_binding_cache_distinguishes_runtime_class_and_adapter_type ... ok
+test wrong_runtime_access_dooms_without_aliasing_the_resource ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests sto_core
+
+running 72 tests
+test sto-core/src/capability_contracts.rs - capability_contracts::GuardBorrow (line 285) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupItemBorrow (line 247) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::UniqueKeysBorrow (line 167) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::AcquireBorrow (line 181) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupItemAffinity (line 117) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupBorrow (line 193) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallAffinity (line 204) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupAffinity (line 63) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightFreeBorrow (line 229) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::GuardAffinity (line 145) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::LockBorrow (line 205) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightFreeAffinity (line 99) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PredicateAffinity (line 81) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ExecutionAffinity (line 57) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightItemAffinity (line 270) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PredicateBorrow (line 211) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ReleaseBorrow (line 217) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ResolvedSessionBorrow (line 274) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::LockAffinity (line 75) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ReleaseAffinity (line 87) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightItemBorrow (line 265) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ValidationAffinity (line 93) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ProxyAffinity (line 108) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ValidationBorrow (line 223) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupItemAffinity (line 252) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupAffinity (line 198) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ProxyAffinity (line 243) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ValidationAffinity (line 228) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::WorkerAffinity (line 144) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightItemAffinity (line 135) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightFreeAuthority (line 176) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::AcquireAffinity (line 51) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ExecutionBorrow (line 187) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::TerminalReadAuthority (line 189) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallItemBorrow (line 256) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallItemAffinity (line 126) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ProxyBorrow (line 238) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::TerminalReadAuthority (line 199) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::AcquireAffinity (line 186) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallItemAffinity (line 261) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightFreeAffinity (line 234) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::LockAffinity (line 210) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::GuardAffinity (line 280) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallAffinity (line 69) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ExecutionAffinity (line 192) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ReleaseAffinity (line 222) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PredicateAffinity (line 216) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallBorrow (line 199) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupItemBorrow (line 112) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::AcquireBorrow (line 46) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ExecutionBorrow (line 52) ... ok
+test sto-core/src/runtime.rs - runtime::WorkerContext (line 375) - compile fail ... ok
+test sto-core/src/local_commit.rs - transaction::local_commit::LocalCommit (line 79) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::LockBorrow (line 70) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::CleanupBorrow (line 58) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::WorkerAffinity (line 279) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PredicateBorrow (line 76) ... ok
+test sto-core/src/local_commit.rs - transaction::local_commit::LocalCommit (line 74) - compile fail ... ok
+test sto-core/src/transaction.rs - transaction::Transaction (line 923) - compile fail ... ok
+test sto-core/src/transaction.rs - transaction::Transaction (line 916) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ReleaseBorrow (line 82) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallItemBorrow (line 121) ... ok
+test sto-core/src/transaction.rs - transaction::Transaction (line 930) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::InstallBorrow (line 64) ... ok
+test sto-core/src/transaction.rs - transaction::TerminalReadTransaction (line 976) - compile fail ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ProxyBorrow (line 103) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightFreeBorrow (line 94) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::UniqueKeysBorrow (line 161) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::GuardBorrow (line 147) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::PreflightItemBorrow (line 130) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ValidationBorrow (line 88) ... ok
+test sto-core/src/capability_contracts.rs - capability_contracts::ResolvedSessionBorrow (line 139) ... ok
+
+test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+

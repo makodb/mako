@@ -1,5 +1,5 @@
 #![cfg(feature = "replication")]
-#[path = "../../mako-protocol/tests/support/log_contract.rs"]
+#[path = "../../sto-core/tests/protocol_support/log_contract.rs"]
 mod log_contract;
 use mako_runtime::{
     log::{LocalLog, MemoryLog, ReplicatedLog},
@@ -29,6 +29,7 @@ fn all_three_backends_obey_the_same_transaction_log_contract() {
     local
         .start_engine(
             raft_host::LocalConfig {
+                initial_state: [0; 32],
                 group: 17,
                 directory: root.path().join("local/log"),
                 create: true,

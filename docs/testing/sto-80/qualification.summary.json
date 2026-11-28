@@ -1,0 +1,110 @@
+[
+  {
+    "threads": 1,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 3214041.410678,
+      "rust": 2988054.488173761
+    },
+    "ratio": 0.929687613310319
+  },
+  {
+    "threads": 1,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 2204678.923045,
+      "rust": 1971139.8827259718
+    },
+    "ratio": 0.8940711784024882
+  },
+  {
+    "threads": 2,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 6719495.612253,
+      "rust": 6146450.77080993
+    },
+    "ratio": 0.9147190690327823
+  },
+  {
+    "threads": 2,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 4681554.308269,
+      "rust": 4022511.495482647
+    },
+    "ratio": 0.8592256397362966
+  },
+  {
+    "threads": 4,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 13319671.055705,
+      "rust": 12287497.553086964
+    },
+    "ratio": 0.9225075830850987
+  },
+  {
+    "threads": 4,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 9350490.178207,
+      "rust": 8051510.996349337
+    },
+    "ratio": 0.86107902825403
+  },
+  {
+    "threads": 8,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 26184139.014558,
+      "rust": 24003066.392466616
+    },
+    "ratio": 0.9167025266372617
+  },
+  {
+    "threads": 8,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 16552256.291959,
+      "rust": 14876959.045066496
+    },
+    "ratio": 0.8987873787511159
+  },
+  {
+    "threads": 16,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 53887182.018798,
+      "rust": 51614237.30033815
+    },
+    "ratio": 0.9578203084053095
+  },
+  {
+    "threads": 16,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 31694762.71292,
+      "rust": 28502132.13734202
+    },
+    "ratio": 0.8992694596108606
+  },
+  {
+    "threads": 32,
+    "write_percent": 0,
+    "median_ops_per_sec": {
+      "cpp": 102871505.53707,
+      "rust": 96595925.47954942
+    },
+    "ratio": 0.9389959345422513
+  },
+  {
+    "threads": 32,
+    "write_percent": 50,
+    "median_ops_per_sec": {
+      "cpp": 56241226.111849,
+      "rust": 47644712.97365604
+    },
+    "ratio": 0.8471492580709966
+  }
+]

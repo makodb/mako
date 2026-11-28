@@ -418,7 +418,7 @@ fn downstream_adapter_uses_two_resource_classes_and_one_typed_physical_lock() {
 #[cfg(feature = "distributed")]
 #[test]
 fn participant_refreshes_preparation_and_retains_aliased_guards_until_finish() {
-    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_core::clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
     use sto_core::{CommitOutcome, ParticipantPhase};
 
     let runtime = Runtime::new(RuntimeConfig::new().with_max_locks_per_transaction(1)).unwrap();

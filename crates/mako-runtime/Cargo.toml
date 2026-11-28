@@ -10,20 +10,18 @@ test-hooks = ["mako-sharding/test-hooks", "sto-rocksdb?/test-hooks"]
 default = []
 runtime-storage = ["dep:serde-saphyr"]
 masstree-engine = ["runtime-storage", "dep:mako-storage-masstree"]
-rocksdb-engine = ["runtime-storage", "dep:mako-storage-rocksdb"]
+rocksdb-engine = ["runtime-storage", "dep:mako-storage-rocksdb", "dep:sto-rocksdb"]
 native-storage = ["masstree-engine"]
-durable-storage = ["dep:sto-rocksdb", "dep:sha2"]
-logging = ["runtime-storage", "durable-storage", "dep:raft-host", "dep:mako-storage-rocksdb"]
+logging = ["runtime-storage", "dep:sto-rocksdb", "dep:sha2", "dep:raft-host", "dep:mako-storage-rocksdb"]
 # Compatibility profile for existing Masstree build commands.
 replication = ["native-storage", "logging"]
 
 [dependencies]
+sto-core = { path = "../sto-core", features = ["protocol"] }
 shard-host-core = { path = "../shard-host-core" }
 mako-storage-rocksdb = { path = "../mako-storage-rocksdb", optional = true }
 mako-storage-api = { path = "../mako-storage-api" }
 mako-storage-masstree = { path = "../mako-storage-masstree", optional = true }
-mako-protocol = { path = "../mako-protocol" }
-mako-protocol-core = { path = "../mako-protocol-core" }
 mako-sharding = { path = "../../src/cluster" }
 srpc = { path = "../../src/srpc" }
 serde = { version = "1", features = ["derive"] }
@@ -32,7 +30,6 @@ parking_lot = "0.12"
 serde_json = "1"
 serde-saphyr = { version = "2.2", default-features = false, features = ["deserialize"], optional = true }
 libc = "0.2"
-mako-clock = { path = "../mako-clock" }
 sto-rocksdb = { path = "../sto-rocksdb", optional = true }
 sha2 = { version = "0.10", optional = true }
 raft-host = { path = "../raft-host", optional = true }
@@ -62,14 +59,3 @@ required-features = ["runtime-storage"]
 name = "mako_transactions"
 path = "src/bin/transactions.rs"
 required-features = ["runtime-storage"]
-
-[[bin]]
-name = "mako_bench"
-path = "src/bin/bench.rs"
-required-features = ["runtime-storage"]
-
-
-[[bin]]
-name = "mako_convert"
-path = "src/bin/convert.rs"
-required-features = ["logging"]

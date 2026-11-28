@@ -53,6 +53,9 @@ pub struct Peer {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub group: u64,
+    /// Immutable identity of pre-log application data. Every member must be
+    /// seeded with the same initial state before starting the group.
+    pub initial_state: [u8; 32],
     pub node: u16,
     /// Complete membership, including this node. Ids are stable, not ordinals.
     pub peers: Vec<Peer>,
@@ -76,6 +79,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             group: 0,
+            initial_state: [0;32],
             node: 0,
             peers: Vec::new(),
             listen: "127.0.0.1:0".into(),

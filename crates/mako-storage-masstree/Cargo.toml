@@ -6,9 +6,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+sto-core = { path = "../sto-core", features = ["protocol"] }
 mako-storage-api = { path = "../mako-storage-api" }
-mako-protocol = { path = "../mako-protocol" }
-sto-tpcc-ffi = { path = "../sto-tpcc-ffi" }
+sto-masstree-api = { path = "../sto-masstree-api" }
 
 [dev-dependencies]
 mako-storage-api = { path = "../mako-storage-api", features = ["test-support"] }

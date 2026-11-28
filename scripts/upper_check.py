@@ -22,9 +22,9 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = Path(os.environ.get('BUILD_DIR', ROOT/'build_docker')).resolve()
-ALLOWED = set('mako-protocol mako-protocol-core mako-sharding shard-host-core mako-clock bincode serde serde_core serde_derive proc-macro2 unicode-ident quote syn synstructure convert_case verus_builtin verus_builtin_macros verus_syn verus_prettyplease verus_state_machines_macros vstd indexmap equivalent hashbrown parking_lot lock_api scopeguard parking_lot_core cfg-if libc smallvec'.split())
+ALLOWED = set('sto-core mako-sharding shard-host-core arc-swap rustversion trybuild glob target-triple termcolor winapi-util windows-sys windows-link serde_json itoa memchr zmij toml toml_datetime toml_parser toml_writer serde_spanned winnow bincode serde serde_core serde_derive proc-macro2 unicode-ident quote syn synstructure convert_case verus_builtin verus_builtin_macros verus_syn verus_prettyplease verus_state_machines_macros vstd indexmap equivalent hashbrown parking_lot lock_api scopeguard parking_lot_core cfg-if libc smallvec'.split())
 ALLOWED.update(('mako-storage-api', 'mako-rocksdb'))
-PACKAGES = ['-p','mako-protocol','-p','mako-protocol-core','-p','shard-host-core','-p','mako-storage-api','-p','mako-rocksdb']
+PACKAGES = ['-p','shard-host-core','-p','mako-storage-api','-p','mako-rocksdb']
 VERSION = '0.2026.08.02.b677dd5'
 SHA = '4c769256e888ee84bde85aae44d95c46bccbb8cf70e1d09f537b0d05fe965dee'
 SUMMARY = re.compile(r'verification results:: (\d+) verified, (\d+) errors')
@@ -56,13 +56,15 @@ def audit_tree(output):
 
 def source_inputs():
     files=set()
-    for directory in ('src/cluster','tla/mako/src','crates/mako-protocol',
-                      'crates/mako-protocol-core','crates/shard-host-core','crates/mako-storage-api','crates/mako-rocksdb'):
+    for directory in ('src/cluster','tla/mako/src','crates/sto-core',
+                      'crates/shard-host-core','crates/mako-storage-api','crates/mako-rocksdb'):
         files.update(p for p in (ROOT/directory).rglob('*') if p.is_file() and p.suffix in ('.rs','.toml','.lock'))
     import upper_protocol_proof as core
     files.update(ROOT/p for p in core.ADAPTERS)
+    files.add(core.RETENTION)
+    files.add(ROOT/'crates/mako-runtime/tests/support/gateway_contract.rs')
     files.update(ROOT/p for p in ('crates/Cargo.toml','crates/Cargo.lock','scripts/upper_check.py',
-        'scripts/upper_protocol_proof.py','scripts/native_sharding_proof_sources.py',
+        'scripts/upper_protocol_proof.py','scripts/check_sto_boundary.py','scripts/native_sharding_proof_sources.py',
         'scripts/shard_host_core_proof.py','scripts/shard_host_core_trusted.txt',
         'tla/mako/scripts/verify_controls.py','ci/upper.sh'))
     return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)}
@@ -140,6 +142,8 @@ def main():
         import shard_host_core_proof as host
         import upper_protocol_proof as core
         host.audit_sources(); host.audit_controls(); core.audit()
+        import check_sto_boundary
+        check_sto_boundary.audit()
         report['source_inputs']=source_inputs()
         run('sharding-source-audit',['python3','scripts/native_sharding_proof_sources.py'])
         # The same validation routines must reject dependency and result bypasses.
@@ -155,12 +159,15 @@ def main():
             try: validate_proof(subprocess.CompletedProcess([],1,bad),reject=True)
             except RuntimeError: pass
             else: raise RuntimeError('control audit accepted a nonsemantic failure')
-        manifests=[('workspace',['--manifest-path','crates/Cargo.toml',*PACKAGES]),
+        sto_tests = [p.stem for p in sorted((ROOT/'crates/sto-core/tests').glob('protocol_*.rs'))] + ['legacy_coordinator']
+        sto_selection = ['--manifest-path','crates/Cargo.toml','-p','sto-core','--features','protocol,clock-test-hooks,test-install-observer']
+        manifests=[('distributed-sto',sto_selection),('workspace',['--manifest-path','crates/Cargo.toml',*PACKAGES]),
                    ('sharding',['--manifest-path','src/cluster/Cargo.toml','--no-default-features','--features','protocol'])]
         for name,selection in manifests:
             tree=run(name+'-dependencies',['cargo','tree','--locked',*selection,'-e','normal,build,dev','--prefix','none','--format','{p} [{f}]'],machine=True)
             report[name+'_dependencies']=audit_tree(tree.stdout)
-            artifacts=run(name+'-compile',['cargo','test','--locked',*selection,'--no-run','--message-format=json'])
+            targets = ['--lib', *[arg for target in sto_tests for arg in ('--test',target)]] if name == 'distributed-sto' else []
+            artifacts=run(name+'-compile',['cargo','test','--locked',*selection,*targets,'--no-run','--message-format=json'])
             tests=[]
             for line in artifacts.stdout.splitlines():
                 try: item=json.loads(line)
@@ -180,7 +187,7 @@ def main():
                     summaries=re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;',result.stdout)
                     if not summaries or any(int(s[1]) or int(s[2]) for s in summaries): raise RuntimeError('tests skipped or failed')
                     total+=sum(int(s[0]) for s in summaries)
-                if total<({'workspace':21,'sharding':24}[name]): raise RuntimeError('scenario coverage decreased')
+                if total<({'workspace':16,'sharding':26,'distributed-sto':176}[name]): raise RuntimeError('scenario coverage decreased')
                 report[name+'_tests']=total
         host.check_pins()
         if args.bootstrap:
@@ -195,7 +202,10 @@ def main():
             print(SUMMARY.search(result.stdout)[0],flush=True)
         proof('production-sharding','src/cluster/lib.rs',minimum=1495)
         proof('storage-host-core',host.ENTRY,minimum=40)
-        proof('transaction-protocol-core',core.ENTRY,minimum=46)
+        # The former 53 obligations: 42 production decisions + 10 historical + 1 retention.
+        proof('distributed-sto-decisions',core.ENTRY,minimum=42)
+        proof('historical-scalar-coordinator',core.LEGACY_ENTRY,minimum=10)
+        proof('raft-log-retention',core.RETENTION_ENTRY,minimum=1)
         core.controls(proof)
         # Reuse existing semantic mutants, with full positives already checked.
         tree=ast.parse((ROOT/'tla/mako/scripts/verify_controls.py').read_text())

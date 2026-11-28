@@ -349,22 +349,22 @@ fn checkpoint_staging_is_not_publication_and_old_snapshots_are_fenced() {
 
 #[test]
 fn durable_tombstone_generation_exhaustion_is_checked_not_wrapped() {
-    use mako_rocksdb_store::{BlobOp, Blobs};
+    use mako_rocksdb_store::BlobOp;
     use mako_rocksdb_store::{Durability, RocksBlobs};
     let directory = tempfile::tempdir().unwrap();
     let db = Database::open(directory.path(), 7, true).unwrap();
     let (table, _) = table(&db, 1, "rows");
     drop(db);
     let raw =
-        RocksBlobs::open_existing_strict(&directory.path().join("generation-0"), Durability::Sync)
+        RocksBlobs::open_existing_strict(directory.path(), Durability::Sync)
             .unwrap();
     let mut key = vec![0, 6];
     key.extend_from_slice(&table.to_be_bytes());
     key.extend_from_slice(b"spent");
-    raw.write_batch(&[BlobOp::Put {
+    raw.write_families(&[(sto_rocksdb::METADATA_COLUMN_FAMILY, BlobOp::Put {
         key: &key,
         val: &u64::MAX.to_be_bytes(),
-    }])
+    })])
     .unwrap();
     drop(raw);
     let db = Database::open(directory.path(), 7, true).unwrap();
@@ -425,7 +425,7 @@ fn install_recovers_staging_and_durable_selector_cutpoints() {
     commit(&leader, txn, 2, 2);
     let checkpoint = artifacts.path().join("snapshot");
     leader.create_checkpoint(&checkpoint, position(2)).unwrap();
-    let partial = replica_dir.path().join("staging-2-3");
+    let partial = sto_rocksdb::control_path(replica_dir.path()).join("staging-2-3");
     std::fs::create_dir(&partial).unwrap();
     std::fs::write(partial.join("torn-copy"), b"incomplete").unwrap();
     replica
@@ -435,12 +435,12 @@ fn install_recovers_staging_and_durable_selector_cutpoints() {
     // A crash after staging cannot change the authoritative selected DB.
     let replica = Database::open(replica_dir.path(), 7, true).unwrap();
     assert_eq!(replica.applied().unwrap(), position(1));
-    let mut selector = std::fs::File::create(replica_dir.path().join("CURRENT-next")).unwrap();
+    let mut selector = std::fs::File::create(sto_rocksdb::control_path(replica_dir.path()).join("CURRENT-next")).unwrap();
     selector.write_all(b"install-2-3").unwrap();
     selector.sync_all().unwrap();
     std::fs::rename(
-        replica_dir.path().join("CURRENT-next"),
-        replica_dir.path().join("CURRENT"),
+        sto_rocksdb::control_path(replica_dir.path()).join("CURRENT-next"),
+        sto_rocksdb::control_path(replica_dir.path()).join("CURRENT"),
     )
     .unwrap();
     std::fs::File::open(replica_dir.path())

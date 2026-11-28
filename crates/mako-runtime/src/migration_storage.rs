@@ -5,7 +5,7 @@ use crate::{
     storage::{engine, CommitPermit, Store},
     wire::{Error, ErrorCode, Result, TableKey},
 };
-use mako_protocol::{
+use sto_core::protocol::{
     commit::{self, Effects},
     journal::{self, Member, Outcome, Record, Transaction, TransactionId},
 };

@@ -5,7 +5,7 @@ use crate::{
     storage::Store,
     wire::*,
 };
-use mako_protocol::{contracts::Transport, journal::Entry, participant::Lane};
+use sto_core::protocol::{contracts::Transport, journal::Entry, participant::Lane};
 use parking_lot::Mutex;
 use std::{
     collections::BTreeMap,

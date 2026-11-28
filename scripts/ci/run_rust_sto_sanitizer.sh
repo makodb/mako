@@ -6,7 +6,7 @@ readonly rust_sanitizer_nightly="nightly-2026-08-12"
 readonly rust_sanitizer_target="x86_64-unknown-linux-gnu"
 readonly rust_linker_environment="CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"
 readonly -a asan_native_quarantine_cases=(
-    "tests::post_install_row_count_failure_marks_runtime_indeterminate"
+    "native::tests::post_install_failure_marks_runtime_indeterminate"
 )
 
 usage() {
@@ -338,7 +338,7 @@ if [[ "${rust_compiler_instrumented}" == "1" ]]; then
     rust_sanitizer_flags+=" --sysroot=${rust_std_sysroot}"
     rustflags="${rust_sanitizer_flags} -C force-frame-pointers=yes ${rust_link_flag}"
     rustdocflags="${rust_sanitizer_flags} -C force-frame-pointers=yes ${rust_link_flag}"
-    sto_tpcc_rustflags="${rust_sanitizer_flags}"
+    sto_storage_rustflags="${rust_sanitizer_flags}"
     rust_instrumentation="${sanitizer}-nightly-sysroot"
     rust_runtime="external-clang"
 else
@@ -357,7 +357,7 @@ else
     fi
     rustflags="-C force-frame-pointers=yes ${rust_link_flag}"
     rustdocflags="-C force-frame-pointers=yes ${rust_link_flag}"
-    sto_tpcc_rustflags="${rust_link_flag}"
+    sto_storage_rustflags="${rust_link_flag}"
     rust_instrumentation="none-stable-1.97"
     rust_runtime="native-link-argument"
 fi
@@ -787,10 +787,10 @@ run_logged transactions env --unset=MAKO_MTREE_NATIVE_INTEGRATION \
     --report "${build_dir}/sanitizer-logs/transactions.json"
 run_logged tree "${runner[@]}" --package masstree --package sto-masstree --all-features \
     --report "${build_dir}/sanitizer-logs/tree.json"
-run_logged adapter "${runner[@]}" --package sto-tpcc-ffi --all-features \
+run_logged adapter "${runner[@]}" --package sto-masstree-api --all-features \
     --report "${build_dir}/sanitizer-logs/adapter.json"
 run_logged runtime "${runner[@]}" --package mako-runtime --package mako-rocksdb \
-    --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine \
+    --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures \
     --report "${build_dir}/sanitizer-logs/runtime.json"
 
 # Inspect instrumented objects and every target executable, including binaries
@@ -809,7 +809,7 @@ import re
 import subprocess
 import sys
 nm, target, pattern = sys.argv[1:]
-required = ['sto_core', 'sto_masstree', 'masstree', 'sto_tpcc_ffi',
+required = ['sto_core', 'sto_masstree', 'masstree', 'sto_masstree_api',
             'mako_runtime', 'mako_rocksdb', 'mako_rocksdb_store', 'sto_rocksdb']
 for crate in required:
     # Stable Cargo uses debug/deps; the pinned nightly also uses per-crate

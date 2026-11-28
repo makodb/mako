@@ -61,6 +61,12 @@ impl Shared {
 }
 pub fn database(path: impl AsRef<Path>, owner: u64, durable: bool) -> api::Result<api::Database> {
     let db = sto::Database::open_distributed(path, owner, durable).map_err(error)?;
+    wrap_database(db)
+}
+pub fn database_with_tables(path: impl AsRef<Path>, owner: u64, durable: bool, tables: &[sto::Table]) -> api::Result<api::Database> {
+    wrap_database(sto::Database::open_distributed_with_tables(path, owner, durable, tables).map_err(error)?)
+}
+fn wrap_database(db: Arc<sto::Database>) -> api::Result<api::Database> {
     let next_table = db
         .list_tables()
         .map_err(error)?
@@ -87,6 +93,9 @@ pub fn backing(
     Ok(Arc::new(persistent::Application(
         sto::Database::open_distributed(path, owner, durable).map_err(error)?,
     )))
+}
+pub fn backing_with_tables(path: impl AsRef<Path>, owner: u64, durable: bool, tables: &[sto::Table]) -> api::Result<Arc<dyn api::PersistentApplication>> {
+    Ok(Arc::new(persistent::Application(sto::Database::open_distributed_with_tables(path, owner, durable, tables).map_err(error)?)))
 }
 /// The native handle also owns atomic protocol metadata/checkpoint operations.
 pub fn native_database(database: &api::Database) -> api::Result<Arc<sto::Database>> {

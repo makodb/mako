@@ -1,0 +1,7 @@
+
+running 2 tests
+test independent_transactions_can_all_commit_without_a_shard_wide_reservation ... ok
+test point_absence_and_range_cycles_have_a_serial_order_under_every_small_schedule ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

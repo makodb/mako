@@ -1,0 +1,18 @@
+    Checking rustix v1.1.5
+    Checking sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+    Checking mako-rocksdb-store v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-store)
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+    Checking tempfile v3.27.0
+warning: `sto-core` (lib) generated 1 warning
+    Checking sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.63s

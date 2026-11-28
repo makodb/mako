@@ -14,6 +14,8 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct LocalConfig {
     pub group: u64,
+    /// Identity of application data that predates this journal, zero if empty.
+    pub initial_state: [u8; 32],
     pub directory: PathBuf,
     pub create: bool,
     pub sync_writes: bool,
@@ -34,7 +36,10 @@ pub(crate) fn open_log(config: &LocalConfig) -> Result<RocksLog, String> {
         fingerprint: config.group,
         format: 0x524c_0001,
     };
-    let authority = format!("local-log/1\ngroup={}\n", config.group);
+    let mut authority = format!("local-log/1\ngroup={}\n", config.group);
+    if config.initial_state != [0; 32] {
+        authority.push_str(&format!("initial_state={:02x?}\n", config.initial_state));
+    }
     RocksLog::open(
         &config.directory,
         id,
@@ -50,7 +55,7 @@ impl LocalHost {
         let mut applied = machine.applied_position().map_err(storage)?;
         if disk.journal.sequence == 0 {
             if applied != Position::default() {
-                return Err(storage("applied data exists without its local command log; offline conversion required".into()));
+                return Err(storage("applied data exists without its local command log; restore data and log together".into()));
             }
             disk.journal
                 .persist(Record {
@@ -174,7 +179,7 @@ impl LocalHost {
             self.0
                 .machine
                 .validate_checkpoint(&image.directory, status.applied)?;
-            if !mako_protocol_core::recovery::may_trim(
+            if !raft_core::retention::may_trim(
                 status.applied.index,
                 image.reference.position.index,
                 true,

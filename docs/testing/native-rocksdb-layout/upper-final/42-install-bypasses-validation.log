@@ -1,0 +1,30 @@
+note: verifying module admission (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+  --> src/admission.rs:78:1
+   |
+78 | / pub fn admit(phase: Phase, lease: Option<u64>, last: Option<Header>, request: Header,
+79 | |     operation: Operation, minimum_term: u32, valid: bool, exact_receipt: bool) -> (out: Decision)
+   | |________________________________________________________________________________________________^
+
+error: postcondition not satisfied
+   --> src/admission.rs:82:9
+    |
+ 82 |         out == Decision::Continue <==> continues(phase,lease,last,request,operation,minimum_term,valid),
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+132 |             return Decision::Continue;
+    |             ------------------------- at this exit
+
+error: postcondition not satisfied
+   --> src/admission.rs:93:9
+    |
+ 93 |         out == Decision::Continue && operation == Operation::Install ==> phase == Phase::Sealed,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+132 |             return Decision::Continue;
+    |             ------------------------- at this exit
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

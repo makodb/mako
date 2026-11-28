@@ -54,8 +54,8 @@ const INITIAL_ROWS: [(&[u8], &[u8]); 4] = [
 
 #[derive(Clone, Copy, Debug)]
 enum TableMode {
-    RegistryId,
-    DirectToken,
+    Ordered,
+    RecordLocal,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -946,7 +946,6 @@ fn table_config() -> TableConfig {
     TableConfig::new()
         .with_max_retained_records(MAX_RETAINED_RECORDS)
         .with_max_retained_key_bytes(1_024)
-        .with_max_consumed_record_ids(256)
         .with_max_scan_physical_records(MAX_RETAINED_RECORDS as usize)
 }
 
@@ -959,9 +958,11 @@ fn prime_key_domain(
         .begin()
         .map_err(|error| format!("key-domain setup begin failed: {error:?}"))?;
     let mut prime = |key: &[u8]| -> Result<(), String> {
+        // Explicitly materialize the fixed physical key domain. Missing reads
+        // now record absence without allocating a row, as original MassTrans did.
         let value = table
-            .get(&mut transaction, native_worker, key)
-            .map_err(|error| format!("key-domain setup get for {key:?} failed: {error:?}"))?;
+            .stage_tombstone(&mut transaction, native_worker, key)
+            .map_err(|error| format!("key-domain setup tombstone for {key:?} failed: {error:?}"))?;
         if value.is_some() {
             return Err(format!(
                 "fresh key-domain setup unexpectedly found a value for {key:?}"
@@ -973,9 +974,8 @@ fn prime_key_domain(
     for key in &KEYS[..4] {
         prime(key)?;
     }
-    // General-table records currently share one lock target per 16 stable
-    // IDs. Burn tombstone IDs between logical partitions so the disjoint
-    // workload also uses disjoint physical lock targets.
+    // Preserve the historical physical key domain and all oracle schedules.
+    // These padding keys originated in the former grouped-lock layout.
     for index in 0..12_u8 {
         prime(&[0xfe, 0, index])?;
     }
@@ -1175,19 +1175,13 @@ fn run_table_sweep(
 ) -> Result<(), String> {
     let sto_runtime = Runtime::new(RuntimeConfig::default())
         .map_err(|error| format!("STO runtime creation failed: {error:?}"))?;
-    let table = match mode {
-        TableMode::RegistryId => {
-            let tree = native_runtime
-                .create_tree(native_worker)
-                .map_err(|error| format!("native tree creation failed: {error:?}"))?;
-            Table::new(&sto_runtime, tree, table_config())
-                .map_err(|error| format!("registry-ID table creation failed: {error:?}"))?
-        }
-        TableMode::DirectToken => {
-            Table::new_direct(&sto_runtime, native_runtime, native_worker, table_config())
-                .map_err(|error| format!("direct-token table creation failed: {error:?}"))?
-        }
-    };
+    let table = Table::new(
+        &sto_runtime,
+        native_runtime,
+        native_worker,
+        table_config().with_record_local_versions(matches!(mode, TableMode::RecordLocal)),
+    )
+    .map_err(|error| format!("native table creation failed: {error:?}"))?;
     let mut sto_worker = sto_runtime
         .attach()
         .map_err(|error| format!("main STO attach failed: {error:?}"))?;
@@ -1321,7 +1315,7 @@ fn run_history_sweep() -> Result<(), String> {
         .map_err(|error| format!("main native attach failed: {error:?}"))?;
     let _quiesce_on_exit = QuiesceOnDrop(&native_worker);
 
-    for mode in [TableMode::RegistryId, TableMode::DirectToken] {
+    for mode in [TableMode::Ordered, TableMode::RecordLocal] {
         run_table_sweep(mode, &native_runtime, &native_worker)
             .map_err(|error| format!("mode {mode:?}: {error}"))?;
         native_worker

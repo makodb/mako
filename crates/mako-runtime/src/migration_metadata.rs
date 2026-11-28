@@ -7,7 +7,7 @@ use crate::{
     storage::{engine, Store},
     wire::{Error, ErrorCode, Result},
 };
-use mako_protocol::journal::TransactionId;
+use sto_core::protocol::journal::TransactionId;
 use mako_sharding::{
     durable_kv::{CommitResult, ReadResult, WriteOp},
     runtime_durability::{MetadataKv, RecoveryHost, RowAuthority},

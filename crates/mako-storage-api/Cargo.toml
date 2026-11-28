@@ -9,4 +9,7 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
-mako-protocol = { path = "../mako-protocol" }
+sto-core = { path = "../sto-core", features = ["protocol"] }
+
+[dev-dependencies]
+mako-sharding = { path = "../../src/cluster", default-features = false, features = ["protocol"] }

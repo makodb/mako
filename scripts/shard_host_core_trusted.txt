@@ -1,17 +1,9 @@
-# shard-host-core's trusted surface.
-#
-# The crate proves the operation algorithms conditional on the E1-E7 engine
-# contracts. The concrete shell implementations of those traits are trusted.
-# The gate uses --no-cheating and refuses verifier escape attributes.
-#
-# What is trusted is the shell. Each line names a function of
-# crates/sto-tpcc-ffi/src that calls into the core, as `<file>:<function>`,
-# with what the proof does not say about it. The gate fails when a function
-# that is not listed here calls the core, and when a listed one no longer
-# does. This list only changes with a review of the function it names.
-shard_host.rs:close_and_map      hands map_engine Stage::Closed only after the closing finish answered OK, with the status of the step that failed
-shard_host.rs:certify_read_only  hands map_engine Stage::ReadOnlyFinish with the status and the report of the committing finish
-shard_host.rs:put                lends a registered cell and its bytes to verbs::write_cell. WriteHost implements engine.rs E1-E5 with protocol exports; native commit, selected-range exclusion, frame preservation and log publication are trusted
-shard_host.rs:remove             lends a registered cell to verbs::write_cell with None. WriteHost supplies the same E1-E5 contracts, including validation of an absent deletion
-shard_host.rs:scan_next          passes the received flags and spans to the raw or fixed-coordinate rule after checking the table and thread, then applies the returned bound to its physical scan. Enumeration, registration and native lookup are trusted
-shard_host.rs:scan_physical      ScanHost supplies walk.rs E6-E7 through certified pinned lookahead. The runtime supplies a frozen, drained range for exact capture; live precopy is advisory. Each native hop's ordering and validation, and forwarding of the returned row to the sink, remain trusted
+# shard-host-core trusted production adapter.
+# All core algorithms and E1-E7 contract proofs remain verified with --no-cheating.
+# The retired C migration ABI no longer implements the E1-E7 effect traits.
+# Production migration uses the runtime storage contract and OCC+2PC, audited
+# separately by upper_protocol_proof.py. Only the two scan bound rules below
+# are called directly from this adapter. Enumeration, engine ordering, row
+# decoding, range guards and log publication remain trusted, not proved here.
+# The gate checks this exact caller list against the production source.
+migration_storage.rs:scan       calls scan_arguments and fixed_scan after validating table and worker; applies the returned lower/upper bounds to the storage scan

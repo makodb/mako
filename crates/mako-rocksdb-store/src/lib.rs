@@ -2,7 +2,8 @@
 //! Native ownership, error allocation and iterator lifetimes belong to upstream.
 #![forbid(unsafe_code)]
 
-use rocksdb::{DBRecoveryMode, FlushOptions, Options, WriteBatch, WriteOptions, DB};
+use rocksdb::{DBRecoveryMode, DBWithThreadMode, MultiThreaded, FlushOptions, Options, WriteBatch, WriteOptions};
+type DB = DBWithThreadMode<MultiThreaded>;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -75,7 +76,10 @@ impl RocksBlobs {
         let mut write = WriteOptions::default();
         write.set_sync(durability == Durability::Sync);
         write.disable_wal(durability == Durability::None);
-        let db = DB::open(&options, &path).map_err(error)?;
+        let families = if path.join("CURRENT").exists() {
+            DB::list_cf(&options, &path).map_err(error)?
+        } else { vec!["default".to_owned()] };
+        let db = DB::open_cf(&options, &path, families).map_err(error)?;
         Ok(Self {
             path, db, write,
             #[cfg(feature = "test-hooks")]
@@ -131,6 +135,44 @@ impl RocksBlobs {
         rocksdb::checkpoint::Checkpoint::new(&self.db)
             .and_then(|checkpoint| checkpoint.create_checkpoint(destination))
             .map_err(error)
+    }
+
+    /// Discover native families without creating or modifying a database.
+    pub fn list_families(path: &Path) -> Result<Vec<String>, BlobError> {
+        DB::list_cf(&Options::default(), path).map_err(error)
+    }
+
+    pub fn has_family(&self, name: &str) -> bool { self.db.cf_handle(name).is_some() }
+
+    /// Schema callers serialize creation. Existing families keep their options.
+    pub fn ensure_family(&self, name: &str) -> Result<(), BlobError> {
+        if !self.has_family(name) { self.db.create_cf(name, &Options::default()).map_err(error)?; }
+        Ok(())
+    }
+
+    pub fn get_cf(&self, family: &str, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+        let cf = self.db.cf_handle(family).ok_or_else(|| BlobError(format!("unknown family {family}")))?;
+        self.db.get_cf(&cf, key).map_err(error)
+    }
+
+    /// One atomic WAL batch, including operations in different column families.
+    pub fn write_families(&self, ops: &[(&str, BlobOp<'_>)]) -> Result<(), BlobError> {
+        let mut batch = WriteBatch::default();
+        for (name, op) in ops {
+            let cf = self.db.cf_handle(name).ok_or_else(|| BlobError(format!("unknown family {name}")))?;
+            match op {
+                BlobOp::Put { key, val } => batch.put_cf(&cf, key, val),
+                BlobOp::Delete { key } => batch.delete_cf(&cf, key),
+            }
+        }
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::BatchConstructed);
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::BeforeWrite);
+        let result = self.db.write_opt(batch, &self.write);
+        #[cfg(feature = "test-hooks")]
+        self.observe_write_batch(WriteBatchHookPoint::AfterWrite);
+        result.map_err(error)
     }
 }
 
@@ -213,7 +255,7 @@ impl Blobs for RocksBlobs {
 // Upstream snapshots borrow DB. The safe ownership cell drops that borrow before
 // the Arc owner, allowing transactions to retain snapshots after their DB handle
 // is dropped without hand-written lifetime extension or raw pointers.
-type NativeSnapshot<'a> = rocksdb::Snapshot<'a>;
+type NativeSnapshot<'a> = rocksdb::SnapshotWithThreadMode<'a, DB>;
 self_cell::self_cell! {
     struct SnapshotLease {
         owner: Arc<RocksBlobs>,
@@ -231,12 +273,26 @@ impl Snapshot {
         self.lease.borrow_dependent().get(key).map_err(error)
     }
 
+    pub fn get_cf(&self, family: &str, key: &[u8]) -> Result<Option<Vec<u8>>, BlobError> {
+        let cf = self.lease.borrow_owner().db.cf_handle(family)
+            .ok_or_else(|| BlobError(format!("unknown family {family}")))?;
+        self.lease.borrow_dependent().get_cf(&cf, key).map_err(error)
+    }
+
     /// Visit `[start, end)` in either direction, stopping on limit or callback.
     pub fn scan(&self, start: &[u8], end: Option<&[u8]>, reverse: bool,
         limit: usize, visitor: &mut BoundedEntryVisitor<'_>) -> Result<(), BlobError>
     {
+        self.scan_cf("default", start, end, reverse, limit, visitor)
+    }
+
+    pub fn scan_cf(&self, family: &str, start: &[u8], end: Option<&[u8]>, reverse: bool,
+        limit: usize, visitor: &mut BoundedEntryVisitor<'_>) -> Result<(), BlobError>
+    {
         if limit == 0 || end.is_some_and(|end| end <= start) { return Ok(()); }
-        let mut iterator = self.lease.borrow_dependent().raw_iterator();
+        let cf = self.lease.borrow_owner().db.cf_handle(family)
+            .ok_or_else(|| BlobError(format!("unknown family {family}")))?;
+        let mut iterator = self.lease.borrow_dependent().raw_iterator_cf(&cf);
         if reverse {
             if let Some(end) = end { iterator.seek_for_prev(end); }
             else { iterator.seek_to_last(); }

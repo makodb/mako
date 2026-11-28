@@ -212,6 +212,7 @@ fn call(
     let bytes = wire::encode(&Envelope {
         version: wire::version(cfg.sync_writes),
         group: cfg.group,
+        initial_state: cfg.initial_state,
         sender: cfg.node,
         request,
     })?;

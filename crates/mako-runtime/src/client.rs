@@ -4,7 +4,7 @@ use crate::{
     storage::{Protection, Store},
     wire::*,
 };
-use mako_protocol::{
+use sto_core::protocol::{
     commit::{self, Effects},
     journal::{self, Outcome, Record},
     remote::Remotes,
@@ -195,7 +195,7 @@ pub fn resolve_transaction(
     id: journal::TransactionId,
     timeout: Duration,
 ) -> Result<Outcome> {
-    use mako_protocol::contracts::Transport;
+    use sto_core::protocol::contracts::Transport;
     if id.coordinator != store.owner || timeout.is_zero() {
         return Err(Error::new(
             ErrorCode::Invalid,
@@ -638,7 +638,7 @@ impl Effects for NativeEffects<'_> {
         }
     }
     fn register(&mut self) -> Result<journal::Transaction> {
-        use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+        use sto_core::clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
         let timestamp = DistributedTimestamp::new(self.proposal)
             .map_err(|error| Error::new(ErrorCode::Invalid, error.to_string()))?;
         let term = DistributedTerm::new(self.remotes.identity().term)

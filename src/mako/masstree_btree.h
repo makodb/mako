@@ -496,6 +496,36 @@ public:
   insert_if_absent_with_old(const key_type &k, value_type v,
                             value_type &old_v);
 
+  // Adapted from MassTrans::trans_write at 0d26e2e0b. The factory runs only
+  // on a missing key while the cursor owns its leaf. Notify runs after finish
+  // and reports the exact own-publication/split changes for STO predicates.
+  template<class Factory, class Notify>
+  value_type insert_generated(const key_type &key, Factory &&factory,
+                              Notify &&notify) {
+    rcu_region region;
+    threadinfo ti;
+    auto cursor = Masstree::tcursor<P>::from_mutable_bytes(
+        table_, key.data(), key.length());
+    const bool found = cursor.find_insert(ti);
+    if (found) {
+      auto value = cursor.value();
+      cursor.finish(0, ti);
+      return value;
+    }
+    value_type value;
+    try {
+      value = factory();
+    } catch (...) {
+      cursor.finish(0, ti);
+      throw;
+    }
+    cursor.value() = value;
+    cursor.finish(1, ti);
+    notify(cursor.original_node(), cursor.original_version_value(),
+           cursor.updated_version_value(), cursor.new_nodes());
+    return value;
+  }
+
   /**
    * return true if a value was removed, false otherwise.
    *

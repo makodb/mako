@@ -67,6 +67,8 @@ def stop(processes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workload", choices=["transactions", "tpcc", "micro"])
+    parser.add_argument("--engine", choices=["masstree", "rocksdb"], default="masstree",
+                        help="data engine; select rocksdb for a ROCKSDB_RUNTIME build")
     parser.add_argument("--shards", type=int, default=2)
     parser.add_argument("--replicas", type=int, choices=[1, 3], default=1)
     parser.add_argument("--workers", type=int, default=2)
@@ -130,6 +132,8 @@ def main():
                             workers=args.workers, warehouses_per_shard=1, tables=tables(args.workload),
                             peers={other: addresses[other, 0, "app"] for other in range(args.shards)}, replica_groups=groups)
                 data = directory / f"shard-{owner}-replica-{replica}"
+                if args.engine == "rocksdb":
+                    node["engine"] = dict(kind="rocksdb", directory=str(data / "data"))
                 if args.replicas > 1:
                     node["replication"] = dict(group=owner + 1, id=replica + 1,
                         listen=addresses[owner, replica, "raft"], directory=str(data), create=create,

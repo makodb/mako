@@ -1,0 +1,3 @@
+component census is current
+Workload boundary: 30 manifests checked; no incoming dependency
+Logical component tables match inventory; declared production graph is acyclic

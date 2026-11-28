@@ -10,13 +10,8 @@ build = "build.rs"
 [lib]
 path = "src/lib.rs"
 
-[features]
-fixed-u64 = []
-
 [dependencies]
-arc-swap = "1.7"
 masstree = { path = "../masstree" }
-mako-clock = { path = "../mako-clock" }
 sto-core = { path = "../sto-core" }
 
 [dev-dependencies]

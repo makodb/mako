@@ -9,7 +9,6 @@ default = []
 test-hooks = []
 
 [dependencies]
-mako-protocol-core = { path = "../mako-protocol-core" }
 raft-core = { path = "../../src/deptran/raft/core" }
 raft-store = { path = "../../src/deptran/raft/store", features = ["rocksdb"] }
 srpc = { path = "../../src/srpc" }

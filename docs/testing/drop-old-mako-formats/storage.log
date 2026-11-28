@@ -1,0 +1,84 @@
+warning: variant `Borrowed` is never constructed
+   --> sto-core/src/transaction.rs:947:5
+    |
+945 | enum TransactionFrameRef<'worker> {
+    |      ------------------- variant in this enum
+946 |     Owned(Box<TransactionFrame>),
+947 |     Borrowed(&'worker mut TransactionFrame),
+    |     ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sto-core` (lib) generated 1 warning
+   Compiling sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.50s
+     Running unittests src/lib.rs (target-docker/debug/deps/sto_rocksdb-1e1cf2707d552752)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (target-docker/debug/deps/behavior-bba665e3fc28a047)
+
+running 13 tests
+test ambiguous_real_atomic_batch_fences_then_recovers_without_double_effects ... ok
+test checkpoint_staging_is_not_publication_and_old_snapshots_are_fenced ... ok
+test decided_replay_dedup_outcomes_and_applied_noops_survive_reopen ... ok
+test delayed_owner_completion_cannot_regress_newer_replica_publication ... ok
+test durability_identity_survives_reopen_and_checkpoint_install ... ok
+test durable_tombstone_generation_exhaustion_is_checked_not_wrapped ... ok
+test independent_prepared_writers_pipeline_but_pending_writer_blocks_scan ... ok
+test install_recovers_staging_and_durable_selector_cutpoints ... ok
+test native_checkpoint_larger_than_sixty_four_mebibytes_installs ... ok
+test real_rows_intents_rollback_and_multiple_tables ... ok
+test scans_merge_sealed_intents_forward_reverse_and_detect_phantoms ... ok
+test snapshot_repeatable_reads_and_absence_aba_conflict ... ok
+test unknown_is_not_rollback_and_only_definite_discard_releases_reservation ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.39s
+
+     Running tests/codec.rs (target-docker/debug/deps/codec-c6a7e5ee6677c157)
+
+running 3 tests
+test encoded_limits_are_checked_without_truncating_the_request ... ok
+test logical_codec_preserves_full_width_identity_and_empty_binary_keys ... ok
+test noncanonical_operations_and_inconsistent_counts_cannot_be_decided ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/distributed.rs (target-docker/debug/deps/distributed-4648c8f75c939469)
+
+running 4 tests
+test ambiguous_external_batch_keeps_rows_and_metadata_together ... ok
+test external_batch_recovery_checkpoint_and_profile ... ok
+test materialization_rejects_gaps_overlap_and_hidden_intermediate_conflicts ... ok
+test multiple_log_positions_materialize_as_one_atomic_prefix ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/native_layout.rs (target-docker/debug/deps/native_layout-45d5f48cf614b59d)
+
+running 6 tests
+test adoption_crash_child ... ok
+test initial_state_binds_family_placement_and_values_independent_of_schema_order ... ok
+test interrupted_adoption_resumes_and_keeps_native_data ... 
+running 1 test
+
+running 1 test
+
+running 1 test
+
+running 1 test
+ok
+test native_families_round_trip_and_checkpoint_publication ... ok
+test unsupported_mako_directory_is_rejected_without_conversion_or_overwrite ... ok
+test unsupported_rows_reserved_families_and_wrong_schema_are_rejected ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.37s
+
+   Doc-tests sto_rocksdb
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

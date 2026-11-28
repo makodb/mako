@@ -20,9 +20,9 @@ use std::{
     sync::Arc,
 };
 
-pub use mako_protocol::redo::Row as RedoRow;
+pub use sto_core::protocol::redo::Row as RedoRow;
 /// Shared migration exclusion above either physical transaction backend.
-pub use mako_protocol::range_lock;
+pub use sto_core::protocol::range_lock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
@@ -155,6 +155,11 @@ impl ApplicationBatch {
 }
 
 pub trait PersistentApplication: Send + Sync {
+    /// Stable identity of pre-log data. Replicas must agree before voting or
+    /// exchanging log entries. New empty databases return zero.
+    fn initial_state_id(&self) -> Result<[u8; 32]> { Ok([0;32]) }
+    /// Called only after the runtime establishes durable log ownership.
+    fn complete_bootstrap(&self) -> Result<()> { Ok(()) }
     fn durable(&self) -> bool;
     fn bind_identity(&self, identity: &[u8]) -> Result<()>;
     fn position(&self) -> Result<LogPosition>;

@@ -12,9 +12,9 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parents[1]
 BUILD=Path(os.environ.get('BUILD_DIR',ROOT/'build_docker')).resolve()
-CASES=[('unchanged',None),('transaction-core','crates/mako-protocol-core/src/admission.rs'),
-       ('protocol-client','crates/mako-protocol/src/gateway_client.rs'),
-       ('migration','src/cluster/migration.rs'),('shared-contract','crates/mako-protocol/src/contracts.rs')]
+CASES=[('unchanged',None),('transaction-core','crates/sto-core/src/protocol/verified/admission.rs'),
+       ('protocol-client','crates/mako-runtime/src/gateway_protocol.rs'),
+       ('migration','src/cluster/migration.rs'),('shared-contract','crates/sto-core/src/protocol/contracts.rs')]
 
 def main():
     reports=[]

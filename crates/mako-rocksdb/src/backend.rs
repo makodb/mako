@@ -1,7 +1,7 @@
 //! Adapter contract. The facade tests use an in-memory implementation; production
 //! delegates to the existing distributed coordinator, never a local engine txn.
 use crate::{Outcome, Result, TransactionId, WriteOptions};
-use mako_protocol::wire::{Bound, Row};
+use sto_core::protocol::wire::{Bound, Row};
 
 pub trait Backend: Send + Sync {
     /// Authority and recovery are ready. Occupied transaction lanes may still

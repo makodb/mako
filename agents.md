@@ -1,9 +1,9 @@
 # Component accounting
 
 Treat the transaction manager as one logical component across single-participant
-and multi-participant execution. Masstree transaction support and its wrapper are
-a separate component. Keep the Masstree index and its ABI/native support separate
-from that transaction adapter. Cargo packages and support directories are
+and multi-participant execution. RocksDB transaction support and Masstree
+transaction support each form a separate component. Keep the Masstree index
+and its ABI/native support separate from its transaction adapter. Cargo packages and support directories are
 accounting units within these components.
 
 List a component separately only when it can be developed, compiled and tested
@@ -14,78 +14,94 @@ or LOC subtotal alone does not establish a component boundary. Cross-component
 integration tests are additional coverage, not the component's only test suite.
 The tests/models/tooling row is a shared accounting group, not a component.
 
-After the standalone cache/service retirement and Masstree transaction split, the list contains nine
-implementation components and one shared support group, covering 27 Cargo packages and
-7 support accounting units. Counts below were recomputed from the current
-source inventory.
-
-This table is a snapshot of the
-[component inventory](docs/architecture/component-inventory.json). The
-[book](docs/mako-book.md#component-size-and-interfaces) describes the measurement
-rules, interfaces and proposed size review thresholds.
+The table now has twelve implementation components and one shared support
+group. Distributed STO owns reusable transaction behavior, and the node runtime
+owns concrete effects. Both deployment sizes use the same OCC+2PC driver.
 
 | Component | What it contains | Source LOC | Total LOC |
 |---|---|---:|---:|
-| Transaction manager and runtime | Shared OCC/2PC, range guards, RocksDB transaction adapter and node runtime | 38,766 | 63,877 |
-| Masstree transaction support and wrapper | Versioned rows/scans, transactional index adapter, owned Rust API and retained native ABI | 37,703 | 50,837 |
-| RocksDB-compatible Rust API | Application-facing database, transactions, batches, column families and iterators | 1,479 | 2,513 |
-| Sharding and migration | Routing, ownership, admission and range transfer through storage and range-guard interfaces | 17,594 | 32,450 |
-| Raft and durable log | Consensus, replication host and shared local/replicated journal storage | 16,616 | 24,154 |
-| SRPC | RPC transport, connections, serialization, reactor/fibers and platform bindings | 20,946 | 38,648 |
+| Distributed STO | OCC, object contracts, clocks, generic OCC+2PC, range guards and verified decisions | 22,028 | 34,936 |
+| Mako node runtime | Node services, RPC/storage/log effects, migration integration and recovery I/O | 10,999 | 18,792 |
+| RocksDB transaction support | Transactional rows, conflict handling, prepare/install and recovery in sto-rocksdb | 3,417 | 4,641 |
+| Masstree transaction support and wrapper | Native C++ rows/buffers, thin STO callbacks and safe Rust participant API | 4,270 | 8,264 |
+| RocksDB-compatible Rust API | Database, transactions, batches, column families and iterators | 1,486 | 2,640 |
+| Sharding and migration | Routing, ownership and range transfer through storage and range-guard contracts | 17,594 | 32,681 |
+| Raft and durable log | Consensus, replication host and shared local/replicated journal storage | 16,652 | 24,229 |
+| SRPC | RPC transport, serialization, reactor/fibers and platform bindings | 20,946 | 38,648 |
 | Masstree | Native concurrent ordered index and its own tests/tools | 24,931 | 33,935 |
-| Masstree integration and native support | Rust index wrapper, mtree ABI, allocator, RCU and thread registration | 12,693 | 13,773 |
-| RocksDB storage contracts | Atomic byte-store contracts and policy adapter over the maintained rocksdb crate | 554 | 1,116 |
-| Tests, models and tooling | Cross-component tests, verification models, benchmarks, automation and historical material | 6,000 | 71,852 |
-| **Total across all components** |  | **177,282** | **333,155** |
+| Masstree integration and native support | Rust index wrapper, mtree ABI, allocator, RCU and thread registration | 12,888 | 13,981 |
+| RocksDB storage contracts | Atomic byte-store contracts over the maintained rocksdb crate | 603 | 1,165 |
+| Rust workloads | TPC-C, micro workload, benchmark configuration/CLI and mako_bench | 2,914 | 4,225 |
+| Tests, models and tooling | Cross-component tests, models, benchmarks, automation and historical material | 6,000 | 70,318 |
+| **Total** | | 144,728 | 288,455 |
 
-LOC means nonblank lines, including comments. Source excludes separate test,
-proof and tooling files but includes inline tests and proofs. Total includes all
-counted files. External RocksDB implementation code is excluded. The transaction
-manager row includes the entire runtime crate, including gateway, configuration
-and migration glue. Package ownership determines the sums; a row is not a
-measurement of an isolated executable's linked code.
+LOC means nonblank lines including comments and inline tests/proofs. Source
+excludes separate test, proof and tooling files; Total includes all categories.
+External RocksDB is excluded. Workload implementations now count as Source in
+their own leaf component; the executable entry point remains Aux. The
+[book](docs/mako-book.md#component-size-and-interfaces) and
+[inventory](docs/architecture/component-inventory.json) record the rules.
 
-## Reading the transaction count
+## RocksDB-compatible API boundary
 
-The 177,282 Source LOC total covers every component in the table. The transaction
-manager/runtime group now accounts for 38,766 Source LOC and 63,877 Total LOC. It
-includes shared OCC, the RocksDB adapter and application runtime, beyond the protocol
-state machines. The backend-independent `mako-protocol` and `mako-protocol-core`
-crates together account for 3,241 Source LOC; they depend on the other transaction
-code to enforce concurrency, apply data and recover durable decisions.
+The facade's owned production dependencies are `sto-core`, `mako-runtime`
+and `mako-storage-api`. STO supplies wire/journal contracts, and runtime
+supplies transaction services.
+Routing goes through the transaction layer's routed point and scan methods.
+Keep `mako-sharding` as a development dependency for the migration integration
+test that sends control requests. Do not turn that test dependency into a
+production edge. The book's component diagram distinguishes both paths.
+The optional `native-fixtures` feature enables upstream RocksDB only for native
+file-format integration tests. Keep it out of the engine-free upper gate and
+enable it in native test, quality and sanitizer targets.
 
-Its largest contributors are `sto-core` at 18,223 Source LOC and `mako-runtime`
-at 11,730. The separate Masstree transaction component owns `sto-masstree` at
-23,166 and `sto-tpcc-ffi` at 14,537. Source also includes inline tests: the terminal test modules in
-`sto-masstree/src/lib.rs` and `sto-tpcc-ffi/src/lib.rs` alone contribute 12,468
-nonblank lines. Their tests remain useful; moving them out would change Source
-classification without reducing Total LOC.
+## RocksDB transaction component
 
-This refresh corrects two standalone `tests.rs` files previously classified as
-Source: 658 lines in `sto-masstree` and 413 in `mako-rocksdb`. That is an accounting
-correction, with no production code deletion. See the
-[transaction breakdown](docs/mako-book.md#why-the-transaction-group-is-large)
-for responsibilities and candidates for simplification. The split changes
-ownership and build/test boundaries; it does not delete transaction functionality.
+`sto-rocksdb` owns transactional RocksDB rows, conflict handling, prepared state,
+installation and recovery. It depends on `sto-core` and `mako-rocksdb-store`,
+with no Masstree, runtime, RPC or Raft dependency. Its owned API includes
+`Database`, `Table`, `Worker`, `Transaction`, `Prepared` and `Checkpoint`.
+The 961 Source/Total LOC of `mako-storage-rocksdb` remain in the runtime row:
+that adapter connects this storage API to `mako-storage-api`, just as
+`mako-storage-masstree` connects the Masstree transaction component.
+
+Inside the container, build with `cargo build --locked --manifest-path
+crates/Cargo.toml -p sto-rocksdb`. Run its component tests with `cargo test
+--locked --manifest-path crates/Cargo.toml -p sto-rocksdb --all-targets
+--features test-hooks -- --test-threads=1`. These commands compile RocksDB
+and STO dependencies without the node runtime or Masstree.
 
 ## Masstree transaction component
 
-`sto-masstree` and `sto-tpcc-ffi` compile and test independently through
+`sto-masstree` and `sto-masstree-api` compile and test independently through
 `./docker_build.sh ci masstreeTx 32`. The `MASSTREE_TX` CMake profile builds only
 these libraries and their core/index dependencies. Its default build runs no
-tests; `masstree_tx_tests` runs local tests and doctests, including `fixed-u64`.
+tests; `masstree_tx_tests` runs native row, adapter and ownership tests plus doctests.
 Use the fresh-process runner for native cases. The component gate also runs the
 wrapper's strict Clippy check and audits declared and compiled dependencies.
 RocksDB, SRPC, Raft and the application runtime must remain outside this build.
 
 The adapter implements `sto-core::TObject` locking, validation, installation and
-cleanup against the `masstree` index API. The wrapper exports owned `Database`,
+cleanup against native C++ row operations. C++ owns committed buffers, row locks,
+versions, histories and allocation/reclamation. Rust holds safe native handles
+and forwards the STO contract; STO owns the sole live read/write set. The wrapper exports owned `Database`,
 `Worker`, `Table`, `Transaction` and `Participant` APIs, replay and checkpoints.
 `mako-storage-masstree` belongs to the runtime and consumes this interface.
-Pure `mako-protocol-core` and `shard-host-core` decision contracts are shared
-dependencies; the full protocol/sharding runtime is not. Core OCC tests and
+The wrapper depends only on `sto-core`, `sto-masstree` and the
+Masstree index API. It must not depend on `shard-host-core`,
+sharding, runtime, RPC, Raft or workloads. Core OCC tests and
 Masstree index tests remain separate suites. See the
 [book](docs/mako-book.md#masstree-transaction-component) for commands and boundaries.
+
+The native row accounting unit includes `src/mako/storage/mtree_rows.{cc,h}`,
+`crates/masstree/src/native_rows.rs` and its native tests. Count these with the
+transaction component even though the safe FFI module compiles in `masstree`.
+The generic integer index and RCU/thread ABI remain index dependencies.
+The old Rust row registry, alternative layouts, fixed-u64 store, resolved caches
+and Rust C storage ABI are retired. Frozen redo comes from STO items and retains
+native buffers until serialization. Keep this boundary free of a second
+transaction manager or mutation ledger. See the
+[native row plan](docs/plans/native-masstree-rows.md).
 
 ## Sharding and migration boundary
 
@@ -103,14 +119,14 @@ public routing/admission/control APIs and supplies storage/RPC callbacks through
 the protocol's storage and persistence contracts.
 
 The shared transaction layer implements range exclusion in
-`mako-protocol::range_lock`, reexported by `mako-storage-api`. Each runtime Store
+`sto_core::protocol::range_lock`, reexported by `mako-storage-api`. Each runtime Store
 owns one range-lock domain for either data engine. Reservations block newly
 admitted overlapping access; earlier admission pins may finish. Migration I/O
 requires a drained, range- and shard-bound scope. Guard drop never unlocks;
 explicit completion follows terminal ownership publication and cleanup.
 Recovery invalidates old guard incarnations and reconstructs reservations.
 Drain is currently conservative across all earlier shard work.
-Run `cargo test --locked --manifest-path crates/Cargo.toml -p mako-protocol --test range_lock`
+Run `cargo test --locked --manifest-path crates/Cargo.toml -p sto-core --features protocol --test protocol_range_lock`
 in the container for the engine-free contract suite. Sharding owns migration
 policy; the shared transaction layer owns exclusion and its local tests.
 
@@ -132,15 +148,23 @@ the sharding proofs run in `ci/upper.sh` and the extended sharding proof gate.
 
 Application-specific migration workers, transactional row effects, logging and
 SRPC wiring remain in `crates/mako-runtime/src/migration*.rs`, counted under
-transaction manager/runtime. Those adapters require separate integration tests.
+node runtime. Those adapters require separate integration tests.
 They do not move into the sharding component just because they handle migration.
 
-## Package ownership for this snapshot
+## Rust workload boundary
 
-Each inventory entry belongs to exactly one row:
+`mako-workloads` owns TPC-C, the micro workload and `mako_bench`. No component
+may depend on it, including through development/build dependencies or source
+includes. `scripts/check_workload_boundary.py` enforces that rule with negative
+controls in both application build profiles. `rust_workload_tests` runs its
+local/integration suite; performance measurement stays weekly/manual.
 
-- Transaction manager and runtime: `mako-protocol-core`, `mako-protocol`, `mako-runtime`, `mako-clock`, `mako-storage-api`, `mako-storage-masstree`, `mako-storage-rocksdb`, `sto-core`, `sto-rocksdb`.
-- Masstree transaction support and wrapper: `sto-masstree`, `sto-tpcc-ffi`.
+## Component ownership
+
+- Distributed STO: `sto-core`.
+- Mako node runtime: `mako-runtime`, `mako-storage-api`, `mako-storage-masstree`, `mako-storage-rocksdb`.
+- RocksDB transaction support: `sto-rocksdb`.
+- Masstree transaction support and wrapper: `sto-masstree`, `sto-masstree-api`, `native-masstree-rows`.
 - RocksDB-compatible Rust API: `mako-rocksdb`.
 - Sharding and migration: `mako-sharding`, `shard-host-core`.
 - Raft and durable log: `raft-core`, `raft-host`, `raft-store`.
@@ -148,12 +172,8 @@ Each inventory entry belongs to exactly one row:
 - Masstree: `native-masstree`.
 - Masstree integration and native support: `masstree`, `mtree-sys`, `native-storage-support`.
 - RocksDB storage contracts: `mako-rocksdb-store`.
-- Tests, models and tooling: `historical-models`, `mako-history`, `protocol-models`, `raft-replay`, `repository-tooling`, `srpc-bench`, `srpc-rust-source-audit`, `srpc-verify`, `sto-test-datatypes`, `system-tests`.
-
-Refresh the ledger and book tables with
-`python3 scripts/component_inventory.py --write` in the development container.
-Then recompute this table using the ownership list above. The script's `--check`
-checks the ledger and generated book tables; it does not check this snapshot.
+- Rust workloads: `mako-workloads`.
+- Tests, models and tooling: `mako-history`, `sto-test-datatypes`, `raft-replay`, `srpc-bench`, `srpc-rust-source-audit`, `srpc-verify`, `historical-models`, `protocol-models`, `system-tests`, `repository-tooling`.
 
 ## Supported storage paths
 
@@ -165,7 +185,7 @@ The standalone `mako-cache` and `mrx` engines, cache-only `mako-engine*` facades
 `mrxdb` C API, `mtx` ABI, cache-only clock sequence, tools and CI entry points
 are retired. Shared byte-store contracts moved into
 [`mako-rocksdb-store`](crates/mako-rocksdb-store/src/bytes.rs), and the timestamp type
-moved into [`mako-clock`](crates/mako-clock/src/timestamp.rs). No cache feature or
+moved into [`sto_core::clock`](crates/sto-core/src/clock/timestamp.rs). No cache feature or
 cache engine remains in the active Cargo graph. Historical cache reports record
 earlier revisions. See the [retirement plan](docs/plans/retire-standalone-caches.md).
 
@@ -177,3 +197,42 @@ RPC/C client API and native optimistic benchmark wrapper are retired. See the
 The row, log and migration-metadata adapters share `rocksdb = 0.25.0` and its
 pinned native RocksDB 11.8.1. Keep native ownership and FFI in upstream. Preserve
 Mako durability, recovery and snapshot contracts in the small safe adapters.
+
+## Core and runtime test boundaries
+
+Test shared OCC through `cargo test --locked --manifest-path crates/Cargo.toml
+-p sto-core -p sto-test-datatypes`. Verify shared protocol decisions through
+`ci/upper.sh`, using model storage and transport contracts. The runtime composes
+those contracts with real components; its integration tests run separately.
+These commands run inside the development container.
+
+Refresh the ledger with `python3 scripts/component_inventory.py --write`, then
+recompute the logical table from the ownership list. `--check` validates the
+JSON ledger and generated book inventory, not the logical snapshot tables.
+
+## Distributed STO boundary
+
+`sto-core` owns OCC, retained participants, clocks, generic OCC+2PC coordination,
+journal/wire contracts and verified transaction decisions. `protocol` enables
+network protocol types and the driver; storage components need only
+`distributed`. Neither feature imports runtime, sharding, RPC, Raft or an engine.
+`mako-runtime` provides node services and concrete effects, including gateway
+routing policy. Raft owns log retention and has no STO dependency.
+
+The former `mako-clock`, `mako-protocol-core` and `mako-protocol` packages are
+retired. Do not recreate wrapper packages under those names. Keep canonical
+verified files under `sto-core/src/protocol/verified`; preserve the source audit
+and semantic controls. Historical scalar coordinator coverage lives under
+`sto-core/verification` and must stay outside production exports. Run
+`python3 scripts/upper_check.py --cpus 32` for the engine-free gate and
+`python3 scripts/check_sto_boundary.py` for dependency controls, inside the
+container. Full STO tests use `-p sto-core --all-features`; native storage tests
+remain separate and use the fresh-process runner.
+
+## Storage format compatibility
+
+Support the current native RocksDB user-family layout and local/Raft journal.
+Do not retain old Mako format readers or upgrade tools during this development
+phase. Ordinary RocksDB adoption and restarting with Masstree enabled or disabled
+remain supported. Keep rejection checks for unsupported or damaged directories;
+never silently recreate their data or log.

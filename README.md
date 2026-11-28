@@ -44,6 +44,7 @@ Run a two-shard transaction example or a TPC-C workload inside the container:
 ```sh
 python3 examples/run_native.py transactions --build build --shards 2 --workers 3 --count 50
 python3 examples/run_native.py tpcc --build build --shards 2 --workers 3 --count 500
+# For a ROCKSDB_RUNTIME build, add --engine rocksdb.
 python3 examples/run_native.py transactions --build build --shards 2 --replicas 3 --colocated
 ```
 
@@ -64,7 +65,9 @@ configuration, duration and CPU-throttling options. The familiar
 | `mako_client`, `mako_admin` | Gateway operations and sharding administration |
 
 Each program documents its arguments with `--help`. Runtime configuration and
-CLI compatibility live in `crates/mako-runtime/src/configuration.rs` and `configuration/cli.rs`.
+CLI compatibility live in `crates/mako-runtime/src/configuration.rs` and
+`crates/mako-workloads/src/configuration/cli.rs`. TPC-C and `mako_bench` belong
+to the leaf `mako-workloads` package; no engine component depends on it.
 
 ## Tests and proofs
 
@@ -73,7 +76,7 @@ Masstree index tests, Masstree transaction support and runtime integration run a
 separate gates. Tests that poison process-wide native state run in fresh
 processes.
 
-The Masstree transaction component (`sto-masstree` and `sto-tpcc-ffi`) has its
+The Masstree transaction component (`sto-masstree` and `sto-masstree-api`) has its
 own build and local tests: `./docker_build.sh ci masstreeTx 32`. It compiles no
 RocksDB, Raft, SRPC or application runtime. See the
 [component profile](docs/developer/development.md#masstree-transaction-component)
@@ -119,9 +122,15 @@ native code; stable Rust has no UBSan compiler mode. See
 - Native durable formats are not compatible with the retired C++ WAL. Durable
   prepare, decision and completion records support transaction recovery before
   new admission. The shared log format requires fresh log directories; legacy
-  segmented logs and applied-only local stores are refused intact pending offline
-  conversion. Mixed old/new transaction-protocol operation is unsupported.
+  segmented logs and applied-only local stores are refused intact. Old Mako
+  formats have no compatibility reader or upgrade tool. Mixed old/new transaction-protocol operation is unsupported.
   See [the book](docs/mako-book.md) for durability and recovery limits.
+- Both data engines store raw user keys and values in native RocksDB column
+  families, with transaction metadata in a separate family. The Rust API can
+  adopt a stopped ordinary RocksDB database after scanning its rows. Existing
+  Mako prefixed-key databases are unsupported. See
+  [native directories and adoption](docs/mako-book.md#native-rocksdb-directories-and-adoption)
+  for options, replica seeding and backup requirements.
 
 See [development](docs/developer/development.md),
 [native source retirement and test mapping](docs/developer/native-rust-retirement.md),

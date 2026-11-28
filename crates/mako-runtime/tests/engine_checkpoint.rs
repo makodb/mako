@@ -47,6 +47,7 @@ fn start(root: &Path, create: bool) -> (Arc<LocalLog>, Arc<Store>) {
     }
     log.start_engine(
         raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.join("log"),
             create,
@@ -147,24 +148,24 @@ struct InterruptedInstall {
     reached: std::sync::mpsc::SyncSender<()>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
-impl mako_protocol::journal::Journal for InterruptedInstall {
+impl sto_core::protocol::journal::Journal for InterruptedInstall {
     fn durable(&self) -> bool {
         self.log.durable()
     }
-    fn apply(&self, r: &mako_protocol::journal::Record) -> Result<mako_protocol::journal::Entry> {
+    fn apply(&self, r: &sto_core::protocol::journal::Record) -> Result<sto_core::protocol::journal::Entry> {
         self.log.apply(r)
     }
     fn lookup(
         &self,
-        id: mako_protocol::journal::TransactionId,
-    ) -> Result<Option<mako_protocol::journal::Entry>> {
+        id: sto_core::protocol::journal::TransactionId,
+    ) -> Result<Option<sto_core::protocol::journal::Entry>> {
         self.log.lookup(id)
     }
-    fn entries(&self) -> Result<Vec<mako_protocol::journal::Entry>> {
+    fn entries(&self) -> Result<Vec<sto_core::protocol::journal::Entry>> {
         self.log.entries()
     }
 }
-impl mako_protocol::contracts::CommitLog for InterruptedInstall {
+impl sto_core::protocol::contracts::CommitLog for InterruptedInstall {
     fn ready(&self) -> bool {
         self.log.ready()
     }
@@ -174,7 +175,7 @@ impl mako_protocol::contracts::CommitLog for InterruptedInstall {
     fn replica_status(&self, owner: u32) -> ReplicaStatus {
         self.log.replica_status(owner)
     }
-    fn admit(&self) -> Result<Box<dyn mako_protocol::contracts::CommitPermit>> {
+    fn admit(&self) -> Result<Box<dyn sto_core::protocol::contracts::CommitPermit>> {
         self.log.admit()
     }
     fn append(&self, bytes: &[u8], time: u32) -> Result<()> {
@@ -182,7 +183,7 @@ impl mako_protocol::contracts::CommitLog for InterruptedInstall {
     }
     fn publish(
         &self,
-        _: mako_protocol::journal::TransactionId,
+        _: sto_core::protocol::journal::TransactionId,
         _: &mut dyn FnMut() -> Result<()>,
     ) -> Result<()> {
         self.reached.send(()).unwrap();
@@ -223,6 +224,7 @@ fn checkpoint_covers_saved_complete_before_affine_install() {
     }
     log.start_engine(
         raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.path().join("log"),
             create: true,
@@ -293,6 +295,7 @@ fn corrupt_engine_checkpoint_is_rejected_before_admission() {
     let failure = log
         .start_engine(
             raft_host::LocalConfig {
+                initial_state: [0; 32],
                 group: 77,
                 directory: root.path().join("log"),
                 create: false,

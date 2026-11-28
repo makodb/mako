@@ -4,12 +4,12 @@ use crate::{
     storage::{engine, Protection, Store},
     wire::*,
 };
-use mako_protocol::{
+use sto_core::protocol::{
     contracts::ParticipantEngine,
     journal::{Entry, Outcome, Record, Transaction, TransactionId},
     participant::Lane,
 };
-use mako_protocol_core::two_phase::{self as core, Phase};
+use sto_core::protocol::verified::two_phase::{self as core, Phase};
 use mako_storage_api as sto;
 use std::{
     sync::{atomic::Ordering, Arc, Weak},
@@ -28,7 +28,7 @@ pub(crate) struct NativeEngine {
     term: Option<u32>,
     transaction: Option<Transaction>,
     proposal: Option<u32>,
-    prepared_rows: Option<Vec<mako_protocol::redo::Row>>,
+    prepared_rows: Option<Vec<sto_core::protocol::redo::Row>>,
     receipt: Option<GatewayReceipt>,
     last_progress: Instant,
 }

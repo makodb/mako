@@ -1,0 +1,140 @@
+{
+  "baseline": [
+    {
+      "ok": true,
+      "seconds": 11.215,
+      "test": "backward_physical_clock_cannot_move_hlc_backward"
+    },
+    {
+      "ok": true,
+      "seconds": 0.249,
+      "test": "enter_general_waits_for_the_holder"
+    },
+    {
+      "ok": true,
+      "seconds": 0.047,
+      "test": "observe_stamp_ignores_invalid_and_older_stamps"
+    },
+    {
+      "ok": true,
+      "seconds": 0.046,
+      "test": "recovery_floor_carries_submillisecond_and_wide_logical_bounds"
+    },
+    {
+      "ok": true,
+      "seconds": 0.047,
+      "test": "recovery_floor_precedes_next_allocation"
+    },
+    {
+      "ok": true,
+      "seconds": 0.049,
+      "test": "recovery_leaves_the_final_timestamp_mintable"
+    },
+    {
+      "ok": true,
+      "seconds": 0.048,
+      "test": "restricted_allocation_refuses_while_the_general_gate_is_held"
+    },
+    {
+      "ok": true,
+      "seconds": 0.047,
+      "test": "validation_prefix_preserves_hlc_and_gate"
+    }
+  ],
+  "crate": "/var/tmp/mako-shard-rust/crates/sto-core",
+  "killed": 9,
+  "mutations": [
+    {
+      "breaks": "Two commits share one Mako timestamp after the wall clock steps back.",
+      "name": "stamp-reuse",
+      "outcome": "killed",
+      "seconds": 10.736,
+      "test": "backward_physical_clock_cannot_move_hlc_backward",
+      "workspace": null
+    },
+    {
+      "breaks": "The last representable timestamp can never be committed.",
+      "name": "final-stamp-unmintable",
+      "outcome": "killed",
+      "seconds": 10.734,
+      "test": "recovery_leaves_the_final_timestamp_mintable",
+      "workspace": null
+    },
+    {
+      "breaks": "A one-put commit can take a stamp inside a general commit's certification window.",
+      "name": "restricted-ignores-gate",
+      "outcome": "killed",
+      "seconds": 10.816,
+      "test": "restricted_allocation_refuses_while_the_general_gate_is_held",
+      "workspace": null
+    },
+    {
+      "breaks": "Leaving the gate rewinds the HLC to zero; later commits reuse old timestamps.",
+      "name": "leave-general-drops-stamp",
+      "outcome": "killed",
+      "seconds": 10.733,
+      "test": "validation_prefix_preserves_hlc_and_gate",
+      "workspace": null
+    },
+    {
+      "breaks": "Two general commits certify concurrently; the gate no longer excludes.",
+      "name": "enter-general-never-waits",
+      "outcome": "killed",
+      "seconds": 10.446,
+      "test": "enter_general_waits_for_the_holder",
+      "workspace": null
+    },
+    {
+      "breaks": "Observing an older remote stamp moves the local clock backward.",
+      "name": "observe-lowers-clock",
+      "outcome": "killed",
+      "seconds": 10.843,
+      "test": "observe_stamp_ignores_invalid_and_older_stamps",
+      "workspace": null
+    },
+    {
+      "breaks": "After recovery the clock can mint a timestamp that precedes a recovered record.",
+      "name": "floor-ignores-submillisecond",
+      "outcome": "killed",
+      "seconds": 10.044,
+      "test": "recovery_floor_carries_submillisecond_and_wide_logical_bounds",
+      "workspace": null
+    },
+    {
+      "breaks": "Recovery burns one timestamp per restart and the Rust and C++ clocks diverge.",
+      "name": "floor-off-by-one",
+      "outcome": "killed",
+      "seconds": 10.306,
+      "test": "recovery_floor_precedes_next_allocation",
+      "workspace": null
+    },
+    {
+      "breaks": "A recovered (tuple, origin 1) record can be re-minted as the same tuple.",
+      "name": "floor-ignores-foreign-origin",
+      "outcome": "killed",
+      "seconds": 10.747,
+      "test": "recovery_floor_precedes_next_allocation",
+      "workspace": null
+    }
+  ],
+  "retired_cache_controls": [
+    "order-pair-sequence-first",
+    "reseed-under-gate",
+    "sequence-past-lane-boundary"
+  ],
+  "rustup_toolchain_override": "/opt/rust",
+  "source_sha256": "a092ed60372c6184c54d6ee913c0e35e3fd438ce896a6c6752e4d807f35dc738",
+  "toolchain_file": "/var/tmp/mako-shard-rust/rust-toolchain.toml",
+  "toolchain_integrity": {
+    "after": "23368770f6f417cffb9f6a251ee4b1fca5607d8198ed0f18a7507b958d1d5384",
+    "before": "23368770f6f417cffb9f6a251ee4b1fca5607d8198ed0f18a7507b958d1d5384",
+    "unchanged": true
+  },
+  "toolchain_sha256": "23368770f6f417cffb9f6a251ee4b1fca5607d8198ed0f18a7507b958d1d5384",
+  "toolchain_versions": {
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+  },
+  "total": 9,
+  "verdict": "pass"
+}

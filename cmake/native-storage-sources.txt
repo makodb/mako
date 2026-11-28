@@ -7,6 +7,7 @@ src/masstree/json.cc
 src/masstree/kvthread.cc
 src/masstree/masstree_context.cc
 src/mako/storage/mtree_abi.cc
+src/mako/storage/mtree_rows.cc
 src/mako/runtime/thread_registration.cc
 src/mako/allocator.cc
 src/mako/core.cc

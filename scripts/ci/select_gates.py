@@ -11,8 +11,8 @@ import os
 import subprocess
 
 NAMES = ('upper','components','masstree_tx','replication','srpc','integration','extended','miri')
-CONTRACTS = ('crates/mako-protocol/src/contracts.rs', 'crates/mako-protocol/src/wire.rs', 'crates/mako-protocol-core/',
-             'crates/mako-protocol/src/range_lock.rs', 'src/cluster/range_lock.rs',
+CONTRACTS = ('crates/sto-core/src/protocol/contracts.rs', 'crates/sto-core/src/protocol/wire.rs', 'crates/sto-core/src/protocol/verified/',
+             'crates/sto-core/src/protocol/range_lock.rs', 'src/cluster/range_lock.rs',
              'crates/mako-storage-api/', 'crates/shard-host-core/',
              'src/cluster/storage.rs','src/cluster/transfer.rs','src/cluster/types.rs')
 
@@ -21,7 +21,7 @@ def select(paths, event='pull_request'):
     for path in paths:
         if path.startswith(('docs/','.claude/')) or path.endswith('.md'):
             continue
-        if path.startswith(('crates/mako-protocol-core/tests/',)):
+        if path.startswith(('crates/sto-core/tests/protocol_', 'crates/sto-core/tests/legacy_coordinator.rs',)):
             gates['upper']=True
         elif path.startswith(('scripts/ci/weekly_performance.py','scripts/ci/test_weekly_performance.py')):
             # The selector job runs these small driver unit tests; benchmarks
@@ -35,17 +35,21 @@ def select(paths, event='pull_request'):
                               'src/cluster/wire', 'src/cluster/metadata', 'src/cluster/rocks_metadata',
                               'src/cluster/gateway_ffi', 'src/cluster/lib.rs', 'src/cluster/Cargo.')):
             gates['upper']=gates['integration']=True
-        elif path.startswith(('crates/mako-protocol/','src/cluster/','tla/mako/',
-                              'scripts/upper_', 'ci/upper.sh')):
+        elif path.startswith(('crates/sto-core/src/protocol/','crates/sto-core/verification/','src/cluster/','tla/mako/',
+                              'scripts/upper_', 'scripts/check_sto_boundary.py', 'ci/upper.sh')):
             gates['upper']=True
+        elif path in ('crates/mako-runtime/src/gateway_protocol.rs', 'crates/mako-runtime/tests/support/gateway_contract.rs'):
+            gates['upper']=gates['integration']=True
+        elif path in ('src/deptran/raft/core/src/retention.rs', 'src/deptran/raft/core/src/lib.rs'):
+            gates['upper']=gates['replication']=gates['integration']=True
         elif path.startswith(('src/srpc/','third-party/rusty-cpp/','third-party/lion/')):
             gates['srpc']=gates['integration']=True
         elif path.startswith(('src/deptran/raft/','crates/raft-host/','crates/sto-rocksdb/',
                               'crates/mako-rocksdb-store/','ci/replication.sh','cmake/RocksdbRuntime.cmake')):
             gates['replication']=gates['integration']=True
-        elif path.startswith(('crates/mako-runtime/','examples/','tests/')):
+        elif path.startswith(('crates/mako-runtime/','crates/mako-workloads/','examples/','tests/')):
             gates['integration']=True
-        elif path.startswith(('crates/sto-masstree/','crates/sto-tpcc-ffi/',
+        elif path.startswith(('crates/sto-masstree/','crates/sto-masstree-api/',
                               'ci/masstree_tx.sh','cmake/MasstreeTransaction.cmake',
                               'scripts/check_masstree_tx_component.py',
                               'scripts/tests/test_masstree_tx_component.py')):
@@ -53,7 +57,8 @@ def select(paths, event='pull_request'):
         elif path.startswith(('crates/sto-','crates/masstree/','crates/mtree-sys/',
                               'src/masstree/','src/sto/')):
             gates['components']=gates['masstree_tx']=gates['integration']=True
-            if path.startswith(('crates/sto-core/','crates/sto-test-datatypes/')): gates['miri']=True
+            if path.startswith(('crates/sto-core/','crates/sto-test-datatypes/')): gates['miri']=gates['upper']=True
+            if path.startswith('crates/sto-core/'): gates['replication']=True
         else:
             for name in NAMES: gates[name]=True
     return gates

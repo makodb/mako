@@ -437,7 +437,7 @@ pub struct InstallContext<'a> {
     plan: &'a mut LockPlan,
     occ_commit_id: Option<OccCommitId>,
     #[cfg(feature = "distributed")]
-    distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
+    distributed_time_term: Option<crate::clock::distributed::DistributedTimeTerm>,
     retain_locks: bool,
     not_send_or_sync: PhantomData<Rc<()>>,
 }
@@ -523,7 +523,7 @@ impl InstallContext<'_> {
 
     #[cfg(feature = "distributed")]
     /// The external distributed decision, independent of the local OCC ID.
-    pub fn distributed_time_term(&self) -> Option<mako_clock::distributed::DistributedTimeTerm> {
+    pub fn distributed_time_term(&self) -> Option<crate::clock::distributed::DistributedTimeTerm> {
         self.distributed_time_term
     }
 }
@@ -1037,7 +1037,7 @@ impl LockPlan {
         &mut self,
         occ_commit_id: Option<OccCommitId>,
         #[cfg(feature = "distributed")] distributed_time_term: Option<
-            mako_clock::distributed::DistributedTimeTerm,
+            crate::clock::distributed::DistributedTimeTerm,
         >,
         retain_locks: bool,
     ) -> Result<InstallContext<'_>, AdapterFault> {

@@ -2,6 +2,7 @@
 
 #define MAKO_MTREE_ABI_TRUSTED_RUST_BRIDGE 1
 #include "mako/storage/mtree_abi.h"
+#include "mako/storage/mtree_rows.h"
 
 #include "mako/core.h"
 #include "mako/masstree_btree.h"
@@ -179,6 +180,9 @@ struct mt_tree {
    * an insertion inspect unrelated workers and process-lifetime loader handles.
    */
   mt_structure_reader_membership structure_readers;
+  // Private native-row lane uses Masstree cursor concurrency directly.
+  // High bit seals new publications; low bits count admitted insert calls.
+  std::atomic<uint32_t> row_writers{0};
   mt_abi_detail::record_tree native;
 
   explicit mt_tree(mt_runtime *runtime_arg)
@@ -2634,3 +2638,162 @@ mako_mtree_scan_record_ids_bounded_trusted(
       static_cast<uint8_t *>(continuation), continuation_capacity, out);
 }
 #undef MAKO_MTREE_PRIVATE_HIDDEN
+
+
+// Native transactional rows adapt MassTrans cursor/leaf observations. This
+// private lane is never mixed with the generic scalar directory API. It uses
+// Masstree's original optimistic structural concurrency and its existing TSan
+// qualification, rather than the generic ABI's conservative table-wide gate.
+namespace {
+struct row_index_failure { mt_status status; };
+struct row_insert_lease {
+  mt_tree &tree;
+  explicit row_insert_lease(mt_tree &t) : tree(t) {
+    auto old = tree.row_writers.load(std::memory_order_acquire);
+    do {
+      if (old & (1u << 31)) throw row_index_failure{MT_ERR_STRUCTURE_SEALED};
+    } while (!tree.row_writers.compare_exchange_weak(old, old + 1,
+                 std::memory_order_acq_rel, std::memory_order_acquire));
+  }
+  ~row_insert_lease() { tree.row_writers.fetch_sub(1, std::memory_order_release); }
+};
+template<class F> mt_status row_index_operation(mt_tree *tree, mt_thread *thread,
+                                               F &&operation) noexcept {
+  mt_runtime *runtime = nullptr;
+  bool controlled = false;
+  auto status = trusted_operation(*tree, *thread, &runtime, controlled);
+  if (status != MT_OK) return status;
+  try {
+    operation_rcu_guard region(*thread, controlled);
+    return operation();
+  } catch (const row_index_failure &e) { return e.status;
+  } catch (const std::bad_alloc &) { return MT_ERR_OUT_OF_MEMORY;
+  } catch (...) { poison(runtime); return MT_ERR_CPP_EXCEPTION; }
+}
+}
+extern "C" mt_status mako_row_index_find(mt_tree *tree, mt_thread *thread,
+    const void *key, size_t size, uint64_t *out, mt_leaf_stamp *stamp) noexcept {
+  return row_index_operation(tree, thread, [&]() -> mt_status {
+    auto status = check_key(*tree->runtime, key, size);
+    if (status != MT_OK) return status;
+    mt_abi_detail::record_tree::versioned_node_t observed;
+    *out = 0;
+    tree->native.search(make_key(key, size), *out, &observed);
+    *stamp = {observed.first, observed.second};
+    return MT_OK;
+  });
+}
+extern "C" mt_status mako_row_index_insert(mt_tree *tree, mt_thread *thread,
+    const void *key, size_t size, void *context,
+    mt_status (*allocate)(void *, uint64_t *), uint64_t *out,
+    mt_row_insertion *change) noexcept {
+  *change = {};
+  return row_index_operation(tree, thread, [&]() -> mt_status {
+    auto status = check_key(*tree->runtime, key, size);
+    if (status != MT_OK) return status;
+    row_insert_lease admission(*tree);
+    // The caller retains an allocated candidate even if finish throws: that
+    // is an unknown publication, and the table is fenced instead of freed.
+    *out = tree->native.insert_generated(make_key(key, size), [&]() {
+      auto result = allocate(context, out);
+      if (result != MT_OK) throw row_index_failure{result};
+      return *out;
+    }, [&](auto node, auto before, auto after, const auto &created) {
+      if (created.size() > MT_ROW_NEW_LEAVES)
+        throw row_index_failure{MT_ERR_POISONED};
+      change->before = {node, before};
+      change->after = {node, after};
+      for (const auto &entry : created)
+        change->new_leaves[change->new_count++] = {entry.first, entry.second};
+    });
+    return MT_OK;
+  });
+}
+extern "C" mt_status mako_row_index_check(mt_leaf_stamp stamp) noexcept {
+  using tree_type = mt_abi_detail::record_tree;
+  return tree_type::ExtractVersionNumber(
+      static_cast<const tree_type::node_opaque_t *>(stamp.leaf)) == stamp.version
+      ? MT_OK : MT_ERR_BUSY;
+}
+extern "C" mt_status mako_row_index_seal(mt_tree *tree) noexcept {
+  tree->row_writers.fetch_or(1u << 31, std::memory_order_acq_rel);
+  while (tree->row_writers.load(std::memory_order_acquire) != (1u << 31))
+    std::this_thread::yield();
+  return MT_OK;
+}
+namespace {
+struct row_scan_collector final : mt_abi_detail::record_tree::low_level_search_range_callback {
+  mt_scan_direction direction;
+  const mt_scan_bound &lower, &upper;
+  uint64_t *rows;
+  size_t capacity, key_budget, used = 0, count = 0;
+  mt_leaf_stamp *leaves;
+  size_t leaf_capacity, leaf_count = 0;
+  bool end = true, overflow = false;
+  row_scan_collector(mt_scan_direction d, const mt_scan_bound &l,
+      const mt_scan_bound &u, uint64_t *r, size_t c, size_t k,
+      mt_leaf_stamp *ls, size_t lc)
+    : direction(d), lower(l), upper(u), rows(r), capacity(c), key_budget(k),
+      leaves(ls), leaf_capacity(lc) {}
+  void on_resp_node(const mt_abi_detail::record_tree::node_opaque_t *node,
+                    uint64_t version) override {
+    if (leaf_count == leaf_capacity) { overflow = true; return; }
+    leaves[leaf_count++] = {node, version};
+  }
+  bool invoke(const lcdf::Str &key, uint64_t row,
+      const mt_abi_detail::record_tree::node_opaque_t *, uint64_t) override {
+    if (overflow) return false;
+    if (bound_is_present(lower)) {
+      const int c = compare_key_to_bound(key, lower);
+      if (c < 0 || (c == 0 && lower.kind == MT_SCAN_BOUND_EXCLUSIVE))
+        return direction == MT_SCAN_FORWARD;
+    }
+    if (bound_is_present(upper)) {
+      const int c = compare_key_to_bound(key, upper);
+      if (c > 0 || (c == 0 && upper.kind == MT_SCAN_BOUND_EXCLUSIVE))
+        return direction == MT_SCAN_REVERSE;
+    }
+    if (count == capacity || size_t(key.len) > key_budget - used) {
+      end = false; return false;
+    }
+    used += key.len; // Preserve the configured byte bound without copying keys.
+    rows[count++] = row;
+    return true;
+  }
+};
+}
+extern "C" mt_status mako_row_index_scan(mt_tree *tree, mt_thread *thread,
+    mt_scan_direction direction, const mt_scan_bound *lower,
+    const mt_scan_bound *upper, uint64_t *rows, size_t capacity,
+    size_t key_budget, mt_leaf_stamp *leaves, size_t leaf_capacity,
+    size_t *count, size_t *leaf_count, uint32_t *end) noexcept {
+  return row_index_operation(tree, thread, [&]() -> mt_status {
+    *count = 0; *leaf_count = 0; *end = 1;
+    if (bound_is_present(*lower) && bound_is_present(*upper)) {
+      const int order = compare_byte_strings(lower->key, lower->key_length,
+                                              upper->key, upper->key_length);
+      if (order > 0 || (order == 0 && (lower->kind == MT_SCAN_BOUND_EXCLUSIVE ||
+                                       upper->kind == MT_SCAN_BOUND_EXCLUSIVE)))
+        return MT_OK;
+    }
+    row_scan_collector collector(direction, *lower, *upper, rows, capacity,
+                                 key_budget, leaves, leaf_capacity);
+    if (direction == MT_SCAN_FORWARD) {
+      auto start = bound_is_present(*lower) ? make_key(lower->key, lower->key_length)
+                                            : make_key(nullptr, 0);
+      if (upper->kind == MT_SCAN_BOUND_EXCLUSIVE)
+        tree->native.search_range_call_bounded(start, make_key(upper->key, upper->key_length), collector);
+      else tree->native.search_range_call_unbounded(start, collector);
+    } else {
+      std::array<uint8_t, MT_CONFIGURED_MAX_KEY_LENGTH> maximum;
+      maximum.fill(255);
+      auto start = bound_is_present(*upper) ? make_key(upper->key, upper->key_length)
+                                            : make_key(maximum.data(), maximum.size());
+      if (lower->kind == MT_SCAN_BOUND_EXCLUSIVE)
+        tree->native.rsearch_range_call_bounded(start, make_key(lower->key, lower->key_length), collector);
+      else tree->native.rsearch_range_call_unbounded(start, collector);
+    }
+    *count = collector.count; *leaf_count = collector.leaf_count; *end = collector.end;
+    return collector.overflow ? MT_ERR_OUT_OF_MEMORY : MT_OK;
+  });
+}

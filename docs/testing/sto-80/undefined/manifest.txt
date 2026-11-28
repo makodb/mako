@@ -1,0 +1,19 @@
+scope=native rows, index and thin STO adapters; dirty worktree
+sanitizer=undefined
+rustflags=-C force-frame-pointers=yes -C link-arg=-fsanitize=undefined -C link-arg=--config=/var/tmp/mako-shard-rust/build_native_san_undefined_04/clang-gnu-unwind.cfg
+rustc=rustc 1.97.1 (8bab26f4f 2026-07-14)
+09d571f1ad6d06d4d670efb8f142fca3713f3ccaddae576d7bf71d1e4b57f217  crates/sto-core/src/runtime.rs
+6267da01f12f125822fb905d2a5cc5e8ce7bd18c28ab421f2de3d4f67e4519d5  src/mako/storage/mtree_rows.cc
+0a16f35d839656274e3799cdce750baa47b443545e4aa5d47447984b1b959d89  src/mako/storage/mtree_rows.h
+dd632367b279023f4cc6feb23396492a546d5b1a512d6c24330968c48d831791  src/mako/storage/mtree_abi.cc
+8b0ee15c9aaf85d5a0afd29b6236c737b593f6e037469f29753f0a7981eb8e38  src/mako/masstree_btree.h
+99475ca338e55b6275452434a8cdf72aacf0187e8c0a677b5922d8bd9b15796b  crates/masstree/src/native_rows.rs
+48a3313c45e94570c5c4c52a555b6405a5119da338c7a0bfd70f2b43f1c6b791  crates/sto-masstree/src/lib.rs
+ed367dbff85d38141c5e603304d089156baabae16907dcba4f017a5c382b30cd  crates/sto-masstree-api/src/lib.rs
+886e6d3f2d2e8297c94c9bd2c2b0b91720d400bb00b1ea53816cdcf745fc8d91  crates/sto-masstree-api/src/native.rs
+0eaac6814aa776031208b9e1517692670dfca0c1d608f38e5175bb5ce9c30150  crates/sto-masstree-api/src/owner.rs
+485e9ba590038b92c613da2ea0375a8e204ee5c6ccb019de98e18b5a13be760f  src/masstree/lsan_suppressions.txt
+4e7732e7e0d74850e9d3510f211f3fc6999de91af72e018e48dfbc68d284cfe8  src/masstree/tsan_suppressions.txt
+7606363e50e8c716def2b75545c241567db0eb2ae0dd515ae7aa1372e50873fb  src/masstree/ubsan_suppressions.txt
+3aa4e8ea3ece53e807eed2f26f52b06771053b033f5dc15a2a24feaebd1e3c8a  scripts/ci/native-adapter-quarantine-tests.txt
+gate_exit=0

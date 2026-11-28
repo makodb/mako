@@ -1,0 +1,7 @@
+[1/19] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_rows.cc for CXX dependencies
+[2/19] Generating CXX dyndep file CMakeFiles/mako_native_storage.dir/CXX.dd
+[3/4] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_rows.cc.o
+[4/4] Linking CXX static library libmako_native_storage.a
+   Compiling masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/masstree)
+   Compiling sto-masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree)
+    Finished `release` profile [optimized] target(s) in 9.06s

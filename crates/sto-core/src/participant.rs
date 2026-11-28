@@ -1,7 +1,7 @@
 //! A retained distributed participant using the ordinary transaction frame.
 
 use super::*;
-use mako_clock::distributed::DistributedTimeTerm;
+use crate::clock::distributed::DistributedTimeTerm;
 
 /// Execution is mutable only before final certification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -8,7 +8,7 @@ upper-gate timing and dependency qualification is in the
 
 ## Verified decisions and tested composition
 
-`mako-protocol-core::two_phase` verifies executable coordinator and participant
+`sto_core::protocol::verified::two_phase` verifies executable coordinator and participant
 state transitions. The coordinator counts named participants, requires every
 write-lock acknowledgement before any Yes vote, requires every Yes before
 Commit, and requires confirmation of a saved decision before recording it.
@@ -17,7 +17,7 @@ every member. Preparing and Prepared retain protection and cannot abort locally.
 The specifications also require successful progress when their preconditions
 hold, so a reject-all implementation does not satisfy them.
 
-`mako-protocol::commit` is the production coordinator driver. It composes those
+`sto_core::protocol::commit` is the production coordinator driver. It composes those
 transitions with adapter effects. Its complete function, serialization, journal
 maps, exact-payload checks and runtime adapters are ordinary Rust. They are
 covered by deterministic tests and native regressions, not claimed as
@@ -35,7 +35,7 @@ Production and isolated drivers call the same actors.
 ## Migration range-lock contract
 
 `mako-sharding::range_lock` defines the provider contract. The shared transaction
-layer implements it in `mako-protocol::range_lock`, exposed through
+layer implements it in `sto_core::protocol::range_lock`, exposed through
 `mako-storage-api` for either storage mode. Sharding publishes non-serving
 admission before reserving the range. Acquisition blocks new overlapping
 ordinary access; existing admitted transactions may finish. Guarded migration
@@ -144,7 +144,9 @@ coverage, publication before trimming and replay from restored durable progress.
 The runtime and storage adapters establish the inputs to these policies. Verus
 does not prove native WriteBatch atomicity, serialization, checksums, filesystem
 persistence, timer scheduling or reconstruction of physical locks. Separate
-component and crash tests check those obligations. The upper gate has semantic
+component and crash tests check those obligations. The source audit follows the
+current protocol-index validation and native RocksDB checkpoint publication
+paths. The retired file-only checkpoint writer is no longer an adapter target. The upper gate has semantic
 negative controls for skipped records, unapplied effects, lagging checkpoints
 and recovery beyond commitment.
 
@@ -225,9 +227,9 @@ and 2PC proofs continue to cover protocol policy; the facade adds no new protoco
 
 | Decision or contract | Production mapping | Evidence |
 | --- | --- | --- |
-| OCC + 2PC state | `mako-protocol-core/src/two_phase.rs` | Full core verification and semantic negative controls |
-| Coordinator effect order | `mako-protocol/src/commit.rs`, runtime `client.rs::NativeEffects` | Production driver under lock, prepare, decision and completion faults |
-| Immutable journal transitions | `mako-protocol/src/journal.rs` | Changed intent/descriptor rejection, duplicate decisions, restart bytes and completion row oracles |
+| OCC + 2PC state | `sto-core/src/protocol/verified/two_phase.rs` | Full core verification and semantic negative controls |
+| Coordinator effect order | `sto-core/src/protocol/commit.rs`, runtime `client.rs::NativeEffects` | Production driver under lock, prepare, decision and completion faults |
+| Immutable journal transitions | `sto-core/src/protocol/journal.rs` | Changed intent/descriptor rejection, duplicate decisions, restart bytes and completion row oracles |
 | Lease and execution admission | Core and ordinary `admission.rs`, generic `participant::Lane` | Core proof plus changed-payload, retired-lease and delayed-request scenarios |
 | Serializability composition | Frozen reads/writes and row/predicate storage contract | Exhaustive small histories with independent serial-order oracle; focused native write-skew tests |
 | Prepared physical lifetime | Runtime `prepared.rs`, `receiver.rs`, owned native API | Native listener teardown, late message, migration pin, restart and saved-decision regressions |
@@ -245,3 +247,18 @@ Dependency audits check both the selected Cargo graph and emitted artifacts.
 C/C++ compilers are disabled in the fast gate. These checks support
 correspondence; they do not prove the trusted physical adapters, journal
 implementation, RPC transport or Rust runtime as a whole.
+
+## Production module ownership
+
+The clock, generic protocol driver and verified transaction decisions belong to
+`sto-core`. The `protocol` feature compiles the driver and canonical verified
+modules. Node effects and sharding-specific gateway policy belong to
+`mako-runtime`; storage transaction wrappers depend only on STO contracts.
+The upper gate compiles the canonical gateway source without the runtime's
+service dependencies and shares its regression cases with the runtime suite.
+
+Checkpoint log trimming is verified at `raft-core/src/retention.rs` and consumed
+by `raft-host`, which has no STO dependency. The obsolete scalar coordinator
+remains a historical proof/test target under `sto-core/verification`, outside
+production exports. Its four negative controls remain in the gate. This
+separation does not claim a Verus proof of all STO code.

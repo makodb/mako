@@ -2,11 +2,14 @@
 
 //! Safe ownership and threading policy over Mako's Masstree C ABI.
 //!
-//! Masstree is exposed only as an append-only binary-key directory from keys
-//! to immutable, nonzero [`RecordId`] values. Native cursors, node/value
-//! pointers, and RCU guards never cross this crate's private FFI boundary.
+//! The scalar index maps binary keys to immutable, nonzero [`RecordId`] values.
+//! [`rows`] separately exposes native-owned transactional byte rows and retained
+//! buffers. Raw pointers stay inside the private FFI implementation; safe handles
+//! retain their owners. Native cursors and RCU guards never escape a call.
 
 mod native;
+/// Native-owned transactional byte rows, separate from the scalar index API.
+pub use native::rows;
 
 use std::{
     collections::HashSet,

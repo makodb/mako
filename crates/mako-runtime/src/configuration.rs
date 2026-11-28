@@ -1,12 +1,10 @@
 //! Native JSON/YAML configuration. Application validation happens before any
 //! listener, database directory or worker is created.
-use crate::{benchmark, node::Config, wire::*};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use crate::{node::Config, wire::*};
+use serde::de::DeserializeOwned;
 use std::{collections::BTreeSet, io::Read, path::Path};
 
 const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
-pub mod cli;
-pub mod topology;
 pub fn read<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
     let path = path.as_ref();
     let file = std::fs::File::open(path)
@@ -31,26 +29,6 @@ pub fn read<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
 }
 fn invalid(message: impl Into<String>) -> Error {
     Error::new(ErrorCode::Invalid, message)
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BenchmarkFile {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node: Option<Config>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub nodes: Vec<Config>,
-    #[serde(default)]
-    pub benchmark: benchmark::Config,
-}
-impl BenchmarkFile {
-    pub fn into_parts(self) -> Result<(Vec<Config>, benchmark::Config)> {
-        let nodes = select_nodes(self.node, self.nodes)?;
-        for node in &nodes {
-            self.benchmark.validate(node)?;
-        }
-        Ok((nodes, self.benchmark))
-    }
 }
 
 pub fn select_nodes(node: Option<Config>, selected: Vec<Config>) -> Result<Vec<Config>> {

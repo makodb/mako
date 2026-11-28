@@ -142,7 +142,7 @@ impl Network {
         replicas: &wire::ReplicaSet,
         timeout: Duration,
     ) -> Result<String> {
-        mako_protocol::contracts::Transport::find_leader(self, owner, replicas, timeout)
+        sto_core::protocol::contracts::Transport::find_leader(self, owner, replicas, timeout)
     }
 
     fn client(&self, endpoint: &str) -> Result<Arc<Client>> {
@@ -236,7 +236,7 @@ impl Drop for Network {
     }
 }
 
-impl mako_protocol::contracts::Transport for Network {
+impl sto_core::protocol::contracts::Transport for Network {
     fn call(&self, endpoint: &str, message: Message, timeout: Duration) -> Result<Reply> {
         Network::call(self, endpoint, message, timeout)
     }
@@ -296,9 +296,9 @@ mod tests {
             hold.lock().push(reply)
         })
         .unwrap();
-        let transaction = mako_protocol::journal::Transaction {
-            version: mako_protocol::journal::VERSION,
-            id: mako_protocol::journal::TransactionId {
+        let transaction = sto_core::protocol::journal::Transaction {
+            version: sto_core::protocol::journal::VERSION,
+            id: sto_core::protocol::journal::TransactionId {
                 coordinator: 0,
                 worker: 0,
                 incarnation: 7,
@@ -306,7 +306,7 @@ mod tests {
             },
             time_term: 100,
             durable: false,
-            members: vec![mako_protocol::journal::Member {
+            members: vec![sto_core::protocol::journal::Member {
                 owner: 0,
                 endpoints: vec![server.address().into()],
                 lease: 1,
@@ -318,7 +318,7 @@ mod tests {
             term: 0,
             action: TransactionAction::Decide {
                 transaction,
-                outcome: mako_protocol::journal::Outcome::Commit,
+                outcome: sto_core::protocol::journal::Outcome::Commit,
             },
         };
         assert_eq!(

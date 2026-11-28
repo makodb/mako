@@ -1,8 +1,8 @@
 //! Bounded materialization of already committed effects. No transaction is
 //! validated or decided here; the durable log remains authority for the gap.
 use super::*;
-use mako_protocol_core::recovery;
 use mako_storage_api::ApplicationBatch;
+use sto_core::protocol::verified::recovery;
 
 /// Limits for the optional Masstree layer's pending RocksDB writes.
 #[derive(Clone, Copy, Debug)]
@@ -66,10 +66,7 @@ impl State {
         }
         let ids = change.table_ids();
         self.replay.tables(ids.clone())?;
-        let application = self
-            .persistent
-            .as_ref()
-            .ok_or_else(|| storage("missing RocksDB backing"))?;
+        let application = &self.persistent;
         application.ensure_tables(&ids).map_err(engine)?;
         if !self.accelerated {
             return application
@@ -107,10 +104,7 @@ impl State {
             return Ok(());
         }
         let result = (|| {
-            let application = self
-                .persistent
-                .as_ref()
-                .ok_or_else(|| storage("missing RocksDB backing"))?;
+            let application = &self.persistent;
             let pending = &gate.materialization.records;
             let durable = application.position().map_err(engine)?;
             if !recovery::materialization_batch(

@@ -1,0 +1,495 @@
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- ROCKSDB_RUNTIME: distributed STO/OCC+2PC, local/Raft logs and Rust SRPC; no Masstree compiler or archive
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_format_cleanup/rocks
+-- import std token: 451f2fe2-a8a2-47c3-bc32-94786d8fc91b (CMake 4.3.3)
+-- The C compiler identification is Clang 22.1.8
+-- The CXX compiler identification is Clang 22.1.8
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-22 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++-22 - skipped
+-- Detecting CXX compile features
+CMake Warning (dev) at /opt/cmake-4.3.3/share/cmake-4.3/Modules/Compiler/CMakeCommonCompilerMacros.cmake:226 (cmake_language):
+  CMake's support for `import std;` in C++23 and newer is experimental.  It
+  is meant only for experimentation and feedback to CMake developers.
+Call Stack (most recent call first):
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeDetermineCompilerSupport.cmake:110 (cmake_cxx_find_modules_json)
+  /opt/cmake-4.3.3/share/cmake-4.3/Modules/CMakeTestCXXCompiler.cmake:83 (CMAKE_DETERMINE_COMPILER_SUPPORT)
+  CMakeLists.txt:147 (project)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Detecting CXX compile features - done
+-- Looking for sys/epoll.h
+-- Looking for sys/epoll.h - found
+-- Looking for numa.h
+-- Looking for numa.h - found
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdio.h
+-- Looking for stdio.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for sys/stat.h
+-- Looking for sys/stat.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for time.h
+-- Looking for time.h - found
+-- Looking for execinfo.h
+-- Looking for execinfo.h - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for C++ include type_traits
+-- Looking for C++ include type_traits - found
+-- Looking for getline
+-- Looking for getline - found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME
+-- Performing Test _MASSTREE_HAVE_CLOCK_GETTIME - Success
+-- Looking for numa_available in numa
+-- Looking for numa_available in numa - found
+-- Performing Test _HAVE_CXX_CONSTEXPR
+-- Performing Test _HAVE_CXX_CONSTEXPR - Success
+-- Performing Test _HAVE_CXX_STATIC_ASSERT
+-- Performing Test _HAVE_CXX_STATIC_ASSERT - Success
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES
+-- Performing Test _HAVE_CXX_RVALUE_REFERENCES - Success
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS
+-- Performing Test _HAVE_CXX_TEMPLATE_ALIAS - Success
+-- Performing Test _HAVE_STD_HASH
+-- Performing Test _HAVE_STD_HASH - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_COPYABLE - Success
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE
+-- Performing Test _HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE - Success
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE
+-- Performing Test _HAVE_STD_IS_RVALUE_REFERENCE - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY
+-- Performing Test _HAVE___HAS_TRIVIAL_COPY - Success
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR
+-- Performing Test _HAVE___HAS_TRIVIAL_DESTRUCTOR - Success
+-- Performing Test _HAVE___BUILTIN_CLZ
+-- Performing Test _HAVE___BUILTIN_CLZ - Success
+-- Performing Test _HAVE___BUILTIN_CLZL
+-- Performing Test _HAVE___BUILTIN_CLZL - Success
+-- Performing Test _HAVE___BUILTIN_CLZLL
+-- Performing Test _HAVE___BUILTIN_CLZLL - Success
+-- Performing Test _HAVE___BUILTIN_CTZ
+-- Performing Test _HAVE___BUILTIN_CTZ - Success
+-- Performing Test _HAVE___BUILTIN_CTZL
+-- Performing Test _HAVE___BUILTIN_CTZL - Success
+-- Performing Test _HAVE___BUILTIN_CTZLL
+-- Performing Test _HAVE___BUILTIN_CTZLL - Success
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE
+-- Performing Test _HAVE___SYNC_SYNCHRONIZE - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_ADD_8 - Success
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_ADD_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH - Success
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8
+-- Performing Test _HAVE___SYNC_FETCH_AND_OR_8 - Success
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8
+-- Performing Test _HAVE___SYNC_OR_AND_FETCH_8 - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_BOOL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP - Success
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8
+-- Performing Test _HAVE___SYNC_VAL_COMPARE_AND_SWAP_8 - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET - Success
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL
+-- Performing Test _HAVE___SYNC_LOCK_TEST_AND_SET_VAL - Success
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET
+-- Performing Test _HAVE___SYNC_LOCK_RELEASE_SET - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG - Success
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG
+-- Performing Test _HAVE_OFF_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_INT64_T_IS_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG - Success
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG
+-- Performing Test _HAVE_INT64_T_IS_LONG_LONG - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED - Failed
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG - Success
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG
+-- Performing Test _HAVE_SIZE_T_IS_UNSIGNED_LONG_LONG - Failed
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of long long
+-- Check size of long long - done
+-- Check size of void *
+-- Check size of void * - done
+-- Performing Test _HAVE_MADV_HUGEPAGE
+-- Performing Test _HAVE_MADV_HUGEPAGE - Success
+-- Performing Test _HAVE_MAP_HUGETLB
+-- Performing Test _HAVE_MAP_HUGETLB - Success
+-- Generated Masstree config.h via CMake: /var/tmp/mako-shard-rust/build_format_cleanup/native/generated/masstree/config.h
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Mako allocator: mode=1, kind=jemalloc, library=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+-- Found Python3: /usr/bin/python3.12 (found version "3.12.3") found components: Interpreter
+-- Configuring done (13.7s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/tmp/mako-shard-rust/build_format_cleanup/native
+Both build profiles exclude the retired converter
+    Checking sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+    Checking shard-host-core v0.0.0 (/var/tmp/mako-shard-rust/crates/shard-host-core)
+    Checking mako-rocksdb-store v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb-store)
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:6:22
+  |
+6 | use crate::storage::{self,Image};
+  |                      ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `DurableKv`, `Namespace`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:7:25
+  |
+7 | use crate::durable_kv::{self,DurableKv,Namespace};
+  |                         ^^^^ ^^^^^^^^^ ^^^^^^^^^
+
+warning: unused imports: `Operation` and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^ ^^^^^^^^^
+
+warning: unused imports: `ActorHistory`, `NativeStep`, and `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_history.rs:9:28
+  |
+9 | use super::replay_proofs::{self,ActorHistory,NativeStep};
+  |                            ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^
+
+warning: unused import: `crate::leases`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:7:5
+  |
+7 | use crate::leases;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `self`
+ --> /var/tmp/mako-shard-rust/src/cluster/durable_participant_replay.rs:8:20
+  |
+8 | use super::codec::{self,Operation};
+  |                    ^^^^
+
+warning: unused variable: `n`
+   --> /var/tmp/mako-shard-rust/src/cluster/directory.rs:153:22
+    |
+153 |         let (mut out,n) = self.copy_prefix(lo);
+    |                      ^ help: if this is intentional, prefix it with an underscore: `_n`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `hi`
+   --> /var/tmp/mako-shard-rust/src/cluster/participant_metadata.rs:558:21
+    |
+558 |         if let Some(hi) = &range.hi {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_hi`
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:256:34
+    |
+256 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+318 |             after = Some(row);
+    |             ----- `after` is overwritten here before the previous value is read
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `after` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/storage.rs:345:34
+    |
+345 |     let mut after: Option<Row> = None;
+    |                                  ^^^^ this value is reassigned later and never used
+...
+367 |         after = Some(row);
+    |         ----- `after` is overwritten here before the previous value is read
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:22
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:107:43
+    |
+107 |     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status) {
+    |                                           ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `plan`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:25
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_plan`
+
+warning: unused variable: `owner`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:46
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_owner`
+
+warning: unused variable: `cleanup`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:110:67
+    |
+110 |     fn delete(&mut self,plan: &MigrationPlan,owner: u32,row: &Row,cleanup: bool) -> (status: Status) {
+    |                                                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cleanup`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:277:13
+    |
+277 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/transfer.rs:329:13
+    |
+329 |         let raw = guarded.raw;
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `value`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:251:17
+    |
+251 |             let value = match read_blob(&mut reader) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:951:21
+    |
+951 |                 let status = self.request.bounds.advance(last);
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `status`
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:955:13
+    |
+955 |         let status = self.completion.complete(page.count,page.eof,page.stopped);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1016:13
+     |
+1016 |         let a = bytes.write_u32(PAGE_TAG);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1017:13
+     |
+1017 |         let b = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1018:13
+     |
+1018 |         let c = bytes.write_u32(0);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1019:13
+     |
+1019 |         let d = bytes.write_u64(request.identity.snapshot_version);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+warning: unused variable: `a`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1058:13
+     |
+1058 |         let a = self.bytes.write_bytes(key);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+    --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:1059:13
+     |
+1059 |         let b = self.bytes.write_bytes(value);
+     |             ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `payload`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_kv.rs:413:17
+    |
+413 |             let payload = match decode_record(&bytes) { Ok(v) => v, Err(e) => return Err(e) };
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `node_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:136:9
+    |
+136 |     let node_count = nodes.len();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_count`
+
+warning: unused variable: `table_count`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:137:9
+    |
+137 |     let table_count = tables.len();
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_table_count`
+
+warning: unused variable: `response`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_coordinator.rs:174:9
+    |
+174 |     let response = match apply(actor,op) { Ok(r) => r, Err(e) => return Err(e) };
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:222:9
+    |
+222 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: unused variable: `raw`
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:256:9
+    |
+256 |     let raw=rows.engine;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_raw`
+
+warning: variable `status` is assigned to, but never used
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1062:13
+     |
+1062 |         let mut status=Status::Ok;
+     |             ^^^^^^^^^^
+     |
+     = note: consider using `_status` instead
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1073:17
+     |
+1073 |                 status=self.actor.deliver(&plan,command).status;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1075:48
+     |
+1075 |             Operation::Begin{id,incarnation}=>{status=self.begin_origin(id,incarnation);}
+     |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1076:38
+     |
+1076 |             Operation::Resolve(id)=>{status=self.actor.resolve(id);}
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1077:37
+     |
+1077 |             Operation::Finish(id)=>{status=self.actor.finish(id);}
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1079:17
+     |
+1079 | / ...   status=if point{
+1080 | | ...       if range.hi.is_some(){return false;}self.actor.acquire(id,range.table,&range.lo,grant)
+1081 | | ...   }else{self.actor.acquire_range(id,range.table,&range.lo,match &range.hi{Some(h)=>Some(h.as_slice()),None=>None},grant)};
+     | |_____________________________________________________________________________________________________________________________^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1083:55
+     |
+1083 |             Operation::Release{id,table,coordinate}=>{status=self.actor.release(id,table,&coordinate);}
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `status` is never read
+    --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:1114:63
+     |
+1114 |                 if result.certificate.is_none(){return false;}status=result.status;
+     |                                                               ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: fields `query`, `expected`, and `taken` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:800:5
+    |
+793 | pub struct PageCursor<'a> {
+    |            ---------- fields in this struct
+...
+800 |     query: Ghost<Request>,
+    |     ^^^^^
+801 |     snapshot_version: u64,
+802 |     expected: Ghost<Seq<WireRow>>,
+    |     ^^^^^^^^
+803 |     taken: Ghost<Seq<WireRow>>,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `rows` is never read
+   --> /var/tmp/mako-shard-rust/src/cluster/full_scan_core.rs:979:5
+    |
+971 | pub struct Page {
+    |            ---- field in this struct
+...
+979 |     rows: Ghost<Seq<WireRow>>,
+    |     ^^^^
+
+warning: fields `window` and `initial` are never read
+   --> /var/tmp/mako-shard-rust/src/cluster/durable_engine.rs:161:5
+    |
+158 | pub struct DurableRows<'a,E:DurableEngine>{
+    |            ----------- fields in this struct
+...
+161 |     window:Ghost<KeyRange>,
+    |     ^^^^^^
+162 |     initial:Ghost<E>,
+    |     ^^^^^^^
+
+warning: fields `index`, `records`, and `fact` are never read
+  --> /var/tmp/mako-shard-rust/src/cluster/durable_participant.rs:84:5
+   |
+80 | pub(crate) struct ReplayCompletion<'a> {
+   |                   ---------------- fields in this struct
+...
+84 |     index:u64,
+   |     ^^^^^
+85 |     records:Ghost<Seq<Seq<u8>>>,
+   |     ^^^^^^^
+86 |     fact:Ghost<CompletionFact>,
+   |     ^^^^
+
+warning: `mako-sharding` (lib) generated 44 warnings (run `cargo fix --lib -p mako-sharding` to apply 30 suggestions)
+    Checking raft-host v0.1.0 (/var/tmp/mako-shard-rust/crates/raft-host)
+    Checking mako-storage-api v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-api)
+    Checking sto-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/sto-rocksdb)
+    Checking mako-storage-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-storage-rocksdb)
+    Checking mako-runtime v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-runtime)
+    Checking mako-rocksdb v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-rocksdb)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.51s

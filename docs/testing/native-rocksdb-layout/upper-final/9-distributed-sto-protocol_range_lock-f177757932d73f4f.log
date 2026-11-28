@@ -1,0 +1,11 @@
+
+running 6 tests
+test cancelling_pending_migration_preserves_old_transaction_protection ... ok
+test concurrent_admission_and_acquisition_have_no_unprotected_gap ... ok
+test duplicate_identity_overlap_and_terminal_replay_are_checked ... ok
+test frozen_range_waits_for_old_work_and_blocks_new_points_absences_and_scans ... ok
+test invalid_and_foreign_access_fail_and_adjacent_ranges_do_not_overlap ... ok
+test reset_invalidates_old_guards_without_releasing_recovered_work ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

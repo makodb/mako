@@ -15,8 +15,8 @@ mod runtime;
 
 pub use batch::WriteBatch;
 pub use error::{Error, ErrorKind, Result};
-pub use mako_protocol::journal::{Outcome, TransactionId};
-use mako_protocol::wire::{Bound, Row, MAX_KEY, MAX_VALUE};
+pub use sto_core::protocol::journal::{Outcome, TransactionId};
+use sto_core::protocol::wire::{Bound, Row, MAX_KEY, MAX_VALUE};
 #[cfg(feature = "rocksdb-engine")]
 pub use mako_runtime::node::Config as MakoConfig;
 pub use options::{

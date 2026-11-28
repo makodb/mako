@@ -1,0 +1,27 @@
+[1/1] All primary targets available:
+mako_node: phony
+mako_admin: phony
+mako_client: phony
+mako_bench: phony
+mako_transactions: phony
+mako_redis: phony
+rocks_runtime_audit: phony
+rust_runtime_tests: phony
+edit_cache: phony
+rebuild_cache: phony
+list_install_components: phony
+install: phony
+install/local: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_runtime: CUSTOM_COMMAND
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_node: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_admin: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_client: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_bench: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_transactions: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/mako_redis: phony
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/rocks_runtime_audit: CUSTOM_COMMAND
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/CMakeFiles/rust_runtime_tests: CUSTOM_COMMAND
+build.ninja: RERUN_CMAKE
+/var/tmp/mako-shard-rust/build_format_cleanup/rocks/cmake_install.cmake: RERUN_CMAKE
+clean: CLEAN
+help: HELP

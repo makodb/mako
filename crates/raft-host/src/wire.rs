@@ -7,13 +7,13 @@ use std::sync::Arc;
 pub(crate) const RPC: i32 = 0x4d52_4801;
 pub(crate) const FRAME_LIMIT: u64 = 16 << 20;
 
-// Keep the existing durable protocol version. Async peers use a distinct
-// version so even an older sync host rejects their votes/appends/snapshots.
+// v3/v4 bind every peer message to its pre-log application identity.
+// Async peers remain a separate protocol; old envelopes are rejected.
 pub(crate) fn version(sync_writes: bool) -> u32 {
     if sync_writes {
-        1
+        3
     } else {
-        2
+        4
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +52,7 @@ impl InboundBatch<Command> for Batch {
 pub(crate) struct Envelope {
     pub version: u32,
     pub group: u64,
+    pub initial_state: [u8;32],
     pub sender: u16,
     pub request: Request,
 }
@@ -152,6 +153,7 @@ mod tests {
         let request = Envelope {
             version: 1,
             group: (1u64 << 55) + 9,
+            initial_state: [0;32],
             sender: 17,
             request: Request::Append {
                 term: position.term,

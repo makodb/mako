@@ -38,7 +38,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 CRATE = ROOT / "crates" / "shard-host-core"
-SHELL = ROOT / "crates" / "sto-tpcc-ffi" / "src" / "shard_host.rs"
+SHELL = ROOT / "crates" / "mako-runtime" / "src" / "migration_storage.rs"
 TRUSTED = ROOT / "scripts" / "shard_host_core_trusted.txt"
 ENTRY = "crates/shard-host-core/src/lib.rs"
 CRATES_VERSION = "0.0.0-2026-08-02-0125"
@@ -53,7 +53,7 @@ RELEASE_SOURCES = {
 # release keeps the repository's Cargo.toml, the package keeps it as .orig.
 PACKAGING = {"Cargo.lock", "Cargo.toml.orig", ".cargo_vcs_info.json", "README.md"}
 # The functions the shell calls, as module::function.
-ENTRY_POINTS = ["status::map_engine", "scan::scan_flags_valid", "scan::scan_arguments", "scan::fixed_scan", "verbs::write_cell", "walk::scan_first"]
+ENTRY_POINTS = ["scan::scan_arguments", "scan::fixed_scan"]
 
 VERUS = shutil.which(os.environ.get("VERUS_PATH", "verus"))
 if VERUS is None:
@@ -488,7 +488,7 @@ if __name__ == "__main__":
     subprocess.run(["cargo", "build", "--locked", "--manifest-path", "crates/Cargo.toml",
                     "--target-dir", str(Path(os.environ.get("BUILD_DIR", "build_docker"))
                                         / "shard-host-core-proof"),
-                    "-p", "shard-host-core", "-p", "sto-tpcc-ffi"], cwd=ROOT, check=True)
+                    "-p", "shard-host-core", "-p", "mako-runtime", "--features", "runtime-storage"], cwd=ROOT, check=True)
     check_pins()
     verify()
     controls()

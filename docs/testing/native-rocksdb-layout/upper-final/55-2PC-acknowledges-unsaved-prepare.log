@@ -1,0 +1,28 @@
+note: verifying module two_phase (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/two_phase.rs:240:1
+    |
+240 | pub fn prepared(phase: Phase, saved: bool) -> (out: Phase)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:242:9
+    |
+242 |         matches!(out, Phase::Prepared) <==> matches!(phase, Phase::Prepared) || (matches!(phase, Phase::Preparing) && saved),
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+243 |         !matches!(phase, Phase::Preparing) || !saved ==> out == phase,
+244 | { if matches!(phase, Phase::Preparing) { Phase::Prepared } else { phase } }
+    |   ----------------------------------------------------------------------- at the end of the function body
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:243:9
+    |
+243 |         !matches!(phase, Phase::Preparing) || !saved ==> out == phase,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+244 | { if matches!(phase, Phase::Preparing) { Phase::Prepared } else { phase } }
+    |   ----------------------------------------------------------------------- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

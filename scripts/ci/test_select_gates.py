@@ -3,10 +3,10 @@ from select_gates import select
 
 class Selection(unittest.TestCase):
     def test_upper_change_does_not_run_components(self):
-        for path in ('crates/mako-protocol/tests/delivery.rs','crates/mako-protocol-core/tests/coordinator.rs'):
+        for path in ('crates/sto-core/tests/protocol_delivery.rs','crates/sto-core/tests/legacy_coordinator.rs'):
             self.assertEqual({k for k,v in select([path]).items() if v},{'upper'})
     def test_shared_contract_checks_both_sides(self):
-        for path in ('crates/mako-protocol/src/contracts.rs', 'crates/mako-protocol/src/range_lock.rs',
+        for path in ('crates/sto-core/src/protocol/contracts.rs', 'crates/sto-core/src/protocol/range_lock.rs',
                      'src/cluster/range_lock.rs'):
             result=select([path])
             for name in ('upper','components','masstree_tx','srpc','replication','integration'): self.assertTrue(result[name])
@@ -14,13 +14,22 @@ class Selection(unittest.TestCase):
         result=select(['src/srpc/src/client.rs'])
         self.assertTrue(result['srpc']); self.assertFalse(result['upper']); self.assertFalse(result['components'])
     def test_masstree_transaction_changes_have_their_own_component_gate(self):
-        for path in ('crates/sto-masstree/src/lib.rs', 'crates/sto-tpcc-ffi/tests/native_api.rs',
+        for path in ('crates/sto-masstree/src/lib.rs', 'crates/sto-masstree-api/tests/native_api.rs',
                      'ci/masstree_tx.sh', 'cmake/MasstreeTransaction.cmake'):
             self.assertEqual({k for k,v in select([path]).items() if v}, {'masstree_tx','integration'})
     def test_shared_core_and_index_changes_check_the_adapter(self):
         for path in ('crates/sto-core/src/transaction.rs','crates/masstree/src/lib.rs','src/masstree/masstree.hh'):
             result=select([path])
             for name in ('components','masstree_tx','integration'): self.assertTrue(result[name])
+    def test_moved_canonical_sources_keep_their_upper_proofs_and_scenarios(self):
+        for path in ('crates/mako-runtime/src/gateway_protocol.rs', 'crates/mako-runtime/tests/support/gateway_contract.rs'):
+            self.assertEqual({k for k,v in select([path]).items() if v}, {'upper','integration'})
+        for path in ('src/deptran/raft/core/src/retention.rs', 'src/deptran/raft/core/src/lib.rs'):
+            self.assertEqual({k for k,v in select([path]).items() if v}, {'upper','replication','integration'})
+    def test_shared_clock_and_occ_contract_check_both_storage_adapters(self):
+        for path in ('crates/sto-core/src/clock/mod.rs', 'crates/sto-core/src/object.rs'):
+            result=select([path])
+            for name in ('upper','components','masstree_tx','replication','integration'): self.assertTrue(result[name])
     def test_unknown_build_change_selects_all(self):
         self.assertTrue(all(select(['Cargo-new-config.toml']).values()))
     def test_scheduled_and_manual_select_all(self):

@@ -17,8 +17,9 @@ fn main() {
     println!("cargo:rustc-cfg=mtree_native_integration");
     let directories = env::var_os(LIB_DIRS)
         .unwrap_or_else(|| panic!("{LIB_DIRS} must contain the CMake native library directories"));
-    for directory in env::split_paths(&directories) {
-        emit_search_path(directory);
+    let directories: Vec<_> = env::split_paths(&directories).collect();
+    for directory in &directories {
+        emit_search_path(directory.clone());
     }
 
     let libraries = env::var(LIBS).unwrap_or_else(|_| {
@@ -33,6 +34,18 @@ fn main() {
         .filter(|lib| !lib.is_empty())
     {
         println!("cargo:rustc-link-lib={library}");
+        // CMake builds this archive outside Cargo. A search path or link-lib
+        // directive alone does not invalidate executables after C++ changes.
+        if let Some((kind, name)) = library.split_once('=') {
+            if kind.split(':').next() == Some("static") {
+                let archive = directories
+                    .iter()
+                    .map(|directory| directory.join(format!("lib{name}.a")))
+                    .find(|path| path.is_file())
+                    .unwrap_or_else(|| panic!("native archive {name} was not built"));
+                println!("cargo:rerun-if-changed={}", archive.display());
+            }
+        }
     }
 }
 

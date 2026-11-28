@@ -27,12 +27,15 @@ impl Disk {
             fingerprint: fingerprint(cfg),
             format: 0x524c_0001,
         };
-        let authority = format!(
+        let mut authority = format!(
             "raft-host/2\ngroup={}\nnode={}\nmembers={:?}\n",
             cfg.group,
             cfg.node,
             cfg.peers.iter().map(|peer| peer.id).collect::<Vec<_>>()
         );
+        if cfg.initial_state != [0;32] {
+            authority.push_str(&format!("initial_state={:02x?}\n", cfg.initial_state));
+        }
         let log = RocksLog::open(
             &cfg.directory,
             identity,
@@ -126,6 +129,9 @@ fn fingerprint(cfg: &Config) -> u64 {
     {
         h = (h ^ byte as u64).wrapping_mul(0x100000001b3);
     }
+    if cfg.initial_state != [0;32] {
+        for byte in cfg.initial_state { h = (h ^ u64::from(byte)).wrapping_mul(0x100000001b3); }
+    }
     h
 }
 
@@ -167,6 +173,13 @@ mod tests {
             );
             cfg.sync_writes = sync_writes;
             drop(Disk::open(&cfg).unwrap());
+            cfg.initial_state = [7;32];
+            assert!(Disk::open(&cfg).is_err(), "initial application identity changed on reopen");
+            cfg.directory = root.join(if sync_writes { "seeded-sync" } else { "seeded-async" });
+            cfg.create = true;
+            drop(Disk::open(&cfg).unwrap());
+            cfg.initial_state = [8;32];
+            assert!(Disk::open(&cfg).is_err(), "different adopted contents reused a journal");
         }
         std::fs::remove_dir_all(root).unwrap();
     }

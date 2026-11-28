@@ -456,43 +456,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "mako-clock"
-version = "0.1.0"
-
-[[package]]
 name = "mako-history"
 version = "0.1.0"
-
-[[package]]
-name = "mako-protocol"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "mako-clock",
- "mako-protocol-core",
- "mako-sharding",
- "parking_lot",
- "serde",
-]
-
-[[package]]
-name = "mako-protocol-core"
-version = "0.1.0"
-dependencies = [
- "verus_builtin",
- "verus_builtin_macros",
- "vstd",
-]
 
 [[package]]
 name = "mako-rocksdb"
 version = "0.1.0"
 dependencies = [
- "mako-protocol",
  "mako-runtime",
  "mako-sharding",
  "mako-storage-api",
+ "rocksdb",
  "serde_json",
+ "sto-core",
 ]
 
 [[package]]
@@ -509,9 +485,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "libc",
- "mako-clock",
- "mako-protocol",
- "mako-protocol-core",
  "mako-sharding",
  "mako-storage-api",
  "mako-storage-masstree",
@@ -524,6 +497,7 @@ dependencies = [
  "sha2",
  "shard-host-core",
  "srpc",
+ "sto-core",
  "sto-rocksdb",
  "tempfile",
 ]
@@ -541,16 +515,17 @@ dependencies = [
 name = "mako-storage-api"
 version = "0.1.0"
 dependencies = [
- "mako-protocol",
+ "mako-sharding",
+ "sto-core",
 ]
 
 [[package]]
 name = "mako-storage-masstree"
 version = "0.1.0"
 dependencies = [
- "mako-protocol",
  "mako-storage-api",
- "sto-tpcc-ffi",
+ "sto-core",
+ "sto-masstree-api",
 ]
 
 [[package]]
@@ -559,6 +534,18 @@ version = "0.1.0"
 dependencies = [
  "mako-storage-api",
  "sto-rocksdb",
+ "tempfile",
+]
+
+[[package]]
+name = "mako-workloads"
+version = "0.1.0"
+dependencies = [
+ "mako-runtime",
+ "mako-storage-api",
+ "serde",
+ "serde_json",
+ "srpc",
  "tempfile",
 ]
 
@@ -683,7 +670,6 @@ name = "raft-host"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "mako-protocol-core",
  "parking_lot",
  "raft-core",
  "raft-store",
@@ -924,20 +910,32 @@ name = "sto-core"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
- "mako-clock",
+ "bincode",
+ "parking_lot",
+ "serde",
  "trybuild",
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
 ]
 
 [[package]]
 name = "sto-masstree"
 version = "0.0.0"
 dependencies = [
- "arc-swap",
- "mako-clock",
  "mako-history",
  "masstree",
  "sto-core",
  "sto-test-datatypes",
+]
+
+[[package]]
+name = "sto-masstree-api"
+version = "0.0.0"
+dependencies = [
+ "masstree",
+ "sto-core",
+ "sto-masstree",
 ]
 
 [[package]]
@@ -956,18 +954,6 @@ version = "0.0.0"
 dependencies = [
  "arc-swap",
  "sto-core",
-]
-
-[[package]]
-name = "sto-tpcc-ffi"
-version = "0.0.0"
-dependencies = [
- "mako-clock",
- "mako-protocol-core",
- "masstree",
- "shard-host-core",
- "sto-core",
- "sto-masstree",
 ]
 
 [[package]]

@@ -1,0 +1,20 @@
+    Checking winnow v1.0.4
+    Checking itoa v1.0.18
+    Checking memchr v2.8.3
+    Checking toml_writer v1.1.2+spec-1.1.0
+    Checking termcolor v1.4.1
+    Checking glob v0.3.4
+    Checking serde_core v1.0.229
+    Checking arc-swap v1.9.2
+    Checking zmij v1.0.23
+    Checking target-triple v1.0.1
+    Checking toml_parser v1.1.3+spec-1.1.0
+    Checking serde v1.0.229
+    Checking serde_spanned v1.1.1
+    Checking toml_datetime v1.1.1+spec-1.1.0
+    Checking serde_json v1.0.151
+    Checking toml v1.1.4+spec-1.1.0
+    Checking bincode v1.3.3
+    Checking sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)
+    Checking trybuild v1.0.120
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.86s

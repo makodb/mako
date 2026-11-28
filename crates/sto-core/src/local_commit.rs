@@ -73,12 +73,12 @@ impl<E: std::error::Error + 'static> std::error::Error for LocalApplyError<E> {}
 ///
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
-/// require_send::<sto_core::LocalCommit<'static>>();
+/// require_send::<crate::LocalCommit<'static>>();
 /// ```
 ///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
-/// require_sync::<sto_core::LocalCommit<'static>>();
+/// require_sync::<crate::LocalCommit<'static>>();
 /// ```
 #[must_use = "a retained commit must be explicitly resolved"]
 pub struct LocalCommit<'worker> {

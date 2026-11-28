@@ -3,7 +3,7 @@
 //! row map. Its position is volatile; after process loss it starts at the last
 //! checkpoint actually restored, regardless of any previous process's progress.
 use crate::wire::{Error, ErrorCode, GatewayReceipt, Result};
-use mako_protocol::{
+use sto_core::protocol::{
     journal::{self, Entry, Record, TransactionId},
     redo::Row,
 };
@@ -133,28 +133,7 @@ impl Index {
         change.entry = Some(next.entry);
         Ok(change)
     }
-    pub fn gateway(
-        &self,
-        position: Position,
-        source: &[u8],
-        rows: &[Row],
-        receipt: Option<&GatewayReceipt>,
-    ) -> Result<Change> {
-        let mut change = self.next(position, source)?;
-        if change.duplicate {
-            return Ok(change);
-        }
-        for row in rows {
-            row.validate()?;
-        }
-        if let Some(receipt) = receipt {
-            receipt.validate()?;
-            self.check_receipt(receipt)?;
-        }
-        change.rows = rows.to_vec();
-        change.receipt = receipt.cloned();
-        Ok(change)
-    }
+
     fn check_receipt(&self, receipt: &GatewayReceipt) -> Result<()> {
         if self
             .receipts
@@ -288,19 +267,6 @@ impl Change {
     }
 }
 impl Index {
-    pub fn metadata(&self) -> Result<mako_storage_api::Metadata> {
-        let mut result = vec![(vec![0], crate::wire::encode(&self.position)?)];
-        for (id, value) in &self.fingerprints {
-            result.push((metadata_key(1, id)?, crate::wire::encode(value)?));
-        }
-        for (id, value) in &self.transactions {
-            result.push((metadata_key(2, id)?, crate::wire::encode(value)?));
-        }
-        for (id, value) in &self.receipts {
-            result.push((metadata_key(3, id)?, crate::wire::encode(value)?));
-        }
-        Ok(result)
-    }
     pub fn from_metadata(
         metadata: mako_storage_api::Metadata,
         position: mako_storage_api::LogPosition,
@@ -353,3 +319,6 @@ impl Index {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests;

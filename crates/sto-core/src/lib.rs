@@ -1,14 +1,15 @@
 #![deny(unsafe_code)]
 
-//! Native Rust implementation of Software Transactional Objects.
+//! Distributed Software Transactional Objects in native Rust.
 //!
 //! The crate coordinates typed logical items and canonical physical locks;
 //! datatype adapters supply observations, conflict coverage, deferred intents,
 //! and commit callbacks. This crate is native Rust and is not translated into
 //! C++.
 //!
-//! The default `distributed` feature preserves the participant and distributed
-//! decision API. Disable default features for a local-only dependency closure.
+//! The default `distributed` feature provides retained participants and clocks.
+//! Enable `protocol` for generic OCC+2PC coordination, wire records and journals.
+//! Disable default features for the local OCC dependency closure.
 //! [`LocalCommit`] retains the ordinary frame and locks across an external
 //! durable decision without importing distributed time. Its storage operation
 //! is fallible and transaction-wide; item install callbacks publish metadata
@@ -77,3 +78,9 @@ pub use txn_array::{ArrayBoundsError, TxnArray};
 pub use txn_cell::{TxnCell, VersionLock};
 pub use txn_counter::TxnCounter;
 pub use version::{AtomicVersion, DetachedVersionGuard, VersionGuard, VersionLocked, VersionState};
+
+/// Shared clocks and timestamp allocation.
+pub mod clock;
+/// Backend-independent distributed transaction protocols.
+#[cfg(feature = "protocol")]
+pub mod protocol;

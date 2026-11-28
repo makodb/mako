@@ -1,5 +1,5 @@
 #![cfg(feature = "native-storage")]
-use mako_protocol::journal::{
+use sto_core::protocol::journal::{
     self, Entry, Journal, Member, MemoryLog, Outcome, Record, Transaction, TransactionId,
 };
 use mako_runtime::{
@@ -379,7 +379,6 @@ fn new_attempt_cannot_steal_execution_and_delayed_abort_cannot_cancel_its_succes
 #[cfg(feature = "replication")]
 fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
     use mako_runtime::{
-        durable::DurableRows,
         log::LocalLog,
         migration::{Kind, Schema, TableSpec},
     };
@@ -399,8 +398,9 @@ fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
     let store = Store::new(0, false, log.clone()).unwrap();
     provision(&store);
     let log_path = directory.join("log");
-    log.start(
+    log.start_engine(
         raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 1,
             create: !log_path.exists(),
             directory: log_path,
@@ -408,7 +408,7 @@ fn persistent_store(directory: &std::path::Path) -> Arc<Store> {
         },
         &store,
         schema,
-        DurableRows::open(directory, 1, true, b"prepared-recovery").unwrap(),
+        b"prepared-recovery".to_vec(),
     )
     .unwrap();
     store

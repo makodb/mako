@@ -1,0 +1,31 @@
+note: verifying module two_phase (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/two_phase.rs:130:5
+    |
+130 |     pub fn record_prepared(&mut self, member: usize) -> (accepted: bool)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:134:13
+    |
+134 | /             accepted ==> old(self).outcome() == Decision::Pending && !old(self).vetoed()
+135 | |                 && old(self).locked() && final(self).locked(),
+    | |_____________________________________________________________^ failed this postcondition
+...
+144 |           true
+    |           ---- at the end of the function body
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:136:13
+    |
+136 | /             accepted <==> old(self).outcome() == Decision::Pending && !old(self).vetoed()
+137 | |                 && member < old(self).count() && old(self).locked(),
+    | |___________________________________________________________________^ failed this postcondition
+...
+144 |           true
+    |           ---- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

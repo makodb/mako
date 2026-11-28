@@ -1,5 +1,5 @@
 #![cfg(all(feature = "replication", feature = "rocksdb-engine"))]
-use mako_protocol::journal::{
+use sto_core::protocol::journal::{
     Journal, Member, Outcome, Record, Transaction, TransactionId, VERSION,
 };
 use mako_runtime::{
@@ -85,6 +85,7 @@ fn start(
         })
     } else {
         Mode::Local(raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.join("log"),
             create,
@@ -387,6 +388,7 @@ fn failed_materialization(fault: sto_rocksdb::ApplyFault) {
     }
     log.start_materialized(
         Mode::Local(raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.path().join("log"),
             create: true,
@@ -496,6 +498,7 @@ fn maximum_size_bootstrap_rows_materialize_in_bounded_pages() {
     let backing = mako_storage_rocksdb::backing(root.path().join("data"), 0, true).unwrap();
     log.start_materialized(
         Mode::Local(raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.path().join("log"),
             create: true,

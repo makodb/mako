@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Focused qualification of native rows and their Rust adapters, not full runtime qualification.
+set -euo pipefail
+mode="$1"
+root=/var/tmp/mako-shard-rust
+cd "$root"
+export PATH=/opt/rust/bin:$PATH RUSTUP_TOOLCHAIN=/opt/rust CARGO_BUILD_JOBS=8
+case "$mode" in
+ address) flag=ASAN; cache="$root/build_native_san_address_05" ;;
+ thread) flag=TSAN; cache="$root/build_native_san_thread_05" ;;
+ undefined) flag=UBSAN; cache="$root/build_native_san_undefined_04" ;;
+ *) exit 2 ;;
+esac
+build="$root/build_sto_hotrow_${mode}"
+[[ ! -e "$build" ]] || { echo 'Fresh native build path required'; exit 2; }
+mkdir -p "$build"
+exec >"$build/gate.log" 2>&1
+trap 'status=$?; echo "gate_exit=$status" >>"$build/manifest.txt"' EXIT
+nightly="$root/build_toolchains/rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/bin"
+if [[ "$mode" == undefined ]]; then
+ cargo=/opt/rust/bin/cargo
+ export RUSTC=/opt/rust/bin/rustc
+ export RUSTFLAGS="-C force-frame-pointers=yes -C link-arg=-fsanitize=undefined -C link-arg=--config=$cache/clang-gnu-unwind.cfg"
+else
+ cargo="$nightly/cargo"
+ export RUSTC="$nightly/rustc"
+ export RUSTFLAGS="-Zsanitizer=$mode -Zexternal-clangrt --sysroot=$cache/rust-sanitizer-sysroot -C force-frame-pointers=yes -C link-arg=-fsanitize=$mode -C link-arg=--config=$cache/clang-gnu-unwind.cfg"
+fi
+export CARGO_TARGET_DIR="$cache/rust-workspace-target"
+export CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/clang-22
+export LIBCXX_DIR=/usr/lib/llvm-22/lib MAKO_MTREE_NATIVE_INTEGRATION=1 MAKO_BUILD_DIR="$build"
+export MAKO_MTREE_NATIVE_LIB_DIRS="$build:/usr/lib/llvm-22/lib:/usr/lib/x86_64-linux-gnu"
+export MAKO_MTREE_NATIVE_LIBS=static:-bundle=mako_native_storage,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread
+export ASAN_OPTIONS=abort_on_error=1:detect_leaks=1:halt_on_error=1:print_suppressions=1:strict_init_order=1
+export LSAN_OPTIONS="suppressions=$root/src/masstree/lsan_suppressions.txt:print_suppressions=1"
+export TSAN_OPTIONS="halt_on_error=1:print_suppressions=1:second_deadlock_stack=1:suppressions=$root/src/masstree/tsan_suppressions.txt"
+export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:suppressions=$root/src/masstree/ubsan_suppressions.txt"
+{
+ echo "scope=native rows, index and thin STO adapters; dirty worktree"
+ echo "sanitizer=$mode"
+ echo "rustflags=$RUSTFLAGS"
+ echo "rustc=$($RUSTC --version)"
+ sha256sum crates/sto-core/src/runtime.rs src/mako/storage/mtree_rows.{cc,h} src/mako/storage/mtree_abi.cc src/mako/masstree_btree.h crates/masstree/src/native_rows.rs crates/sto-masstree/src/lib.rs crates/sto-masstree-api/src/{lib,native,owner}.rs src/masstree/{lsan,tsan,ubsan}_suppressions.txt scripts/ci/native-adapter-quarantine-tests.txt
+} >"$build/manifest.txt"
+cmake -S . -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DMAKO_BUILD_PROFILE=MASSTREE_TX -DUSE_MALLOC_MODE=0 "-DMAKO_${flag}=ON" "-DMAKO_NATIVE_CARGO=$cargo" "-DCMAKE_EXE_LINKER_FLAGS=--config=$cache/clang-gnu-unwind.cfg"
+cmake --build "$build" --parallel 8 --target mako_native_storage native_storage_source_audit
+python3 - "$build" "$mode" <<'PY'
+import json,pathlib,sys,subprocess
+root=pathlib.Path(sys.argv[1]); mode=sys.argv[2]
+commands=json.loads((root/'compile_commands.json').read_text())
+rows=[]
+for item in commands:
+    if 'mako_native_storage.dir/' in item['command']:
+        assert '-fsanitize='+mode in item['command'], item
+        assert '-fno-sanitize' not in item['command'], item
+        rows.append(item['file'])
+assert any(p.endswith('/mtree_rows.cc') for p in rows)
+(root/'instrumentation.json').write_text(json.dumps(rows,indent=2)+'\n')
+hooks=subprocess.check_output(['nm','-u',str(root/'CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_rows.cc.o')],text=True)
+assert '__'+{'address':'asan','thread':'tsan','undefined':'ubsan'}[mode]+'_' in hooks
+(root/'native-row-hooks.txt').write_text(hooks)
+PY
+if [[ "$mode" != undefined ]]; then
+ nm -u "$cache"/rust-sanitizer-sysroot/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-*.rlib >"$build/std-hooks.txt" 2>/dev/null
+ if [[ "$mode" == address ]]; then rg '__asan_' "$build/std-hooks.txt" >/dev/null; else rg '__tsan_' "$build/std-hooks.txt" >/dev/null; fi
+ sha256sum "$cache"/rust-sanitizer-sysroot/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-*.rlib >>"$build/manifest.txt"
+fi
+python3 scripts/ci/run_native_sanitizer_tests.py --cargo "$cargo" --manifest crates/Cargo.toml --target x86_64-unknown-linux-gnu --package masstree --package sto-masstree --package sto-masstree-api --all-features --quarantine scripts/ci/native-adapter-quarantine-tests.txt --report "$build/tests.json"

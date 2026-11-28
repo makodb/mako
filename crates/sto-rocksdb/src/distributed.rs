@@ -16,6 +16,7 @@ use std::sync::{atomic::Ordering, Weak};
 pub(crate) const PROFILE: &[u8] = &[0, 11];
 pub(crate) const PROFILE_VALUE: &[u8] = b"DISTRIBUTED-STO-01";
 pub(crate) const IDENTITY: &[u8] = &[0, 12];
+pub(crate) const BASELINE: &[u8] = &[0, 14];
 const CLOCK: &[u8] = &[0, 13];
 const METADATA: &[u8] = &[0, 10];
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +60,22 @@ pub(crate) fn decode_time(value: Option<Vec<u8>>) -> Result<u32> {
     })
 }
 impl Database {
+    /// Identity of adopted initial data, retained through updates/checkpoints.
+    /// Empty newly created databases use the ordinary empty Raft baseline.
+    pub fn initial_state_id(&self) -> Result<[u8; 32]> {
+        self.rocks().get(BASELINE)?.map_or(Ok([0; 32]), |v| {
+            v.try_into()
+                .map_err(|_| Error::Corruption("initial state identity length".into()))
+        })
+    }
+
+    pub fn complete_bootstrap(&self) -> Result<()> {
+        if self.root.join("ADOPTING").exists() {
+            std::fs::remove_file(self.root.join("ADOPTING"))?;
+            std::fs::File::open(&self.root)?.sync_all()?;
+        }
+        Ok(())
+    }
     pub(crate) fn ensure_distributed(&self) -> Result<()> {
         self.ensure_serving()?;
         if !self.distributed {
@@ -98,28 +115,27 @@ impl Database {
             return Err(Error::InvalidCommand("zero table ID"));
         }
         let rocks = self.rocks();
-        let name = format!("distributed-{id}");
         let key = table_key(id);
         if let Some(existing) = rocks.get(&key)? {
-            if existing != name.as_bytes() {
-                return Err(Error::Corruption("table identity mismatch".into()));
-            }
-        } else {
-            rocks.write_batch(&[
-                BlobOp::Put {
-                    key: &key,
-                    val: name.as_bytes(),
-                },
-                BlobOp::Put {
-                    key: &catalog_key(&name),
-                    val: &id.to_be_bytes(),
-                },
-                BlobOp::Put {
-                    key: &count_key(id),
-                    val: &0u64.to_be_bytes(),
-                },
-            ])?;
+            let name = String::from_utf8(existing)
+                .map_err(|_| Error::Corruption("table name UTF-8".into()))?;
+            return Ok(Table { id, name });
         }
+        let name = format!("distributed-{id}");
+        rocks.write_batch(&[
+            BlobOp::Put {
+                key: &key,
+                val: name.as_bytes(),
+            },
+            BlobOp::Put {
+                key: &catalog_key(&name),
+                val: &id.to_be_bytes(),
+            },
+            BlobOp::Put {
+                key: &count_key(id),
+                val: &0u64.to_be_bytes(),
+            },
+        ])?;
         Ok(Table { id, name })
     }
     pub fn distributed_metadata(&self) -> Result<Metadata> {
@@ -371,57 +387,7 @@ impl Database {
         }
         Ok(())
     }
-    /// Finish a private offline import after its rows were loaded in bounded
-    /// batches. The directory must never have served traffic. Publication of the
-    /// containing directory is the converter's responsibility. An interrupted
-    /// import is discarded, never opened as a production database.
-    pub fn finish_distributed_import(&self, history: &[Prefix], metadata: &Metadata) -> Result<()> {
-        let _gate = mutex(&self.apply_gate);
-        self.ensure_distributed()?;
-        let result = (|| {
-            let rocks = self.rocks();
-            if read_position(&rocks)? != Position::default() || !read_metadata(&rocks)?.is_empty() {
-                return Err(Error::InvalidState(
-                    "import requires a private unpositioned database",
-                ));
-            }
-            let mut batch = Vec::new();
-            let mut previous = Position::default();
-            for prefix in history {
-                let p = prefix.position;
-                if p.index != previous.index + 1 || p.term == 0 || p.term < previous.term {
-                    return Err(Error::Corruption("invalid imported log prefix".into()));
-                }
-                let mut value = p.term.to_be_bytes().to_vec();
-                value.extend_from_slice(&prefix.fingerprint);
-                batch.push((entry_key(p.index), value));
-                previous = p;
-            }
-            if previous.index == 0 {
-                return Err(Error::InvalidState("empty imported log prefix"));
-            }
-            let mut keys = BTreeSet::new();
-            for (key, value) in metadata {
-                if !keys.insert(key) {
-                    return Err(Error::InvalidCommand("duplicate imported metadata"));
-                }
-                let mut physical = METADATA.to_vec();
-                physical.extend_from_slice(key);
-                batch.push((physical, value.clone()));
-            }
-            batch.push((APPLIED.to_vec(), position_bytes(previous)));
-            let ops = batch
-                .iter()
-                .map(|(key, val)| BlobOp::Put { key, val })
-                .collect::<Vec<_>>();
-            rocks.write_batch(&ops)?;
-            Ok(())
-        })();
-        if result.is_err() {
-            self.fence();
-        }
-        result
-    }
+
     /// Logical page includes deleted keys. Caller pauses publication across pages.
     pub fn distributed_page(
         &self,
@@ -477,7 +443,7 @@ impl Database {
     }
 }
 
-pub(crate) fn read_metadata(rocks: &mako_rocksdb_store::RocksBlobs) -> Result<Metadata> {
+pub(crate) fn read_metadata(rocks: &crate::layout::Store) -> Result<Metadata> {
     let mut rows = Vec::new();
     rocks.for_each_entry_from(METADATA, usize::MAX, &mut |key, value| {
         if !key.starts_with(METADATA) {

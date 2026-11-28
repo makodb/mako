@@ -1,0 +1,31 @@
+mako-sharding v0.1.0 (/var/tmp/mako-shard-rust/src/cluster) [protocol]
+vstd v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) [alloc,default,std]
+verus_builtin v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) []
+verus_builtin_macros v0.0.0-2026-08-02-0125 (proc-macro) (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) []
+convert_case v0.4.0 []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations]
+unicode-ident v1.0.26 []
+quote v1.0.47 [default,proc-macro]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+syn v2.0.119 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+unicode-ident v1.0.26 []
+synstructure v0.13.2 [default,proc-macro]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+syn v2.0.119 [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)
+verus_prettyplease v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+verus_syn v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut]
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+unicode-ident v1.0.26 []
+verus_syn v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)
+verus_state_machines_macros v0.0.0-2026-08-02-0125 (proc-macro) (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) []
+indexmap v2.14.2 [default,std]
+equivalent v1.0.2 []
+hashbrown v0.17.1 []
+proc-macro2 v1.0.107 [default,proc-macro,span-locations] (*)
+quote v1.0.47 [default,proc-macro] (*)
+verus_syn v0.0.0-2026-08-02-0125 (https://github.com/verus-lang/verus?rev=b677dd5a766f25f56e9aa1e32621aa4e53304b47#b677dd5a) [clone-impls,default,derive,extra-traits,full,parsing,printing,proc-macro,visit,visit-mut] (*)

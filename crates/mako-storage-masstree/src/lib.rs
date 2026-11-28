@@ -4,7 +4,7 @@
 
 use mako_storage_api as api;
 use std::{any::Any, ops::Bound, sync::Arc};
-use sto_tpcc_ffi::native;
+use sto_masstree_api::native;
 
 pub fn error(e: native::Error) -> api::Error {
     api::Error {
@@ -209,15 +209,21 @@ impl api::ParticipantBackend for Participant<'_> {
         self.0.validate().map_err(error)
     }
     fn prepared_rows(&mut self, time_term: u32) -> api::Result<Vec<api::RedoRow>> {
-        let bytes = self.0.prepared_redo(time_term / 10).map_err(error)?;
-        if bytes.is_empty() {
-            return Ok(Vec::new());
-        }
-        // The runtime enforces its selected log's aggregate intent bound. This
-        // boundary only decodes the local legacy frame into owned logical rows.
-        mako_protocol::redo::decode_legacy_bounded(&bytes, time_term, bytes.len())
-            .map_err(|e| api::Error::invalid(e.to_string()))
+        self.0
+            .prepared_rows(time_term / 10)
+            .map_err(error)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| api::RedoRow {
+                        table: row.table,
+                        key: row.key,
+                        value: row.value,
+                        time_term: row.time_term,
+                    })
+                    .collect()
+            })
     }
+
     fn install(&mut self, timestamp: u32) -> api::Result<()> {
         self.0.install(timestamp).map_err(error)
     }

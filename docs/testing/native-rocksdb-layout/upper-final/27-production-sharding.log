@@ -1,0 +1,84 @@
+warning: field `value` has inconsistent type or visibility in different variants
+         ->value syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `snapshot` has inconsistent type or visibility in different variants
+         ->snapshot syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `generation` has inconsistent type or visibility in different variants
+         ->generation syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `result` has inconsistent type or visibility in different variants
+         ->result syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_control_history.rs:6:1
+   |
+ 6 | / pub enum ControlCall {
+ 7 | |     Begin { id:TxnId,source:u32,destination:u32,range:KeyRange,result:Result<u64,Status> },
+ 8 | |     Transition { request:n::Request,status:Status },
+ 9 | |     Reply { id:TxnId,result:Option<Outcome> },
+10 | |     Receive { generation:u64,owner:u32,certificate:Certificate,status:Status },
+11 | | }
+   | |_^
+
+warning: field `before` has inconsistent type or visibility in different variants
+         ->before syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_engine_history.rs:6:1
+   |
+ 6 | / pub enum EngineRecord {
+ 7 | |     Settle { id:TxnId,outcome:EngineOutcome,before:EngineImages,after:EngineImages,
+ 8 | |         writes:Map<int,Option<Seq<u8>>> },
+ 9 | |     Completion { id:TxnId,outcome:EngineOutcome },
+10 | |     Read { id:TxnId,key:int,before:Image,after:Image,returned:Option<Seq<u8>> },
+11 | | }
+   | |_^
+
+warning: field `after` has inconsistent type or visibility in different variants
+         ->after syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_engine_history.rs:6:1
+   |
+ 6 | / pub enum EngineRecord {
+ 7 | |     Settle { id:TxnId,outcome:EngineOutcome,before:EngineImages,after:EngineImages,
+ 8 | |         writes:Map<int,Option<Seq<u8>>> },
+ 9 | |     Completion { id:TxnId,outcome:EngineOutcome },
+10 | |     Read { id:TxnId,key:int,before:Image,after:Image,returned:Option<Seq<u8>> },
+11 | | }
+   | |_^
+
+verification results:: 1497 verified, 0 errors
+warning: 6 warnings emitted
+

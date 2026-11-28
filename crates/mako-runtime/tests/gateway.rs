@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-use mako_protocol::journal::{self, Entry, Journal, Record, TransactionId};
+use sto_core::protocol::journal::{self, Entry, Journal, Record, TransactionId};
 use parking_lot::Mutex;
 
 struct Log {

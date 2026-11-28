@@ -1,0 +1,16 @@
+STO boundary: engine-only dependencies; forbidden edges rejected; Raft independent
+Workload boundary: 27 manifests checked; no incoming dependency
+component census is current
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.049s
+
+OK
+updated docs/architecture/component-inventory.json and docs/mako-book.md
+component census is current
+updated docs/architecture/component-inventory.json and docs/mako-book.md
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.005s
+
+OK

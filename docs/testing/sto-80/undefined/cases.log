@@ -1,0 +1,630 @@
+
+CASE masstree|lib|native::tests::failed_insert_results_preserve_only_proven_consistent_metadata
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-0.log
+
+running 1 test
+test native::tests::failed_insert_results_preserve_only_proven_consistent_metadata ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-1.log
+
+running 1 test
+test native::tests::scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::scan_decoder_rejects_invalid_ids_order_bounds_offsets_and_resume
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-2.log
+
+running 1 test
+test native::tests::scan_decoder_rejects_invalid_ids_order_bounds_offsets_and_resume ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::scan_decoder_requires_exclusive_last_resume_after_progress
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-3.log
+
+running 1 test
+test native::tests::scan_decoder_requires_exclusive_last_resume_after_progress ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::successful_insert_results_require_an_exact_shape
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-4.log
+
+running 1 test
+test native::tests::successful_insert_results_require_an_exact_shape ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::trusted_scan_layout_still_rejects_every_borrowing_hazard
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-5.log
+
+running 1 test
+test native::tests::trusted_scan_layout_still_rejects_every_borrowing_hazard ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|native::tests::typed_opaque_handles_are_send_sync_without_unsafe_impls
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-6.log
+
+running 1 test
+test native::tests::typed_opaque_handles_are_send_sync_without_unsafe_impls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::every_known_native_status_is_classified_without_boolean_loss
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-7.log
+
+running 1 test
+test tests::every_known_native_status_is_classified_without_boolean_loss ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::fixed_insert_result_matches_native_layout_and_rejects_hostile_fields
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-8.log
+
+running 1 test
+test tests::fixed_insert_result_matches_native_layout_and_rejects_hostile_fields ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-9.log
+
+running 1 test
+test tests::packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::point_read_result_is_one_native_record_id_slot
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-10.log
+
+running 1 test
+test tests::point_read_result_is_one_native_record_id_slot ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::record_ids_reject_the_reserved_zero
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-11.log
+
+running 1 test
+test tests::record_ids_reject_the_reserved_zero ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::runtime_config_builders_preserve_explicit_limits
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-12.log
+
+running 1 test
+test tests::runtime_config_builders_preserve_explicit_limits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::scan_request_builders_preserve_binary_bounds_and_capacities
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-13.log
+
+running 1 test
+test tests::scan_request_builders_preserve_binary_bounds_and_capacities ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|lib|tests::shareable_facades_are_send_sync_without_unsafe_impls
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-14.log
+
+running 1 test
+test tests::shareable_facades_are_send_sync_without_unsafe_impls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|copied_scan_bounds_directions_and_resumption_round_trip
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-15.log
+
+running 1 test
+test copied_scan_bounds_directions_and_resumption_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|negotiated_point_directory_round_trip_and_cross_worker_read
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-16.log
+
+running 1 test
+test negotiated_point_directory_round_trip_and_cross_worker_read ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|one_shot_fixed_reads_reuse_results_and_end_native_guards
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-17.log
+
+running 1 test
+test one_shot_fixed_reads_reuse_results_and_end_native_guards ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|scoped_reads_end_before_insert_and_drop_during_unwind
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-18.log
+
+running 1 test
+test scoped_reads_end_before_insert_and_drop_during_unwind ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|structure_seal_keeps_reads_open_and_rejects_every_publication_lane
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-19.log
+
+running 1 test
+test structure_seal_keeps_reads_open_and_rejects_every_publication_lane ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|trusted_bounded_record_id_scan_keeps_bounds_and_inclusive_next_continuation
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-20.log
+
+running 1 test
+test trusted_bounded_record_id_scan_keeps_bounds_and_inclusive_next_continuation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|trusted_fixed_insert_batch_preserves_order_and_reuses_scratch
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-21.log
+
+running 1 test
+test trusted_fixed_insert_batch_preserves_order_and_reuses_scratch ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_integration|worker_rcu_scope_spans_trees_and_drops_during_unwind
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-22.log
+
+running 1 test
+test worker_rcu_scope_spans_trees_and_drops_during_unwind ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|abandoning_a_native_lock_fences_the_table
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-23.log
+
+running 1 test
+test abandoning_a_native_lock_fences_the_table ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|atomic_owner_version_word_preserves_the_full_core_domain
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-24.log
+
+running 1 test
+test atomic_owner_version_word_preserves_the_full_core_domain ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|borrowed_row_tokens_require_the_original_live_table
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-25.log
+
+running 1 test
+test borrowed_row_tokens_require_the_original_live_table ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|copy_reads_resize_and_distinguish_empty_values_from_tombstones
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-26.log
+
+running 1 test
+test copy_reads_resize_and_distinguish_empty_values_from_tombstones ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|embedded_values_copy_on_shared_snapshot_and_outlive_the_table
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-27.log
+
+running 1 test
+test embedded_values_copy_on_shared_snapshot_and_outlive_the_table ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|exhausted_budget_rejects_before_directory_allocation_and_reclaims_row_owners
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-28.log
+
+running 1 test
+test exhausted_budget_rejects_before_directory_allocation_and_reclaims_row_owners ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|historical_tombstones_pruning_and_failed_watermarks_are_native
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-29.log
+
+running 1 test
+test historical_tombstones_pruning_and_failed_watermarks_are_native ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|leaf_observations_keep_native_storage_alive_across_splits_and_threads
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-30.log
+
+running 1 test
+test leaf_observations_keep_native_storage_alive_across_splits_and_threads ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|local_and_timestamped_updates_preserve_pins_across_history_pruning
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-31.log
+
+running 1 test
+test local_and_timestamped_updates_preserve_pins_across_history_pruning ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|locks_abort_and_checkpoint_obey_native_ownership
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-32.log
+
+running 1 test
+test locks_abort_and_checkpoint_obey_native_ownership ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|native_buffers_are_retained_without_copy_and_outlive_rows
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-33.log
+
+running 1 test
+test native_buffers_are_retained_without_copy_and_outlive_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|native_directory_owns_binary_keys_and_enforces_capacity
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-34.log
+
+running 1 test
+test native_directory_owns_binary_keys_and_enforces_capacity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|native_scratch_can_be_returned_from_later_thread_local_destructors
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-35.log
+
+running 1 test
+test native_scratch_can_be_returned_from_later_thread_local_destructors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|optimistic_copies_never_mix_versions_across_inline_and_heap_updates
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-36.log
+
+running 1 test
+test optimistic_copies_never_mix_versions_across_inline_and_heap_updates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+
+CASE masstree|native_rows|private_write_preparation_cannot_publish_without_the_matching_guard
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-37.log
+
+running 1 test
+test private_write_preparation_cannot_publish_without_the_matching_guard ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE masstree|native_rows|protocol_tickets_validate_table_lifetime_and_write_identity
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-38.log
+
+running 1 test
+test protocol_tickets_validate_table_lifetime_and_write_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|history_oracle|native_masstree_histories_are_strictly_serializable
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-39.log
+
+running 1 test
+test native_masstree_histories_are_strictly_serializable ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+
+CASE sto-masstree|local_versions_native|native_local_versions_mix_with_ordered_tables_and_cells
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-40.log
+
+running 1 test
+test native_local_versions_mix_with_ordered_tables_and_cells ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|native_integration|native_distributed_history_replay_and_retained_participant
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-41.log
+
+running 1 test
+test native_distributed_history_replay_and_retained_participant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|native_integration|native_point_commit_read_and_abort_round_trip
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-42.log
+
+running 1 test
+test native_point_commit_read_and_abort_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|native_integration|native_transactional_scan_resumes_and_rejects_a_phantom
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-43.log
+
+running 1 test
+test native_transactional_scan_resumes_and_rejects_a_phantom ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|native_integration|private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-44.log
+
+running 1 test
+test private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree|public_contract|native_table_and_values_are_shared_owners
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-45.log
+
+running 1 test
+test native_table_and_values_are_shared_owners ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|capacity|commit_lock_capacity_releases_acquired_locks_without_installing
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-46.log
+
+running 1 test
+test commit_lock_capacity_releases_acquired_locks_without_installing ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|capacity|native_row_budget_is_shared_and_exhaustion_preserves_existing_tables
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-47.log
+
+running 1 test
+test native_row_budget_is_shared_and_exhaustion_preserves_existing_tables ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|capacity|scalar_capacity_aborts_staged_changes_and_preserves_existing_access
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-48.log
+
+running 1 test
+test scalar_capacity_aborts_staged_changes_and_preserves_existing_access ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|capacity|scan_capacity_failure_cannot_commit_prior_writes
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-49.log
+
+running 1 test
+test scan_capacity_failure_cannot_commit_prior_writes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|leaf_contract|copied_reads_and_write_only_put_preserve_conflicts_and_read_your_writes
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-50.log
+
+running 1 test
+test copied_reads_and_write_only_put_preserve_conflicts_and_read_your_writes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|leaf_contract|missing_reads_do_not_allocate_even_when_row_budget_is_full
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-51.log
+
+running 1 test
+test missing_reads_do_not_allocate_even_when_row_budget_is_full ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.01s
+
+
+CASE sto-masstree-api|leaf_contract|original_same_key_composition_exhaustive_triples
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-52.log
+
+running 1 test
+test original_same_key_composition_exhaustive_triples ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.06s
+
+
+CASE sto-masstree-api|leaf_contract|own_insertions_and_splits_preserve_absence_and_scan_observations
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-53.log
+
+running 1 test
+test own_insertions_and_splits_preserve_absence_and_scan_observations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|leaf_contract|scans_and_absence_validate_only_their_leaves_and_reject_real_phantoms
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-54.log
+
+running 1 test
+test scans_and_absence_validate_only_their_leaves_and_reject_real_phantoms ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.01s
+
+
+CASE sto-masstree-api|leaf_contract|scoped_access_closes_rcu_before_return_and_aborts_errors_and_panics
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-55.log
+
+running 1 test
+test scoped_access_closes_rcu_before_return_and_aborts_errors_and_panics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|leaf_contract|stale_leaf_predicates_survive_later_staging_until_commit_rejects_them
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-56.log
+
+running 1 test
+test stale_leaf_predicates_survive_later_staging_until_commit_rejects_them ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|lib|native::tests::post_install_failure_marks_runtime_indeterminate
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-57.log
+
+running 1 test
+test native::tests::post_install_failure_marks_runtime_indeterminate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|forgotten_guard_keeps_tables_alive_until_explicit_cleanup
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-58.log
+
+running 1 test
+test forgotten_guard_keeps_tables_alive_until_explicit_cleanup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|owned_api_preserves_crud_scan_abort_and_table_lifetime
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-59.log
+
+running 1 test
+test owned_api_preserves_crud_scan_abort_and_table_lifetime ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|owned_replay_preserves_source_metadata_tombstones_and_clock
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-60.log
+
+running 1 test
+test owned_replay_preserves_source_metadata_tombstones_and_clock ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|prepared_rows_freezes_payload_without_installing_or_releasing_the_participant
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-61.log
+
+running 1 test
+test prepared_rows_freezes_payload_without_installing_or_releasing_the_participant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|shared_tables_preserve_conflicts_between_affine_workers
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-62.log
+
+running 1 test
+test shared_tables_preserve_conflicts_between_affine_workers ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_api|table_from_another_database_is_rejected_before_access
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-63.log
+
+running 1 test
+test table_from_another_database_is_rejected_before_access ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_contract|binary_values_and_sequential_duplicate_mutations_preserve_cross_table_atomicity
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-64.log
+
+running 1 test
+test binary_values_and_sequential_duplicate_mutations_preserve_cross_table_atomicity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|native_contract|sealed_directory_keeps_rows_mutable_and_rejects_new_keys
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-65.log
+
+running 1 test
+test sealed_directory_keeps_rows_mutable_and_rejects_new_keys ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|participant|abandoned_installed_participant_fences_worker_and_preserves_publication
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-66.log
+
+running 1 test
+test abandoned_installed_participant_fences_worker_and_preserves_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|participant|checkpoint_exports_committed_tombstones_behind_retained_prepare_locks
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-67.log
+
+running 1 test
+test checkpoint_exports_committed_tombstones_behind_retained_prepare_locks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|participant|historical_mutations_publish_tombstones_without_corrupting_physical_cardinality
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-68.log
+
+running 1 test
+test historical_mutations_publish_tombstones_without_corrupting_physical_cardinality ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+
+CASE sto-masstree-api|participant|retained_participant_repeated_locking_installs_copied_final_payload_and_metadata
+ORIGINAL LOG /var/tmp/mako-shard-rust/build_sto_hotrow_undefined/tests-69.log
+
+running 1 test
+test retained_participant_repeated_locking_installs_copied_final_payload_and_metadata ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+

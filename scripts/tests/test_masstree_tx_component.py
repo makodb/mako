@@ -10,12 +10,12 @@ SPEC.loader.exec_module(audit)
 
 class ComponentBoundary(unittest.TestCase):
     def test_shared_core_and_native_index_are_allowed(self):
-        tree = 'sto-masstree v0.0.0\nsto-tpcc-ffi v0.0.0\nsto-core v0.0.0 (*)\nmasstree v0.0.0\n'
-        self.assertEqual(audit.parse_tree(tree), {'sto-masstree','sto-tpcc-ffi','sto-core','masstree'})
+        tree = 'sto-masstree v0.0.0\nsto-masstree-api v0.0.0\nsto-core v0.0.0 (*)\nmasstree v0.0.0\n'
+        self.assertEqual(audit.parse_tree(tree), {'sto-masstree','sto-masstree-api','sto-core','masstree'})
         audit.validate_native({'mako_native_storage','c++','c++abi','jemalloc'})
 
     def test_rejects_application_transport_and_durable_engines(self):
-        for dependency in ('mako-runtime','rocksdb','librocksdb-sys','sto-rocksdb','srpc',
+        for dependency in ('mako-runtime','mako-workloads','mako-protocol-core','shard-host-core','rocksdb','librocksdb-sys','sto-rocksdb','srpc',
                            'srpc-native','raft-core','raft-host','raft-store','mako-sharding'):
             with self.subTest(dependency=dependency), self.assertRaises(RuntimeError):
                 audit.validate_packages(audit.PACKAGES | {dependency})

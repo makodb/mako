@@ -6,7 +6,7 @@ It is not a supported Mako backend.
 Production Mako uses Rust as its sole transaction engine:
 
 ```
-mako-runtime / native SRPC -> sto-tpcc-ffi -> sto-core + sto-masstree
+mako-runtime / native SRPC -> sto-masstree-api -> sto-core + sto-masstree
 mako-cache -> mako-engine -> mako-engine-sto -> sto-core + sto-masstree
 ```
 

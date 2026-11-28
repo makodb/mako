@@ -11,16 +11,54 @@ path = "src/lib.rs"
 
 [features]
 default = ["distributed"]
-distributed = ["mako-clock/distributed"]
+distributed = []
+protocol = ["distributed", "dep:vstd", "dep:verus_builtin", "dep:verus_builtin_macros", "dep:serde", "dep:bincode", "dep:parking_lot"]
+clock-test-hooks = []
 # Test-only rendezvous after individual writes, absent from production builds.
 test-install-observer = []
 
 [dependencies]
 arc-swap = "1.7"
-mako-clock = { path = "../mako-clock", default-features = false }
+
+
+vstd = { version = "=0.0.0-2026-08-02-0125", optional = true }
+verus_builtin = { version = "=0.0.0-2026-08-02-0125", optional = true }
+verus_builtin_macros = { version = "=0.0.0-2026-08-02-0125", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+bincode = { version = "1.3", optional = true }
+parking_lot = { version = "0.12", optional = true }
 
 [dev-dependencies]
 trybuild = "=1.0.120"
 
 [lints.rust]
 unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_keep_ghost_body)'] }
+
+[[test]]
+name = "protocol_delivery"
+required-features = ["protocol"]
+
+[[test]]
+name = "protocol_log_contract"
+required-features = ["protocol"]
+
+[[test]]
+name = "protocol_occ_histories"
+required-features = ["protocol"]
+
+[[test]]
+name = "protocol_range_lock"
+required-features = ["protocol"]
+
+[[test]]
+name = "protocol_two_phase"
+required-features = ["protocol"]
+
+[[test]]
+name = "protocol_wire_compatibility"
+required-features = ["protocol"]
+
+[[test]]
+name = "legacy_coordinator"
+required-features = ["protocol"]

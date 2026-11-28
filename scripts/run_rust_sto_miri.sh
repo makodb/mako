@@ -45,7 +45,7 @@ while IFS= read -r QUARANTINE_CASE || [[ -n "${QUARANTINE_CASE}" ]]; do
         # unknown package here would otherwise run its exact quarantine case
         # while silently omitting the rest of its library.
         case "${QUARANTINE_PACKAGE}" in
-            masstree|sto-core|sto-tpcc-ffi|sto-masstree) ;;
+            masstree|sto-core|sto-masstree-api|sto-masstree) ;;
             *)
                 echo "quarantine library package has no dedicated Miri lane: ${QUARANTINE_PACKAGE}" >&2
                 exit 2
@@ -226,7 +226,7 @@ done
 # ownership, panic containment, and every hostile raw-range validator without
 # asking Miri to execute the external Masstree library. The skipped statistical
 # hash-distribution loop has no unsafe access and remains in the native gate.
-run_miri_library sto-tpcc-ffi --lib -- \
+run_miri_library sto-masstree-api --lib -- \
     --skip resolved_cache_hash_distributes_big_endian_customer_ids
 
 # The 128-seed history sweep and three high-iteration concurrency stress tests

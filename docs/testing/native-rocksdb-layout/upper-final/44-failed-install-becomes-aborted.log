@@ -1,0 +1,31 @@
+note: verifying module admission (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/admission.rs:162:1
+    |
+162 | pub fn completed(operation: Operation, success: bool, uncertain_error: bool) -> (phase: Phase)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: postcondition not satisfied
+   --> src/admission.rs:166:9
+    |
+166 | /         phase == Phase::Unknown <==> !success &&
+167 | |             (operation == Operation::Install || operation == Operation::Abort || uncertain_error),
+    | |_________________________________________________________________________________________________^ failed this postcondition
+...
+173 |           Operation::Install => if success { Phase::Committed } else { Phase::Aborted },
+    |           ------------------ at the end of the function body
+
+error: postcondition not satisfied
+   --> src/admission.rs:168:9
+    |
+168 | /         phase == Phase::Aborted <==> (operation == Operation::Abort && success) ||
+169 | |             (!success && operation != Operation::Install && operation != Operation::Abort && !uncertain_error),
+    | |______________________________________________________________________________________________________________^ failed this postcondition
+...
+173 |           Operation::Install => if success { Phase::Committed } else { Phase::Aborted },
+    |           ------------------ at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

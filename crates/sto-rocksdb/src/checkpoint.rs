@@ -3,9 +3,9 @@
 use crate::database::{
     durability, format_bytes, read_position, required_u64, Generation, FORMAT, GENERATION,
 };
+use crate::layout::Store as RocksBlobs;
 use crate::{mutex, Database, Error, Position, Result};
 use mako_rocksdb_store::Blobs;
-use mako_rocksdb_store::RocksBlobs;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -135,10 +135,7 @@ impl Database {
         let rocks = if current.name == name {
             current.rocks.clone()
         } else {
-            Arc::new(RocksBlobs::open_existing_strict(
-                &self.root.join(&name),
-                durability(self.sync_writes),
-            )?)
+            Arc::new(open_image(&self.root.join(&name), self.sync_writes)?)
         };
         if rocks.get(crate::distributed::IDENTITY)?.as_deref() != Some(identity) {
             return Err(Error::Corruption(
@@ -173,10 +170,7 @@ impl Database {
                 return Err(Error::Corruption("checkpoint term mismatch".into()));
             }
             let name = self.stage_checkpoint_locked(source, expected)?;
-            let rocks = Arc::new(RocksBlobs::open_existing_strict(
-                &self.root.join(&name),
-                durability(self.sync_writes),
-            )?);
+            let rocks = Arc::new(open_image(&self.root.join(&name), self.sync_writes)?);
             if read_position(&rocks)? != expected {
                 return Err(Error::Corruption("staged position changed".into()));
             }
@@ -188,7 +182,7 @@ impl Database {
                 .ok_or(Error::VersionExhausted)?;
             // Host authority already exists. Persist the selected DB before
             // making it visible to any worker; restart uses this same selector.
-            publish_manifest(&self.root, &name)?;
+            crate::directory::publish(&self.root, &self.public, &name)?;
             let old = std::mem::replace(
                 &mut *self
                     .generation
@@ -224,7 +218,9 @@ impl Database {
         let mut retired = mutex(&self.retired);
         // Closing RocksDB precedes unlinking its files. A sole owner here
         // proves that no transaction snapshot or native read handle remains.
-        retired.retain(|generation| Arc::strong_count(&generation.rocks) > 1);
+        retired.retain(|generation| {
+            Arc::strong_count(&generation.rocks) > 1 || generation.rocks.has_snapshot_leases()
+        });
         let mut removed = 0;
         for entry in fs::read_dir(&self.root)? {
             let entry = entry?;
@@ -259,18 +255,6 @@ fn owned_generation(name: &str) -> bool {
                 index.parse::<u64>().is_ok() && term.parse::<u64>().is_ok()
             })
     })
-}
-pub(crate) fn publish_manifest(root: &Path, name: &str) -> Result<()> {
-    let temporary = root.join("CURRENT-next");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temporary)?;
-    file.write_all(name.as_bytes())?;
-    file.sync_all()?;
-    fs::rename(&temporary, root.join("CURRENT"))?;
-    sync_directory(root)
 }
 fn identity(group: u64, position: Position, sync_writes: bool, distributed: bool) -> Vec<u8> {
     let mut bytes = if sync_writes {
@@ -329,8 +313,9 @@ fn validate_native(
             "missing native checkpoint CURRENT".into(),
         ));
     }
-    let rocks = RocksBlobs::open_strict(path, durability(sync_writes))?;
-    if rocks.get(FORMAT)?.as_deref() != Some(format_bytes(group, sync_writes).as_slice())
+    let rocks = open_image(path, sync_writes)?;
+    let expected_format = format_bytes(group, sync_writes);
+    if rocks.get(FORMAT)?.as_deref() != Some(expected_format.as_slice())
         || rocks.get(crate::distributed::PROFILE)?.as_deref()
             != distributed.then_some(crate::distributed::PROFILE_VALUE)
         || read_position(&rocks)? != position
@@ -379,4 +364,11 @@ fn sync_tree(path: &Path) -> Result<()> {
 fn sync_directory(path: &Path) -> Result<()> {
     File::open(path)?.sync_all()?;
     Ok(())
+}
+
+fn open_image(path: &Path, sync_writes: bool) -> Result<RocksBlobs> {
+    Ok(RocksBlobs::open_existing_strict(
+        path,
+        durability(sync_writes),
+    )?)
 }

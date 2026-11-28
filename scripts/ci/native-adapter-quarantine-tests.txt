@@ -1,2 +1,2 @@
-# The existing native adapter's deliberate post-install quarantine case.
-sto-tpcc-ffi|lib|tests::post_install_row_count_failure_marks_runtime_indeterminate
+# Native publication followed by an upper hook failure must retain the uncertain frame.
+sto-masstree-api|lib|native::tests::post_install_failure_marks_runtime_indeterminate

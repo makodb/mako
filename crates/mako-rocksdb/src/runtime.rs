@@ -34,16 +34,23 @@ impl DB {
         N: AsRef<str>,
     {
         let path = path.as_ref();
-        let exists = path.join("data/CURRENT").is_file();
+        let sidecar = mako_runtime::node::native_data_control_path(path);
+        let managed = sidecar.join("CURRENT").is_file();
+        let exists = path.join("CURRENT").is_file() || managed;
+        let pending = sidecar.join("ADOPTING").is_file();
+        let node_directory = sidecar.join("node");
+        if managed && !pending && !node_directory.join("log/FORMAT").is_file() {
+            return Err(Error::invalid("Mako transaction log missing; restore data and log together"));
+        }
         if exists && options.error_if_exists {
             return Err(Error::invalid("database already exists"));
         }
-        if !exists && !options.create {
+        if !exists && !pending && !options.create {
             return Err(Error::invalid(
                 "database is missing; enable create_if_missing",
             ));
         }
-        if !exists && path.exists() && std::fs::read_dir(path).map_err(io_error)?.next().is_some() {
+        if !exists && !pending && path.exists() && std::fs::read_dir(path).map_err(io_error)?.next().is_some() {
             return Err(Error::invalid(
                 "nonempty directory is not a Mako RocksDB database",
             ));
@@ -69,7 +76,7 @@ impl DB {
             .collect();
         let db = Self::open_config(Config {
             engine: EngineConfig::RocksDb {
-                directory: path.join("data"),
+                directory: path.to_path_buf(),
                 masstree: options.masstree,
             },
             owner: 0,
@@ -85,8 +92,8 @@ impl DB {
             initial: Vec::new(),
             replication: None,
             persistence: Some(PersistenceConfig {
-                directory: path.to_path_buf(),
-                create: !exists,
+                directory: node_directory,
+                create: !managed || pending,
                 sync_writes: true,
             }),
             volatile: false,

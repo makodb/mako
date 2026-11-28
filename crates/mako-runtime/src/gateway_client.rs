@@ -1,11 +1,12 @@
 //! Native connection convenience for the backend-independent gateway client.
 use crate::{rpc::Network, wire::*};
-pub(crate) use mako_protocol::gateway_client::intent;
+#[cfg(feature = "runtime-storage")]
+pub(crate) use crate::gateway_protocol::intent;
 #[cfg(test)]
 use mako_sharding::{gateway as core, types::NO_SNAPSHOT};
 use std::{io::Read, sync::Arc, time::Duration};
 
-pub struct GatewayClient(mako_protocol::gateway_client::GatewayClient);
+pub struct GatewayClient(crate::gateway_protocol::GatewayClient);
 impl GatewayClient {
     pub fn connect(endpoint: String, timeout: Duration) -> Result<Self> {
         let mut nonce = [0; 8];
@@ -27,14 +28,14 @@ impl GatewayClient {
         first: u64,
         timeout: Duration,
     ) -> Result<Self> {
-        mako_protocol::gateway_client::GatewayClient::with_identity(
+        crate::gateway_protocol::GatewayClient::with_identity(
             network, endpoint, client, first, timeout,
         )
         .map(Self)
     }
 }
 impl std::ops::Deref for GatewayClient {
-    type Target = mako_protocol::gateway_client::GatewayClient;
+    type Target = crate::gateway_protocol::GatewayClient;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

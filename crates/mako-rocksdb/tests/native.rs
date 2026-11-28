@@ -37,6 +37,8 @@ impl Directory {
 impl Drop for Directory {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+        let mut control = self.0.as_os_str().to_owned(); control.push(".mako");
+        let _ = std::fs::remove_dir_all(std::path::PathBuf::from(control));
     }
 }
 fn options(masstree: bool) -> Options {
@@ -442,7 +444,10 @@ fn crash(masstree: bool, raft: bool) {
 // Migration encodings and policies are already tested independently. This case
 // proves that the API follows the runtime's routes for points and range scans.
 #[test]
-fn migration_routes_points_and_scans_through_the_same_api() {
+fn migration_routes_points_and_scans_through_the_same_api() { migration_contract(false); }
+#[test]
+fn adopted_native_rows_migrate_through_the_same_transaction_api() { migration_contract(true); }
+fn migration_contract(adopt: bool) {
     use mako_sharding::{
         types::{Status, TxnId},
         wire as control,
@@ -458,10 +463,17 @@ fn migration_routes_points_and_scans_through_the_same_api() {
     let mut peer = Peer::spawn(&remote, &root.0, "node");
     let mut local = config(&root.0, 0, &peers, false, false);
     local.migration = true;
+    if adopt {
+        let EngineConfig::RocksDb { directory, .. } = &local.engine else { unreachable!() };
+        std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+        let mut opts = rocksdb::Options::default(); opts.create_if_missing(true); opts.create_missing_column_families(true);
+        let raw = rocksdb::DB::open_cf(&opts,directory,["default","other"]).unwrap();
+        raw.put(b"a",b"stays").unwrap(); raw.put(b"z",b"moves").unwrap();
+    }
     let db = open_config(local);
     peer.wait_ready();
-    db.put(b"a", b"stays").unwrap();
-    db.put(b"z", b"moves").unwrap();
+    if !adopt { db.put(b"a", b"stays").unwrap(); db.put(b"z", b"moves").unwrap(); }
+    assert_eq!(db.get(b"z").unwrap(),Some(b"moves".to_vec()));
     let network = Network::default();
     let admin = |operation, payload| match network
         .call(
@@ -530,7 +542,13 @@ fn migration_routes_points_and_scans_through_the_same_api() {
 }
 
 #[test]
-fn replicated_facade_keeps_followers_open_and_resolves_after_failover() {
+fn replicated_facade_keeps_followers_open_and_resolves_after_failover() { replicated_failover(false, false); }
+#[test]
+fn adopted_native_data_survives_replicated_failover() { replicated_failover(true, false); }
+#[test]
+#[cfg(feature="masstree-engine")]
+fn adopted_native_data_survives_masstree_replicated_failover() { replicated_failover(true, true); }
+fn replicated_failover(adopt: bool, masstree: bool) {
     let root = Directory::new();
     let apps = addresses(3);
     let rafts = addresses(3);
@@ -554,8 +572,9 @@ fn replicated_facade_keeps_followers_open_and_resolves_after_failover() {
         let directory = root.0.join(format!("replica-{i}"));
         cfg.engine = EngineConfig::RocksDb {
             directory: directory.join("data"),
-            masstree: false,
+            masstree,
         };
+        if adopt { std::fs::create_dir_all(&directory).unwrap(); native_fixture(&directory.join("data")); }
         cfg.persistence = None;
         cfg.replication = Some(ReplicaConfig {
             group: 777,
@@ -590,6 +609,7 @@ fn replicated_facade_keeps_followers_open_and_resolves_after_failover() {
     };
     let first = leader(&replicas);
     let db = replicas[first].as_ref().unwrap();
+    if adopt { assert_eq!(db.get(b"a\0\xff").unwrap(), Some(b"original".to_vec())); }
     let tx = db.transaction();
     tx.put(b"failover", b"saved").unwrap();
     let id = tx.transaction_id().unwrap();
@@ -598,6 +618,109 @@ fn replicated_facade_keeps_followers_open_and_resolves_after_failover() {
     let next = leader(&replicas);
     assert_ne!(first, next);
     let db = replicas[next].as_ref().unwrap();
+    if adopt { assert_eq!(db.get_cf(db.cf_handle("other").unwrap(), b"a\0\xff").unwrap(), Some(b"second family".to_vec())); }
     assert_eq!(db.resolve(id).unwrap(), Outcome::Commit);
     assert_eq!(db.get(b"failover").unwrap(), Some(b"saved".to_vec()));
+}
+
+fn native_fixture(path: &Path) {
+    let mut opts = rocksdb::Options::default(); opts.create_if_missing(true); opts.create_missing_column_families(true);
+    let db = rocksdb::DB::open_cf(&opts, path, ["default", "other"]).unwrap();
+    db.put(b"", b"empty").unwrap();
+    db.put(b"a\0\xff", b"original").unwrap();
+    db.put_cf(db.cf_handle("other").unwrap(), b"a\0\xff", b"second family").unwrap();
+    db.flush().unwrap();
+}
+fn adopted_round_trip(masstree: bool) {
+    let root = Directory::new(); native_fixture(&root.0);
+    let db = open(&root.0.join(""), masstree);
+    assert_eq!(db.get(b"").unwrap(), Some(b"empty".to_vec()));
+    assert_eq!(db.get(b"a\0\xff").unwrap(), Some(b"original".to_vec()));
+    let tx = db.transaction();
+    tx.put(b"a\0\xff", b"changed").unwrap();
+    tx.delete_cf(db.cf_handle("other").unwrap(), b"a\0\xff").unwrap();
+    tx.commit().unwrap();
+    drop(db);
+    // Switch engines over the same native format and recover any committed gap.
+    let db = open(&root.0, false);
+    assert_eq!(db.get(b"a\0\xff").unwrap(), Some(b"changed".to_vec()));
+    assert_eq!(db.get_cf(db.cf_handle("other").unwrap(), b"a\0\xff").unwrap(), None);
+    drop(db);
+    let native = rocksdb::DB::open_cf_for_read_only(&rocksdb::Options::default(), &root.0, ["default", "other"], false).unwrap();
+    assert_eq!(native.get(b"").unwrap(), Some(b"empty".to_vec()));
+    assert_eq!(native.get(b"a\0\xff").unwrap(), Some(b"changed".to_vec()));
+    assert_eq!(native.get_cf(native.cf_handle("other").unwrap(), b"a\0\xff").unwrap(), None);
+    assert_eq!(native.iterator(rocksdb::IteratorMode::Start).count(), 2);
+}
+#[test]
+fn adopt_native_rocksdb_and_read_back_with_upstream() { adopted_round_trip(false); }
+#[test]
+#[cfg(feature="masstree-engine")]
+fn adopt_native_rocksdb_with_masstree_then_switch_to_direct() { adopted_round_trip(true); }
+#[test]
+fn adopted_database_never_recreates_a_lost_transaction_log() {
+    let root = Directory::new(); native_fixture(&root.0); drop(open(&root.0, false));
+    let mut control = root.0.as_os_str().to_owned(); control.push(".mako");
+    let control = PathBuf::from(control);
+    std::fs::rename(control.join("node/log"), control.join("saved-log")).unwrap();
+    assert!(DB::open_cf(&options(false), &root.0, ["other"]).is_err());
+    assert!(!control.join("node/log").exists());
+}
+
+#[test]
+fn adopted_local_seed_rejects_a_foreign_log_and_reopens() {
+    adopted_reopen(false);
+}
+#[test]
+fn adopted_raft_seed_survives_engine_reopen() {
+    adopted_reopen(true);
+}
+fn adopted_reopen(raft: bool) {
+    let root = Directory::new();
+    let peers = BTreeMap::from([(0, "127.0.0.1:0".into())]);
+    let cfg = config(&root.0, 0, &peers, false, raft);
+    let EngineConfig::RocksDb { directory, .. } = &cfg.engine else { unreachable!() };
+    std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+    native_fixture(directory);
+    let db = open_config(cfg.clone());
+    assert_eq!(db.get(b"a\0\xff").unwrap(), Some(b"original".to_vec()));
+    db.put(b"committed", b"after adoption").unwrap();
+    drop(db);
+    if !raft {
+        let other = root.0.join("other-seed");
+        native_fixture(&other);
+        let raw = rocksdb::DB::open_cf(&rocksdb::Options::default(), &other, ["default", "other"]).unwrap();
+        raw.put(b"a\0\xff", b"different seed").unwrap();
+        drop(raw);
+        let mut wrong = cfg.clone();
+        wrong.engine = EngineConfig::RocksDb { directory: other, masstree: false };
+        let error = DB::open_config(wrong).err().expect("foreign seed must fail");
+        assert!(error.to_string().contains("authority"), "{error}");
+        let mut reopen = cfg.clone();
+        reopen.persistence.as_mut().unwrap().create = false;
+        let db = open_config(reopen);
+        assert_eq!(db.get(b"committed").unwrap(), Some(b"after adoption".to_vec()));
+        drop(db);
+    }
+    let mut reopened = cfg;
+    if let Some(c) = &mut reopened.persistence { c.create = false; }
+    if let Some(c) = &mut reopened.replication { c.create = false; }
+    let EngineConfig::RocksDb { masstree, .. } = &mut reopened.engine else { unreachable!() };
+    *masstree = cfg!(feature="masstree-engine");
+    let db = open_config(reopened);
+    assert_eq!(db.get(b"a\0\xff").unwrap(), Some(b"original".to_vec()));
+    assert_eq!(db.get(b"committed").unwrap(), Some(b"after adoption".to_vec()));
+    assert_eq!(db.get_cf(db.cf_handle("other").unwrap(), b"a\0\xff").unwrap(), Some(b"second family".to_vec()));
+}
+
+#[test]
+fn native_custom_comparator_is_rejected_without_adopting() {
+    let root = Directory::new();
+    let mut opts = rocksdb::Options::default(); opts.create_if_missing(true);
+    opts.set_comparator("reverse-test", Box::new(|a,b| b.cmp(a)));
+    let native = rocksdb::DB::open(&opts, &root.0).unwrap(); native.put(b"key", b"value").unwrap(); drop(native);
+    assert!(DB::open_default(&root.0).is_err());
+    assert!(!root.0.symlink_metadata().unwrap().file_type().is_symlink());
+    let native = rocksdb::DB::open(&opts, &root.0).unwrap();
+    assert_eq!(native.get(b"key").unwrap(), Some(b"value".to_vec()));
 }

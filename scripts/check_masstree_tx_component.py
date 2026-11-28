@@ -9,11 +9,11 @@ import subprocess
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGES = {'sto-masstree', 'sto-tpcc-ffi'}
+PACKAGES = {'sto-masstree', 'sto-masstree-api'}
 # Pure decision contracts and core/index code are shared dependencies. Every new
 # dependency requires review; application, transport and durable engines are absent.
-ALLOWED = set('''sto-masstree sto-tpcc-ffi sto-core sto-test-datatypes mako-clock
-mako-history mako-protocol-core shard-host-core masstree mtree-sys arc-swap
+ALLOWED = set('''sto-masstree sto-masstree-api sto-core sto-test-datatypes
+mako-history masstree mtree-sys arc-swap
 rustversion convert_case equivalent hashbrown indexmap proc-macro2 quote syn
 synstructure unicode-ident verus_builtin verus_builtin_macros verus_prettyplease
 verus_state_machines_macros verus_syn vstd'''.split())
@@ -58,9 +58,9 @@ def main():
     if os.environ.get('MAKO_MTREE_NATIVE_INTEGRATION') != '1':
         raise RuntimeError('use the MASSTREE_TX CMake profile for native linkage')
     common = ['--locked', '--manifest-path', str(ROOT / 'crates/Cargo.toml'),
-              '-p', 'sto-masstree', '-p', 'sto-tpcc-ffi']
+              '-p', 'sto-masstree', '-p', 'sto-masstree-api']
     tree = subprocess.check_output([args.cargo, 'tree', *common,
-        '--features', 'sto-masstree/fixed-u64', '--edges', 'normal,build,dev',
+        '--edges', 'normal,build,dev',
         '--prefix', 'none', '--format', '{p}'], text=True)
     dependencies = parse_tree(tree)
     command = [args.cargo, 'build', *common, '--lib', '--message-format=json']

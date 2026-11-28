@@ -47,9 +47,9 @@ fn check(status: Status) -> Result<()> {
     }
 }
 
-pub use mako_protocol::contracts::{CommitLog, CommitPermit};
-pub use mako_protocol::journal::MemoryLog;
-use mako_protocol::journal::{Entry, Journal, Record, TransactionId};
+pub use sto_core::protocol::contracts::{CommitLog, CommitPermit};
+pub use sto_core::protocol::journal::MemoryLog;
+use sto_core::protocol::journal::{Entry, Journal, Record, TransactionId};
 
 struct StoreJournal {
     log: Arc<dyn CommitLog>,
@@ -279,8 +279,8 @@ impl Store {
                 ));
             }
             match participant.outcome {
-                Some(mako_protocol::journal::Outcome::Commit) => return Ok(Some(receipt.response)),
-                Some(mako_protocol::journal::Outcome::Abort) => (),
+                Some(sto_core::protocol::journal::Outcome::Commit) => return Ok(Some(receipt.response)),
+                Some(sto_core::protocol::journal::Outcome::Abort) => (),
                 None => {
                     return Err(Error::new(
                         ErrorCode::Unknown,

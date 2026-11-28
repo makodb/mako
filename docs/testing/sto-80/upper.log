@@ -1,0 +1,168 @@
+upper: using 32 logical CPUs; requested 32
+upper: revision
+upper: revision: 0.015s
+upper: working-diff
+upper: working-diff: 6.356s
+upper: new-files
+upper: new-files: 0.034s
+upper: compiler
+upper: compiler: 0.017s
+upper: sysroot
+upper: sysroot: 0.019s
+Source audit: 7 files, all items inside verus!, no verifier escapes, total public entries and explicit engine method contracts, 31 public names defined once, 1 trusted shell functions call the core; Verus proof follows
+PASS: source audit rejects cfg and cfg_attr on map_engine
+Protocol source audit: canonical verified modules, historical coordinator and Raft retention; explicit trusted adapter mappings; bypass controls rejected
+STO boundary: engine-only dependencies; forbidden edges rejected; Raft independent
+upper: sharding-source-audit
+upper: sharding-source-audit: 0.407s
+upper: distributed-sto-dependencies
+upper: distributed-sto-dependencies: 0.121s
+upper: distributed-sto-compile
+upper: distributed-sto-compile: 0.088s
+upper: distributed-sto-sto_core-ef0a046e2273abb3
+upper: distributed-sto-sto_core-ef0a046e2273abb3: 0.294s
+upper: distributed-sto-protocol_publication-ba9cf2b63ee75ca3
+upper: distributed-sto-protocol_publication-ba9cf2b63ee75ca3: 0.006s
+upper: distributed-sto-protocol_range_lock-f177757932d73f4f
+upper: distributed-sto-protocol_range_lock-f177757932d73f4f: 0.016s
+upper: distributed-sto-protocol_occ_histories-915bca5b3b93e689
+upper: distributed-sto-protocol_occ_histories-915bca5b3b93e689: 0.31s
+upper: distributed-sto-protocol_wire_compatibility-d3d0e21f5a7b9640
+upper: distributed-sto-protocol_wire_compatibility-d3d0e21f5a7b9640: 0.013s
+upper: distributed-sto-legacy_coordinator-16ebed34b4c670c9
+upper: distributed-sto-legacy_coordinator-16ebed34b4c670c9: 0.008s
+upper: distributed-sto-protocol_two_phase-cf7fbb4785ed3184
+upper: distributed-sto-protocol_two_phase-cf7fbb4785ed3184: 0.693s
+upper: distributed-sto-protocol_log_contract-1be06401a9efaaa6
+upper: distributed-sto-protocol_log_contract-1be06401a9efaaa6: 0.021s
+upper: distributed-sto-protocol_delivery-00af57f0de3db59b
+upper: distributed-sto-protocol_delivery-00af57f0de3db59b: 0.028s
+upper: workspace-dependencies
+upper: workspace-dependencies: 0.359s
+upper: workspace-compile
+upper: workspace-compile: 0.202s
+upper: workspace-shard_host_core-6e8cd7a900700096
+upper: workspace-shard_host_core-6e8cd7a900700096: 0.005s
+upper: workspace-mako_rocksdb-4691a6b6469ae278
+upper: workspace-mako_rocksdb-4691a6b6469ae278: 0.05s
+upper: workspace-mako_storage_api-8a2b3755f465cc0d
+upper: workspace-mako_storage_api-8a2b3755f465cc0d: 0.029s
+upper: workspace-gateway_protocol-3e3e10f912088b19
+upper: workspace-gateway_protocol-3e3e10f912088b19: 0.006s
+upper: workspace-native-a1052fb8273a9afc
+upper: workspace-native-a1052fb8273a9afc: 0.006s
+upper: sharding-dependencies
+upper: sharding-dependencies: 0.116s
+upper: sharding-compile
+upper: sharding-compile: 0.116s
+upper: sharding-mako_sharding-9689215b9a14bd9f
+upper: sharding-mako_sharding-9689215b9a14bd9f: 0.024s
+upper: sharding-protocol_migration-dc3c52d52c796b48
+upper: sharding-protocol_migration-dc3c52d52c796b48: 0.013s
+Pin: vstd 0.0.0-2026-08-02-0125 (crates.io, checksum of crates/Cargo.lock) is byte for byte the release's vstd: 130 files
+Pin: verus_builtin 0.0.0-2026-08-02-0125 (crates.io, checksum of crates/Cargo.lock) is byte for byte the release's builtin: 2 files
+Pin: verus_builtin_macros 0.0.0-2026-08-02-0125 (crates.io, checksum of crates/Cargo.lock) is byte for byte the release's builtin_macros: 22 files
+Pin: verus_state_machines_macros 0.0.0-2026-08-02-0125 (crates.io, checksum of crates/Cargo.lock) is byte for byte the release's state_machines_macros: 23 files
+upper: production-sharding
+upper: production-sharding: 87.523s
+verification results:: 1497 verified, 0 errors
+upper: storage-host-core
+upper: storage-host-core: 1.452s
+verification results:: 40 verified, 0 errors
+upper: distributed-sto-decisions
+upper: distributed-sto-decisions: 1.465s
+verification results:: 42 verified, 0 errors
+upper: historical-scalar-coordinator
+upper: historical-scalar-coordinator: 1.129s
+verification results:: 10 verified, 0 errors
+upper: raft-log-retention
+upper: raft-log-retention: 0.893s
+verification results:: 1 verified, 0 errors
+upper: materialization skips a log position
+upper: materialization skips a log position: 0.889s
+verification results:: 0 verified, 1 errors
+upper: materialization publishes unapplied effects
+upper: materialization publishes unapplied effects: 0.898s
+verification results:: 0 verified, 1 errors
+upper: checkpoint accepts a lagging RocksDB image
+upper: checkpoint accepts a lagging RocksDB image: 0.916s
+verification results:: 0 verified, 1 errors
+upper: recovery accepts materialization beyond commitment
+upper: recovery accepts materialization beyond commitment: 0.857s
+verification results:: 0 verified, 1 errors
+upper: checkpoint ignores row cut
+upper: checkpoint ignores row cut: 0.876s
+verification results:: 0 verified, 1 errors
+upper: checkpoint forgets prepared obligations
+upper: checkpoint forgets prepared obligations: 0.894s
+verification results:: 0 verified, 1 errors
+upper: checkpoint runs across publication
+upper: checkpoint runs across publication: 0.894s
+verification results:: 0 verified, 1 errors
+upper: trim precedes checkpoint publication
+upper: trim precedes checkpoint publication: 0.634s
+verification results:: 0 verified, 1 errors
+upper: recovery trusts lost RAM progress
+upper: recovery trusts lost RAM progress: 0.872s
+verification results:: 0 verified, 1 errors
+upper: stale sequence executes
+upper: stale sequence executes: 1.015s
+verification results:: 0 verified, 1 errors
+upper: install bypasses validation
+upper: install bypasses validation: 1.007s
+verification results:: 0 verified, 1 errors
+upper: unknown releases migration protection
+upper: unknown releases migration protection: 0.955s
+verification results:: 0 verified, 1 errors
+upper: failed install becomes aborted
+upper: failed install becomes aborted: 0.968s
+verification results:: 0 verified, 1 errors
+upper: timestamp equals dependency
+upper: timestamp equals dependency: 0.861s
+verification results:: 0 verified, 1 errors
+upper: local install failure permits retry
+upper: local install failure permits retry: 0.834s
+verification results:: 0 verified, 1 errors
+upper: remote validation omitted
+upper: remote validation omitted: 0.836s
+verification results:: 0 verified, 1 errors
+upper: coordinator rejects all available attempts
+upper: coordinator rejects all available attempts: 0.837s
+verification results:: 0 verified, 1 errors
+upper: 2PC skips global lock barrier
+upper: 2PC skips global lock barrier: 1.05s
+verification results:: 0 verified, 1 errors
+upper: 2PC commits without every Yes vote
+upper: 2PC commits without every Yes vote: 0.989s
+verification results:: 0 verified, 1 errors
+upper: 2PC treats unsaved decision as authoritative
+upper: 2PC treats unsaved decision as authoritative: 1.005s
+verification results:: 0 verified, 1 errors
+upper: 2PC changes a saved decision
+upper: 2PC changes a saved decision: 1.055s
+verification results:: 0 verified, 1 errors
+upper: 2PC releases prepared protection
+upper: 2PC releases prepared protection: 0.957s
+verification results:: 0 verified, 1 errors
+upper: 2PC permits autonomous prepared abort
+upper: 2PC permits autonomous prepared abort: 0.957s
+verification results:: 0 verified, 1 errors
+upper: 2PC acknowledges unsaved prepare
+upper: 2PC acknowledges unsaved prepare: 0.979s
+verification results:: 0 verified, 1 errors
+upper: 2PC rejects every prepared transaction
+upper: 2PC rejects every prepared transaction: 0.975s
+verification results:: 0 verified, 1 errors
+upper: a terminal whose install result is unknown releases its read view
+upper: a terminal whose install result is unknown releases its read view: 18.609s
+verification results:: 0 verified, 1 errors
+upper: epoch point admission permits Frozen authority
+upper: epoch point admission permits Frozen authority: 18.266s
+verification results:: 0 verified, 1 errors
+upper: a staged write is finished read-only instead of committed
+upper: a staged write is finished read-only instead of committed: 0.944s
+verification results:: 0 verified, 1 errors
+upper: a skipped tombstone hop is reported as end of range
+upper: a skipped tombstone hop is reported as end of range: 0.853s
+verification results:: 1 verified, 1 errors
+upper: PASS 164.893s; /var/tmp/mako-shard-rust/build_docker/upper/runs/20261127T080117-nkqokclz/report.json

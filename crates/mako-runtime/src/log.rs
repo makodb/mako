@@ -4,13 +4,11 @@
 //! replayed into its own retained locks. Unknown outcomes fence the shard.
 use crate::{
     application::Index,
-    durable::DurableRows,
     migration::Schema,
     redo,
     storage::{engine, CommitLog, CommitPermit, Store},
     wire::{self, Error, ErrorCode, Result},
 };
-use mako_protocol::journal::{self, Entry, Journal, Record, TransactionId};
 use parking_lot::Mutex;
 use raft_host::{Host, Position, ProposalStatus, StateMachine};
 use serde::{Deserialize, Serialize};
@@ -25,18 +23,10 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
+use sto_core::protocol::journal::{self, Entry, Journal, Record, TransactionId};
 
 mod materialization;
 pub use materialization::Options as MaterializationOptions;
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Command {
-    pub(crate) version: u32,
-    pub(crate) incarnation: u64,
-    pub(crate) sequence: u64,
-    pub(crate) rows: Vec<redo::Row>,
-    pub(crate) receipt: Option<wire::GatewayReceipt>,
-}
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct JournalCommand {
@@ -47,18 +37,6 @@ pub(crate) struct JournalCommand {
 }
 fn storage(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorCode::Fatal, error.to_string())
-}
-fn position(p: Position) -> sto_rocksdb::Position {
-    sto_rocksdb::Position {
-        index: p.index,
-        term: p.term,
-    }
-}
-fn host_position(p: sto_rocksdb::Position) -> Position {
-    Position {
-        index: p.index,
-        term: p.term,
-    }
 }
 
 enum ReplayWork {
@@ -254,8 +232,7 @@ struct State {
     owner: u32,
     durable_transactions: bool,
     gate: Mutex<Gate>,
-    durable: Option<Arc<DurableRows>>,
-    persistent: Option<Arc<dyn mako_storage_api::PersistentApplication>>,
+    persistent: Arc<dyn mako_storage_api::PersistentApplication>,
     index: Mutex<Index>,
     identity: Vec<u8>,
     accelerated: bool,
@@ -264,97 +241,68 @@ struct State {
     schema: Arc<Schema>,
 }
 impl State {
-    fn restore(&self) -> Result<()> {
-        let Some(durable) = &self.durable else {
-            return Ok(());
-        };
-        let mut batch = Vec::new();
-        durable.visit(|row| {
-            batch.push(row);
-            if batch.len() == 256 {
-                self.replay.apply(std::mem::take(&mut batch))?;
-            }
-            Ok(())
-        })?;
-        if !batch.is_empty() {
-            self.replay.apply(batch)?;
-        }
-        Ok(())
-    }
     fn load_persistent(&self) -> Result<()> {
-        if let Some(application) = &self.persistent {
-            let index = Index::from_metadata(
-                application.metadata().map_err(engine)?,
-                application.position().map_err(engine)?,
-                self.owner,
-                self.durable_transactions,
-            )?;
-            let ids = application
-                .table_ids()
-                .map_err(engine)?
-                .into_iter()
-                .map(|id| u16::try_from(id).map_err(storage))
-                .collect::<Result<Vec<_>>>()?;
-            self.replay.tables(ids.clone())?;
-            if self.accelerated {
-                for table in ids {
-                    let mut after = None;
-                    loop {
-                        let page = application
-                            .page(table, after.as_deref(), 256)
-                            .map_err(engine)?;
-                        if !page.end && page.rows.is_empty() {
-                            return Err(storage("RocksDB recovery made no progress"));
+        let application = &self.persistent;
+        let index = Index::from_metadata(
+            application.metadata().map_err(engine)?,
+            application.position().map_err(engine)?,
+            self.owner,
+            self.durable_transactions,
+        )?;
+        let ids = application
+            .table_ids()
+            .map_err(engine)?
+            .into_iter()
+            .map(|id| u16::try_from(id).map_err(storage))
+            .collect::<Result<Vec<_>>>()?;
+        self.replay.tables(ids.clone())?;
+        if self.accelerated {
+            for table in ids {
+                let mut after = None;
+                loop {
+                    let page = application
+                        .page(table, after.as_deref(), 256)
+                        .map_err(engine)?;
+                    if !page.end && page.rows.is_empty() {
+                        return Err(storage("RocksDB recovery made no progress"));
+                    }
+                    let mut rows = Vec::new();
+                    for row in page.rows {
+                        if after.as_ref().is_some_and(|prior| prior >= &row.key) {
+                            return Err(storage("RocksDB recovery key order"));
                         }
-                        let mut rows = Vec::new();
-                        for row in page.rows {
-                            if after.as_ref().is_some_and(|prior| prior >= &row.key) {
-                                return Err(storage("RocksDB recovery key order"));
-                            }
-                            after = Some(row.key.clone());
-                            rows.push(redo::Row {
-                                table,
-                                key: row.key,
-                                value: row.value,
-                                time_term: row.time_term,
-                            });
-                        }
-                        self.replay.apply(rows)?;
-                        if page.end {
-                            break;
-                        }
+                        after = Some(row.key.clone());
+                        rows.push(redo::Row {
+                            table,
+                            key: row.key,
+                            value: row.value,
+                            time_term: row.time_term,
+                        });
+                    }
+                    self.replay.apply(rows)?;
+                    if page.end {
+                        break;
                     }
                 }
             }
-            *self.index.lock() = index;
         }
+        *self.index.lock() = index;
+
         Ok(())
     }
     fn position(&self) -> Result<Position> {
-        match &self.durable {
-            Some(durable) => durable.position().map(host_position),
-            None => Ok(self.index.lock().position.into()),
-        }
+        Ok(self.index.lock().position.into())
     }
     fn transaction(&self, id: TransactionId) -> Result<Option<Entry>> {
-        match &self.durable {
-            Some(durable) => durable.transaction(id),
-            None => Ok(self.index.lock().transactions.get(&id).cloned()),
-        }
+        Ok(self.index.lock().transactions.get(&id).cloned())
     }
     fn transactions(&self) -> Result<Vec<Entry>> {
-        match &self.durable {
-            Some(durable) => durable.transactions(),
-            None => Ok(self.index.lock().transactions.values().cloned().collect()),
-        }
+        Ok(self.index.lock().transactions.values().cloned().collect())
     }
     fn gateway_receipt(
         &self,
         request: &wire::GatewayRequest,
     ) -> Result<Option<wire::GatewayResponse>> {
-        if let Some(durable) = &self.durable {
-            return durable.gateway_receipt(request);
-        }
         let index = self.index.lock();
         match index.receipts.get(&(request.client, request.sequence)) {
             Some(receipt) if &receipt.request == request => Ok(Some(receipt.response.clone())),
@@ -379,107 +327,48 @@ impl StateMachine for State {
         let result = (|| {
             Self::ensure(&gate)?;
             let Some(bytes) = bytes else {
-                if let Some(durable) = &self.durable {
-                    return durable.advance(position(p));
-                }
                 let mut index = self.index.lock();
                 let change = index.no_op(p.into())?;
                 self.persist(&mut gate, index.position, &change)?;
                 index.publish(change);
                 return Ok(());
             };
-            // wire::encode prefixes its own u32 version; the application
-            // command version follows it. Keep old row-command bytes readable.
-            if bytes.get(4..8) == Some(2u32.to_le_bytes().as_slice()) {
-                let command: JournalCommand = wire::decode(bytes)?;
-                if command.version != 2
-                    || command.incarnation == 0
-                    || command.sequence == 0
-                    || command.record.transaction().durable != self.durable_transactions
-                {
-                    return Err(storage("invalid transaction log record"));
-                }
-                if let Record::Prepare { rows, .. } = &command.record {
-                    for row in rows {
-                        self.schema.key_for_log(row.table)?;
-                    }
-                }
-                let local = gate
-                    .pending
-                    .get(&(command.incarnation, command.sequence))
-                    .is_some_and(|pending| pending == bytes);
-                if !local && gate.active != 0 {
-                    return Err(storage(
-                        "leadership changed with active prepared transactions; recovery required",
-                    ));
-                }
-                if let Some(durable) = &self.durable {
-                    let (rows, _) =
-                        durable.apply_journal(position(p), bytes, self.owner, &command.record)?;
-                    if !local && !rows.is_empty() {
-                        self.replay.apply(rows)?;
-                    }
-                } else {
-                    let mut index = self.index.lock();
-                    let change = index.journal(
-                        p.into(),
-                        bytes,
-                        self.owner,
-                        self.durable_transactions,
-                        &command.record,
-                    )?;
-                    self.persist(&mut gate, index.position, &change)?;
-                    if self.accelerated && !local && !change.rows.is_empty() {
-                        self.replay.apply(change.rows.clone())?;
-                    }
-                    index.publish(change);
-                }
-                return Ok(());
-            }
-            let command: Command = wire::decode(bytes)?;
-            if command.version != 1
+            let command: JournalCommand = wire::decode(bytes)?;
+            if command.version != 2
                 || command.incarnation == 0
                 || command.sequence == 0
-                || (command.rows.is_empty() && command.receipt.is_none())
+                || command.record.transaction().durable != self.durable_transactions
             {
-                return Err(storage("invalid log command"));
+                return Err(storage("invalid transaction log record"));
             }
-            for row in &command.rows {
-                row.validate()?;
-                self.schema.key_for_log(row.table)?;
+            if let Record::Prepare { rows, .. } = &command.record {
+                for row in rows {
+                    self.schema.key_for_log(row.table)?;
+                }
             }
             let local = gate
                 .pending
                 .get(&(command.incarnation, command.sequence))
                 .is_some_and(|pending| pending == bytes);
             if !local && gate.active != 0 {
-                // A former leader still owns speculative transactions. Refuse
-                // to mix a different leader's committed prefix into that RAM;
-                // restart rebuilds it from durable authority before serving.
                 return Err(storage(
-                    "leadership changed with active local transactions; recovery required",
+                    "leadership changed with active prepared transactions; recovery required",
                 ));
             }
-            if let Some(durable) = &self.durable {
-                let rows = durable.apply_gateway(
-                    position(p),
-                    bytes,
-                    &command.rows,
-                    command.receipt.as_ref(),
-                )?;
-                if !local {
-                    self.replay.apply(rows)?;
-                }
-            } else {
-                let mut index = self.index.lock();
-                let change =
-                    index.gateway(p.into(), bytes, &command.rows, command.receipt.as_ref())?;
-                self.persist(&mut gate, index.position, &change)?;
-                if self.accelerated && !local {
-                    self.replay.apply(change.rows.clone())?;
-                }
-                index.publish(change);
+            let mut index = self.index.lock();
+            let change = index.journal(
+                p.into(),
+                bytes,
+                self.owner,
+                self.durable_transactions,
+                &command.record,
+            )?;
+            self.persist(&mut gate, index.position, &change)?;
+            if self.accelerated && !local && !change.rows.is_empty() {
+                self.replay.apply(change.rows.clone())?;
             }
+            index.publish(change);
+
             Ok(())
         })();
         let result = result.and_then(|()| {
@@ -497,19 +386,14 @@ impl StateMachine for State {
         let mut gate = self.gate.lock();
         let result = (|| {
             Self::ensure(&gate)?;
-            if let Some(durable) = &self.durable {
-                return durable.create_checkpoint(path, position(p));
-            }
+
             if self.position()? != p {
                 return Err(storage("checkpoint cut differs from applied prefix"));
             }
             self.flush_locked(&mut gate, p)?;
-            let application = self
-                .persistent
-                .as_ref()
-                .ok_or_else(|| storage("missing RocksDB backing"))?;
+            let application = &self.persistent;
             let durable = application.position().map_err(engine)?;
-            if !mako_protocol_core::recovery::materialized_checkpoint(
+            if !sto_core::protocol::verified::recovery::materialized_checkpoint(
                 p.index,
                 durable.index,
                 p.term == durable.term,
@@ -523,54 +407,45 @@ impl StateMachine for State {
         result.map_err(|e| e.to_string())
     }
     fn validate_checkpoint(&self, path: &Path, p: Position) -> std::result::Result<(), String> {
-        let result = (|| {
-            if let Some(durable) = &self.durable {
-                return durable.validate_checkpoint(path, position(p));
-            }
-            if let Some(application) = &self.persistent {
-                let (position, metadata) = application
-                    .checkpoint_metadata(
-                        path,
-                        crate::application::Position::from(p).into(),
-                        &self.identity,
-                    )
-                    .map_err(engine)?;
-                Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
-                return Ok(());
-            }
-            Err(storage("missing RocksDB backing"))
+        let result: Result<()> = (|| {
+            let application = &self.persistent;
+
+            let (position, metadata) = application
+                .checkpoint_metadata(
+                    path,
+                    crate::application::Position::from(p).into(),
+                    &self.identity,
+                )
+                .map_err(engine)?;
+            Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
+            Ok(())
         })();
         result.map_err(|e| e.to_string())
     }
     fn publish_checkpoint(&self, path: &Path, p: Position) -> std::result::Result<(), String> {
         let mut gate = self.gate.lock();
         let result = (|| {
+            let application = &self.persistent;
             Self::ensure(&gate)?;
             if gate.active != 0 {
                 return Err(storage(
                     "snapshot publication with active transactions requires recovery",
                 ));
             }
-            if let Some(durable) = &self.durable {
-                durable.publish_checkpoint(path, position(p))?;
-                return self.restore();
-            }
-            if let Some(application) = &self.persistent {
-                let (position, metadata) = application
-                    .checkpoint_metadata(
-                        path,
-                        crate::application::Position::from(p).into(),
-                        &self.identity,
-                    )
-                    .map_err(engine)?;
-                Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
-                application
-                    .publish_checkpoint(path, crate::application::Position::from(p).into())
-                    .map_err(engine)?;
-                gate.materialization.clear();
-                return self.load_persistent();
-            }
-            Err(storage("missing RocksDB backing"))
+
+            let (position, metadata) = application
+                .checkpoint_metadata(
+                    path,
+                    crate::application::Position::from(p).into(),
+                    &self.identity,
+                )
+                .map_err(engine)?;
+            Index::from_metadata(metadata, position, self.owner, self.durable_transactions)?;
+            application
+                .publish_checkpoint(path, crate::application::Position::from(p).into())
+                .map_err(engine)?;
+            gate.materialization.clear();
+            self.load_persistent()
         })();
         if let Err(error) = &result {
             gate.fault = Some(error.to_string());
@@ -599,7 +474,7 @@ impl From<raft_host::Config> for Mode {
 pub type LocalLog = Log<raft_host::LocalConfig>;
 /// Raft-replicated RocksDB transaction log.
 pub type ReplicatedLog = Log<raft_host::Config>;
-pub use mako_protocol::journal::MemoryLog;
+pub use sto_core::protocol::journal::MemoryLog;
 
 #[derive(Clone)]
 enum Driver {
@@ -671,25 +546,6 @@ impl<C: Into<Mode>> Log<C> {
             next: AtomicU64::new(1),
         }))
     }
-    /// Run before starting application listeners. Durable rows are replayed
-    /// first, then the ordering driver replays its committed prefix.
-    pub fn start(
-        &self,
-        config: C,
-        store: &Arc<Store>,
-        schema: Arc<Schema>,
-        durable: Arc<DurableRows>,
-    ) -> Result<()> {
-        self.start_backing(
-            config,
-            store,
-            schema,
-            Some(durable),
-            Vec::new(),
-            None,
-            MaterializationOptions::default(),
-        )
-    }
     pub fn start_engine(
         &self,
         config: C,
@@ -701,7 +557,6 @@ impl<C: Into<Mode>> Log<C> {
             config,
             store,
             schema,
-            None,
             identity,
             None,
             MaterializationOptions::default(),
@@ -717,15 +572,13 @@ impl<C: Into<Mode>> Log<C> {
         backing: Arc<dyn mako_storage_api::PersistentApplication>,
         limits: MaterializationOptions,
     ) -> Result<()> {
-        self.start_backing(config, store, schema, None, identity, Some(backing), limits)
+        self.start_backing(config, store, schema, identity, Some(backing), limits)
     }
-    #[allow(clippy::too_many_arguments)]
     fn start_backing(
         &self,
         config: C,
         store: &Arc<Store>,
         schema: Arc<Schema>,
-        durable: Option<Arc<DurableRows>>,
         identity: Vec<u8>,
         backing: Option<Arc<dyn mako_storage_api::PersistentApplication>>,
         limits: MaterializationOptions,
@@ -739,82 +592,83 @@ impl<C: Into<Mode>> Log<C> {
             Mode::Raft(config) => config.sync_writes,
         };
         let limits = limits.validate()?;
-        let accelerated = durable.is_none() && store.database.persistent().is_none();
-        let persistent = if durable.is_none() {
-            match backing.or_else(|| store.database.persistent()) {
-                Some(application) => Some(application),
-                None => {
-                    let (log_path, create) = match &config {
-                        Mode::Local(c) => (&c.directory, c.create),
-                        Mode::Raft(c) => (&c.directory, c.create),
-                    };
-                    let data = log_path.with_extension("data");
-                    if !data.join("CURRENT").exists() && (!create || log_path.exists()) {
-                        return Err(storage("RocksDB data image missing; existing file-only state requires offline conversion"));
-                    }
-                    Some(
-                        mako_storage_rocksdb::backing(&data, store.owner.into(), sync_writes)
-                            .map_err(engine)?,
-                    )
+        let accelerated = store.database.persistent().is_none();
+        let persistent = match backing.or_else(|| store.database.persistent()) {
+            Some(application) => application,
+            None => {
+                let (log_path, create) = match &config {
+                    Mode::Local(c) => (&c.directory, c.create),
+                    Mode::Raft(c) => (&c.directory, c.create),
+                };
+                let data = log_path.with_extension("data");
+                if !(data.join("CURRENT").exists()
+                    || sto_rocksdb::control_path(&data).join("CURRENT").exists())
+                    && (!create || log_path.exists())
+                {
+                    return Err(storage("native RocksDB data image missing; restore current-format data and log together"));
                 }
+                mako_storage_rocksdb::backing(&data, store.owner.into(), sync_writes)
+                    .map_err(engine)?
             }
-        } else {
-            None
         };
-        if let Some(application) = &persistent {
-            if application.durable() != sync_writes {
-                return Err(storage("data engine and log durability policies differ"));
-            }
-            application.bind_identity(&identity).map_err(engine)?;
+        if persistent.durable() != sync_writes {
+            return Err(storage("data engine and log durability policies differ"));
         }
+        persistent.bind_identity(&identity).map_err(engine)?;
         let replay = Replay::start(store, schema.clone())?;
         let state = Arc::new(State {
             owner: store.owner,
-            durable_transactions: sync_writes && durable.as_ref().is_none_or(|d| d.durable()),
+            durable_transactions: sync_writes,
             index: Mutex::new(Index::default()),
             identity,
             accelerated,
             limits,
             gate: Mutex::new(Gate::default()),
-            durable,
             persistent,
             replay,
             schema,
         });
-        if let Some(application) = &state.persistent {
-            if state.accelerated && application.position().map_err(engine)?.index == 0 {
-                state.replay.bootstrap(application.clone())?;
-            }
-            state.load_persistent()?;
-        } else {
-            state.restore()?;
+        if state.accelerated && state.persistent.position().map_err(engine)?.index == 0 {
+            state.replay.bootstrap(state.persistent.clone())?;
         }
+        state.load_persistent()?;
+        let initial_state = state.persistent.initial_state_id().map_err(engine)?;
         let (host, group) = match config {
-            Mode::Raft(config) => {
+            Mode::Raft(mut config) => {
+                config.initial_state = initial_state;
                 let group = config.group;
                 (
                     Driver::Raft(Host::start(config, state.clone()).map_err(storage)?),
                     Some(group),
                 )
             }
-            Mode::Local(config) => (
-                Driver::Local(raft_host::LocalHost::start(config, state.clone()).map_err(storage)?),
-                None,
-            ),
-        };
-        if let Some(application) = &state.persistent {
-            let materialized = application.position().map_err(engine)?.index;
-            let status = host.status();
-            if mako_protocol_core::recovery::materialized_replay(
-                materialized,
-                status.committed.index,
-            )
-            .is_none()
-            {
-                host.shutdown();
-                return Err(storage("RocksDB image exceeds committed log"));
+            Mode::Local(mut config) => {
+                config.initial_state = initial_state;
+                (
+                    Driver::Local(
+                        raft_host::LocalHost::start(config, state.clone()).map_err(storage)?,
+                    ),
+                    None,
+                )
             }
+        };
+        let application = &state.persistent;
+        if let Err(error) = application.complete_bootstrap() {
+            host.shutdown();
+            return Err(engine(error));
         }
+        let materialized = application.position().map_err(engine)?.index;
+        let status = host.status();
+        if sto_core::protocol::verified::recovery::materialized_replay(
+            materialized,
+            status.committed.index,
+        )
+        .is_none()
+        {
+            host.shutdown();
+            return Err(storage("RocksDB image exceeds committed log"));
+        }
+
         let flusher = if state.accelerated {
             Some(materialization::Flusher::start(&state)?)
         } else {
@@ -888,71 +742,15 @@ impl<C: Into<Mode>> Log<C> {
             .binding
             .get()
             .ok_or_else(|| storage("log not started"))?;
-        match &binding.state.persistent {
-            Some(application) => application
-                .position()
-                .map(|p| Position {
-                    index: p.index,
-                    term: p.term,
-                })
-                .map_err(engine),
-            None => binding.state.position(),
-        }
-    }
-    fn append_inner(&self, binding: &Binding, bytes: &[u8], time_term: u32) -> Result<()> {
-        self.append_record(binding, bytes, time_term, None)
-    }
-    fn append_record(
-        &self,
-        binding: &Binding,
-        bytes: &[u8],
-        time_term: u32,
-        receipt: Option<&wire::GatewayReceipt>,
-    ) -> Result<()> {
-        let rows = if bytes.is_empty() && receipt.is_some() {
-            Vec::new()
-        } else {
-            redo::decode_legacy(bytes, time_term)?
-        };
-        let sequence = self
-            .next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(1)
+        binding
+            .state
+            .persistent
+            .position()
+            .map(|p| Position {
+                index: p.index,
+                term: p.term,
             })
-            .map_err(|_| storage("transaction log identity exhausted"))?;
-        let command = wire::encode(&Command {
-            version: 1,
-            incarnation: self.incarnation,
-            sequence,
-            rows,
-            receipt: receipt.cloned(),
-        })?;
-        let status = binding.host.status();
-        if !status.is_leader || status.failure.is_some() {
-            return Err(storage("leadership lost after local install"));
-        }
-        {
-            let mut gate = binding.state.gate.lock();
-            State::ensure(&gate)?;
-            gate.pending
-                .insert((self.incarnation, sequence), command.clone());
-        }
-        let proposal = binding
-            .host
-            .propose(status.term, command)
-            .map_err(|error| storage(format!("log admission: {error:?}")))?;
-        match proposal.wait(self.timeout) {
-            ProposalStatus::Applied => {
-                binding
-                    .state
-                    .gate
-                    .lock()
-                    .pending
-                    .remove(&(self.incarnation, sequence));
-                Ok(())
-            }
-            outcome => Err(storage(format!("log completion: {outcome:?}"))),
-        }
+            .map_err(engine)
     }
 }
 struct Permit {
@@ -1064,27 +862,14 @@ impl<C: Into<Mode>> CommitLog for Log<C> {
     }
     fn append_gateway(
         &self,
-        bytes: &[u8],
-        time_term: u32,
-        receipt: &wire::GatewayReceipt,
+        _bytes: &[u8],
+        _time_term: u32,
+        _receipt: &wire::GatewayReceipt,
     ) -> Result<()> {
-        let binding = self.binding.get().ok_or_else(|| {
-            Error::new(
-                ErrorCode::Unknown,
-                "transaction log not started after install",
-            )
-        })?;
-        if binding.state.durable.is_none() {
-            return Err(Error::new(
-                ErrorCode::Invalid,
-                "pluggable engines require transaction Prepare/Complete records",
-            ));
-        }
-        if let Err(error) = self.append_record(binding, bytes, time_term, Some(receipt)) {
-            binding.state.gate.lock().fault = Some(error.to_string());
-            return Err(Error::new(ErrorCode::Unknown, error.to_string()));
-        }
-        Ok(())
+        Err(Error::new(
+            ErrorCode::Invalid,
+            "transaction logs require Prepare/Complete records",
+        ))
     }
     fn admit(&self) -> Result<Box<dyn CommitPermit>> {
         let binding = self
@@ -1119,25 +904,11 @@ impl<C: Into<Mode>> CommitLog for Log<C> {
             term: status.term,
         }))
     }
-    fn append(&self, bytes: &[u8], time_term: u32) -> Result<()> {
-        let binding = self.binding.get().ok_or_else(|| {
-            Error::new(
-                ErrorCode::Unknown,
-                "transaction log not started after install",
-            )
-        })?;
-        if binding.state.durable.is_none() {
-            return Err(Error::new(
-                ErrorCode::Invalid,
-                "pluggable engines require transaction Prepare/Complete records",
-            ));
-        }
-        let result = self.append_inner(binding, bytes, time_term);
-        if let Err(error) = result {
-            binding.state.gate.lock().fault = Some(error.to_string());
-            return Err(Error::new(ErrorCode::Unknown, error.to_string()));
-        }
-        Ok(())
+    fn append(&self, _bytes: &[u8], _time_term: u32) -> Result<()> {
+        Err(Error::new(
+            ErrorCode::Invalid,
+            "transaction logs require Prepare/Complete records",
+        ))
     }
 }
 

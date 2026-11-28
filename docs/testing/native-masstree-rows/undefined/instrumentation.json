@@ -1,0 +1,18 @@
+[
+  "/var/tmp/mako-shard-rust/src/masstree/compiler.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/str.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/string.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/straccum.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/json.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/kvthread.cc",
+  "/var/tmp/mako-shard-rust/src/masstree/masstree_context.cc",
+  "/var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc",
+  "/var/tmp/mako-shard-rust/src/mako/storage/mtree_rows.cc",
+  "/var/tmp/mako-shard-rust/src/mako/runtime/thread_registration.cc",
+  "/var/tmp/mako-shard-rust/src/mako/allocator.cc",
+  "/var/tmp/mako-shard-rust/src/mako/core.cc",
+  "/var/tmp/mako-shard-rust/src/mako/counter.cc",
+  "/var/tmp/mako-shard-rust/src/mako/rcu.cc",
+  "/var/tmp/mako-shard-rust/src/mako/ticker.cc",
+  "/var/tmp/mako-shard-rust/src/mako/silo_runtime.cc"
+]

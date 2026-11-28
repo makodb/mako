@@ -1,0 +1,648 @@
+{
+  "passed": true,
+  "tests": [
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::failed_insert_results_preserve_only_proven_consistent_metadata"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::failed_insert_results_preserve_only_proven_consistent_metadata ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::scan_decoder_keeps_binary_and_empty_keys_in_one_packed_arena ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::scan_decoder_rejects_invalid_ids_order_bounds_offsets_and_resume"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::scan_decoder_rejects_invalid_ids_order_bounds_offsets_and_resume ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::scan_decoder_requires_exclusive_last_resume_after_progress"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::scan_decoder_requires_exclusive_last_resume_after_progress ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::successful_insert_results_require_an_exact_shape"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::successful_insert_results_require_an_exact_shape ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::trusted_scan_layout_still_rejects_every_borrowing_hazard"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::trusted_scan_layout_still_rejects_every_borrowing_hazard ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "native::tests::typed_opaque_handles_are_send_sync_without_unsafe_impls"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest native::tests::typed_opaque_handles_are_send_sync_without_unsafe_impls ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::every_known_native_status_is_classified_without_boolean_loss"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::every_known_native_status_is_classified_without_boolean_loss ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::fixed_insert_result_matches_native_layout_and_rejects_hostile_fields"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::fixed_insert_result_matches_native_layout_and_rejects_hostile_fields ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::packed_scan_borrows_binary_keys_and_converts_to_owned_compatibility ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::point_read_result_is_one_native_record_id_slot"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::point_read_result_is_one_native_record_id_slot ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::record_ids_reject_the_reserved_zero"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::record_ids_reject_the_reserved_zero ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::runtime_config_builders_preserve_explicit_limits"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::runtime_config_builders_preserve_explicit_limits ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::scan_request_builders_preserve_binary_bounds_and_capacities"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::scan_request_builders_preserve_binary_bounds_and_capacities ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "lib",
+        "tests::shareable_facades_are_send_sync_without_unsafe_impls"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/d732e264a0b6c22b/out/masstree-d732e264a0b6c22b",
+      "output": "\nrunning 1 test\ntest tests::shareable_facades_are_send_sync_without_unsafe_impls ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "copied_scan_bounds_directions_and_resumption_round_trip"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest copied_scan_bounds_directions_and_resumption_round_trip ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "negotiated_point_directory_round_trip_and_cross_worker_read"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest negotiated_point_directory_round_trip_and_cross_worker_read ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "one_shot_fixed_reads_reuse_results_and_end_native_guards"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest one_shot_fixed_reads_reuse_results_and_end_native_guards ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "scoped_reads_end_before_insert_and_drop_during_unwind"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest scoped_reads_end_before_insert_and_drop_during_unwind ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "structure_seal_keeps_reads_open_and_rejects_every_publication_lane"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest structure_seal_keeps_reads_open_and_rejects_every_publication_lane ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "trusted_bounded_record_id_scan_keeps_bounds_and_inclusive_next_continuation"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest trusted_bounded_record_id_scan_keeps_bounds_and_inclusive_next_continuation ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "trusted_fixed_insert_batch_preserves_order_and_reuses_scratch"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest trusted_fixed_insert_batch_preserves_order_and_reuses_scratch ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_integration",
+        "worker_rcu_scope_spans_trees_and_drops_during_unwind"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/cadcf2f2801b2a68/out/native_integration-cadcf2f2801b2a68",
+      "output": "\nrunning 1 test\ntest worker_rcu_scope_spans_trees_and_drops_during_unwind ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "abandoning_a_native_lock_fences_the_table"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest abandoning_a_native_lock_fences_the_table ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "exhausted_budget_rejects_before_directory_allocation_and_reclaims_row_owners"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest exhausted_budget_rejects_before_directory_allocation_and_reclaims_row_owners ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "historical_tombstones_pruning_and_failed_watermarks_are_native"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest historical_tombstones_pruning_and_failed_watermarks_are_native ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "locks_abort_and_checkpoint_obey_native_ownership"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest locks_abort_and_checkpoint_obey_native_ownership ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "native_buffers_are_retained_without_copy_and_outlive_rows"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest native_buffers_are_retained_without_copy_and_outlive_rows ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "masstree",
+        "native_rows",
+        "native_directory_owns_binary_keys_and_enforces_capacity"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/masstree/30845e778ffcbc2d/out/native_rows-30845e778ffcbc2d",
+      "output": "\nrunning 1 test\ntest native_directory_owns_binary_keys_and_enforces_capacity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "history_oracle",
+        "native_masstree_histories_are_strictly_serializable"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/efeb0bb8fe94390f/out/history_oracle-efeb0bb8fe94390f",
+      "output": "\nrunning 1 test\ntest native_masstree_histories_are_strictly_serializable ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.03s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "local_versions_native",
+        "native_local_versions_mix_with_ordered_tables_and_cells"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/a1175de8b13dc162/out/local_versions_native-a1175de8b13dc162",
+      "output": "\nrunning 1 test\ntest native_local_versions_mix_with_ordered_tables_and_cells ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "native_integration",
+        "native_distributed_history_replay_and_retained_participant"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/2e7970de28329cfa/out/native_integration-2e7970de28329cfa",
+      "output": "\nrunning 1 test\ntest native_distributed_history_replay_and_retained_participant ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.02s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "native_integration",
+        "native_point_commit_read_and_abort_round_trip"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/2e7970de28329cfa/out/native_integration-2e7970de28329cfa",
+      "output": "\nrunning 1 test\ntest native_point_commit_read_and_abort_round_trip ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "native_integration",
+        "native_transactional_scan_resumes_and_rejects_a_phantom"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/2e7970de28329cfa/out/native_integration-2e7970de28329cfa",
+      "output": "\nrunning 1 test\ntest native_transactional_scan_resumes_and_rejects_a_phantom ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "native_integration",
+        "private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/2e7970de28329cfa/out/native_integration-2e7970de28329cfa",
+      "output": "\nrunning 1 test\ntest private_direct_native_scan_handles_chunks_bounds_binary_keys_and_tombstones ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree",
+        "public_contract",
+        "native_table_and_values_are_shared_owners"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree/cbe7a20d6e703f90/out/public_contract-cbe7a20d6e703f90",
+      "output": "\nrunning 1 test\ntest native_table_and_values_are_shared_owners ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "capacity",
+        "commit_lock_capacity_releases_acquired_locks_without_installing"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/585a294e5a1e4dcf/out/capacity-585a294e5a1e4dcf",
+      "output": "\nrunning 1 test\ntest commit_lock_capacity_releases_acquired_locks_without_installing ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "capacity",
+        "native_row_budget_is_shared_and_exhaustion_preserves_existing_tables"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/585a294e5a1e4dcf/out/capacity-585a294e5a1e4dcf",
+      "output": "\nrunning 1 test\ntest native_row_budget_is_shared_and_exhaustion_preserves_existing_tables ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "capacity",
+        "scalar_capacity_aborts_staged_changes_and_preserves_existing_access"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/585a294e5a1e4dcf/out/capacity-585a294e5a1e4dcf",
+      "output": "\nrunning 1 test\ntest scalar_capacity_aborts_staged_changes_and_preserves_existing_access ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "capacity",
+        "scan_capacity_failure_cannot_commit_prior_writes"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/585a294e5a1e4dcf/out/capacity-585a294e5a1e4dcf",
+      "output": "\nrunning 1 test\ntest scan_capacity_failure_cannot_commit_prior_writes ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "lib",
+        "native::tests::post_install_failure_marks_runtime_indeterminate"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/e43a9dce808a93cb/out/sto_masstree_api-e43a9dce808a93cb",
+      "output": "\nrunning 1 test\ntest native::tests::post_install_failure_marks_runtime_indeterminate ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "forgotten_guard_keeps_tables_alive_until_explicit_cleanup"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest forgotten_guard_keeps_tables_alive_until_explicit_cleanup ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "owned_api_preserves_crud_scan_abort_and_table_lifetime"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest owned_api_preserves_crud_scan_abort_and_table_lifetime ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "owned_replay_preserves_source_metadata_tombstones_and_clock"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest owned_replay_preserves_source_metadata_tombstones_and_clock ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "prepared_rows_freezes_payload_without_installing_or_releasing_the_participant"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest prepared_rows_freezes_payload_without_installing_or_releasing_the_participant ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "shared_tables_preserve_conflicts_between_affine_workers"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest shared_tables_preserve_conflicts_between_affine_workers ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_api",
+        "table_from_another_database_is_rejected_before_access"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/6354daf74ee6e7e9/out/native_api-6354daf74ee6e7e9",
+      "output": "\nrunning 1 test\ntest table_from_another_database_is_rejected_before_access ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_contract",
+        "binary_values_and_sequential_duplicate_mutations_preserve_cross_table_atomicity"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/326c73f4cadf1f2d/out/native_contract-326c73f4cadf1f2d",
+      "output": "\nrunning 1 test\ntest binary_values_and_sequential_duplicate_mutations_preserve_cross_table_atomicity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.02s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "native_contract",
+        "sealed_directory_keeps_rows_mutable_and_rejects_new_keys"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/326c73f4cadf1f2d/out/native_contract-326c73f4cadf1f2d",
+      "output": "\nrunning 1 test\ntest sealed_directory_keeps_rows_mutable_and_rejects_new_keys ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "participant",
+        "abandoned_installed_participant_fences_worker_and_preserves_publication"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/707a96fd9cd273dd/out/participant-707a96fd9cd273dd",
+      "output": "\nrunning 1 test\ntest abandoned_installed_participant_fences_worker_and_preserves_publication ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "participant",
+        "checkpoint_exports_committed_tombstones_behind_retained_prepare_locks"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/707a96fd9cd273dd/out/participant-707a96fd9cd273dd",
+      "output": "\nrunning 1 test\ntest checkpoint_exports_committed_tombstones_behind_retained_prepare_locks ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "participant",
+        "historical_mutations_publish_tombstones_without_corrupting_physical_cardinality"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/707a96fd9cd273dd/out/participant-707a96fd9cd273dd",
+      "output": "\nrunning 1 test\ntest historical_mutations_publish_tombstones_without_corrupting_physical_cardinality ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "identity": [
+        "sto-masstree-api",
+        "participant",
+        "retained_participant_repeated_locking_installs_copied_final_payload_and_metadata"
+      ],
+      "passed": true,
+      "leak_qualified": false,
+      "exit_code": 0,
+      "executable": "/var/tmp/mako-shard-rust/build_native_san_thread_05/rust-workspace-target/x86_64-unknown-linux-gnu/debug/build/sto-masstree-api/707a96fd9cd273dd/out/participant-707a96fd9cd273dd",
+      "output": "\nrunning 1 test\ntest retained_participant_repeated_locking_installs_copied_final_payload_and_metadata ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n\n"
+    }
+  ],
+  "quarantine": [
+    [
+      "sto-masstree-api",
+      "lib",
+      "native::tests::post_install_failure_marks_runtime_indeterminate"
+    ]
+  ]
+}

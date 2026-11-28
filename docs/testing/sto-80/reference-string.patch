@@ -1,0 +1,105 @@
+--- sto_masstree_compare.cc
++++ string_compare.cc
+@@ -22,7 +22,7 @@
+ namespace {
+ 
+ using Table =
+-    MassTrans<std::uint64_t, versioned_value_struct<std::uint64_t>, false>;
++    MassTrans<std::string, versioned_str_struct, false>;
+ using Clock = std::chrono::steady_clock;
+ 
+ constexpr std::uint64_t kSplitMixGamma = UINT64_C(0x9E3779B97F4A7C15);
+@@ -81,6 +81,7 @@
+   std::uint64_t attempts = 0;
+   std::uint64_t aborts = 0;
+   std::uint64_t checksum = 0;
++  std::uint64_t all_writes = 0;
+ };
+ 
+ enum class Phase : std::uint8_t {
+@@ -233,7 +234,9 @@
+   try {
+     for (std::uint64_t key_number = begin; key_number != end; ++key_number) {
+       const std::string key = encode_key(key_number);
+-      table.transPut(as_str(key), key_number);
++      std::string bytes(8 + mako::EXTRA_BITS_FOR_VALUE, 0);
++      std::memcpy(bytes.data(), &key_number, 8);
++      table.transPut(as_str(key), bytes);
+     }
+     return Sto::try_commit();
+   } catch (const Transaction::Abort&) {
+@@ -292,15 +295,19 @@
+   Sto::start_transaction();
+   try {
+     for (const auto& operation : operations) {
++      std::string bytes;
++      const bool found = table.transGet(as_str(operation.key), bytes);
+       std::uint64_t value = 0;
+-      const bool found = table.transGet(as_str(operation.key), value);
++      if (found) { if (bytes.size() != 8 + mako::EXTRA_BITS_FOR_VALUE) std::abort(); std::memcpy(&value, bytes.data(), 8); }
+       if (!found || TThread::transget_without_throw || !Sto::in_progress()) {
+         Sto::silent_abort();
+         return {false, 0};
+       }
+       checksum += value;
+       if (operation.is_write) {
+-        table.transPut(as_str(operation.key), value + 1);
++        ++value;
++        std::memcpy(bytes.data(), &value, 8);
++        table.transPut(as_str(operation.key), bytes);
+       }
+     }
+     if (Sto::try_commit()) {
+@@ -371,6 +378,7 @@
+       }
+     } while (!attempt.committed);
+ 
++    result.all_writes += std::count_if(operations.begin(), operations.end(), [](const auto& op) { return op.is_write; });
+     if (transaction_phase == Phase::kMeasure &&
+         phase.load(std::memory_order_acquire) == Phase::kMeasure) {
+       ++result.commits;
+@@ -438,7 +446,25 @@
+     total.attempts += result.attempts;
+     total.aborts += result.aborts;
+     total.checksum += result.checksum;
+-  }
++    total.all_writes += result.all_writes;
++  }
++  std::uint64_t verified_writes = 0;
++  for (std::uint64_t begin = 0; begin < config.keyspace; begin += 64) {
++    Sto::start_transaction();
++    for (auto key_number = begin; key_number < std::min(begin + 64, config.keyspace); ++key_number) {
++      const auto key = encode_key(key_number);
++      std::string bytes;
++      if (!table.transGet(as_str(key), bytes) || bytes.size() != 8 + mako::EXTRA_BITS_FOR_VALUE)
++        throw std::runtime_error("reference lost/corrupted row");
++      std::uint64_t value;
++      std::memcpy(&value, bytes.data(), 8);
++      if (value < key_number) throw std::runtime_error("reference counter regressed");
++      verified_writes += value - key_number;
++    }
++    if (!Sto::try_commit()) throw std::runtime_error("reference verification aborted");
++  }
++  if (verified_writes != total.all_writes || !total.commits || total.attempts != total.commits + total.aborts)
++    throw std::runtime_error("reference committed-write conservation failed");
+   const std::uint64_t logical_ops = total.commits * config.ops_per_txn;
+   const auto elapsed_ns_signed =
+       std::chrono::duration_cast<std::chrono::nanoseconds>(measure_end -
+@@ -451,7 +477,7 @@
+   const double ops_per_sec = static_cast<double>(logical_ops) / seconds;
+ 
+   std::cout << std::fixed << std::setprecision(6)
+-            << "BENCH_RESULT={\"engine\":\"cpp-sto-masstree\""
++            << "BENCH_RESULT={\"engine\":\"cpp-sto-string\""
+             << ",\"threads\":" << config.threads
+             << ",\"keyspace\":" << config.keyspace
+             << ",\"ops_per_txn\":" << config.ops_per_txn
+@@ -466,7 +492,7 @@
+             << ",\"elapsed_ns\":" << elapsed_ns
+             << ",\"txn_per_sec\":" << txn_per_sec
+             << ",\"ops_per_sec\":" << ops_per_sec
+-            << ",\"checksum\":" << total.checksum << "}\n";
++            << ",\"checksum\":" << total.checksum << ",\"verified_writes\":" << verified_writes << "}\n";
+   return 0;
+ }
+ 

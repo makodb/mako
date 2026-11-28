@@ -1,0 +1,53 @@
+{
+  "passed": true,
+  "roots": [
+    "sto-masstree",
+    "sto-masstree-api"
+  ],
+  "dependencies_including_tests": [
+    "arc-swap",
+    "mako-history",
+    "masstree",
+    "mtree-sys",
+    "rustversion",
+    "sto-core",
+    "sto-masstree",
+    "sto-masstree-api",
+    "sto-test-datatypes"
+  ],
+  "compiled_packages": [
+    "arc-swap",
+    "masstree",
+    "mtree-sys",
+    "rustversion",
+    "sto-core",
+    "sto-masstree",
+    "sto-masstree-api"
+  ],
+  "native_libraries": [
+    "c++",
+    "c++abi",
+    "jemalloc",
+    "mako_native_storage",
+    "numa",
+    "pthread"
+  ],
+  "dependency_tree": [
+    "sto-masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree)",
+    "arc-swap v1.9.2",
+    "rustversion v1.0.23 (proc-macro)",
+    "masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/masstree)",
+    "mtree-sys v0.0.0 (/var/tmp/mako-shard-rust/crates/mtree-sys)",
+    "sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core)",
+    "arc-swap v1.9.2 (*)",
+    "mako-history v0.1.0 (/var/tmp/mako-shard-rust/crates/mako-history)",
+    "sto-test-datatypes v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-test-datatypes)",
+    "arc-swap v1.9.2 (*)",
+    "sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core) (*)",
+    "",
+    "sto-masstree-api v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree-api)",
+    "masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/masstree) (*)",
+    "sto-core v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-core) (*)",
+    "sto-masstree v0.0.0 (/var/tmp/mako-shard-rust/crates/sto-masstree) (*)"
+  ]
+}

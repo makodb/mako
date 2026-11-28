@@ -944,6 +944,7 @@ impl Group {
             return Ok(());
         }
         if envelope.version != crate::wire::version(self.cfg.sync_writes)
+            || envelope.initial_state != self.cfg.initial_state
             || envelope.group != self.cfg.group
             || !self.core.is_config_member(envelope.sender)
             || envelope.sender == self.cfg.node

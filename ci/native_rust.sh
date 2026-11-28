@@ -35,6 +35,8 @@ runtime() {
         rust_runtime_tests rust_shard_integration_tests rust_runtime_release_tests
 }
 workloads() {
+    cmake --build "$build" --target workload_boundary_audit
+    python3 -m unittest discover -s scripts/tests -p test_workload_boundary.py
     python3 examples/run_native.py transactions --build "$build" --shards 2 --workers 3 --count 50
     python3 examples/run_native.py transactions --build "$build" --shards 2 --replicas 3 --colocated --workers 3 --count 30
     python3 examples/run_native.py micro --build "$build" --shards 2 --colocated --persistent --workers 3 --count 200

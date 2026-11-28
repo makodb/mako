@@ -12,7 +12,7 @@ add_custom_target(masstree_tx_build ${_masstree_tx_default}
     DEPENDS native_storage_source_audit
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 
-# Include the optional fixed-u64 cases as well as the general byte-key adapter.
+# Exercise native byte rows and the STO callback and application adapters.
 # Cases that poison process-global native state must each get a fresh process.
 add_custom_target(masstree_tx_tests
     COMMAND "${Python3_EXECUTABLE}" -m unittest discover
@@ -20,11 +20,11 @@ add_custom_target(masstree_tx_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package sto-masstree --package sto-tpcc-ffi
-        --features sto-masstree/fixed-u64 ${_native_profile_flags}
+        --package masstree --package sto-masstree --package sto-masstree-api
+        ${_native_profile_flags}
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p sto-masstree -p sto-tpcc-ffi --features sto-masstree/fixed-u64
+        -p masstree -p sto-masstree -p sto-masstree-api
         ${_native_profile_flags} --doc
     DEPENDS masstree_tx_build
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
@@ -33,7 +33,7 @@ add_custom_target(masstree_tx_tests
 add_custom_target(masstree_tx_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p sto-tpcc-ffi --all-targets --no-deps -- -D warnings
+        -p sto-masstree-api --all-targets --no-deps -- -D warnings
     DEPENDS masstree_tx_build
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 

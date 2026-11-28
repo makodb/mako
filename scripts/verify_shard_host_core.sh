@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The proof gate of crates/shard-host-core, the verified core of the sharding
-# storage host on the Rust engine (shell: crates/sto-tpcc-ffi/src/shard_host.rs).
+# storage host on the Rust engine (shell: crates/mako-runtime/src/migration_storage.rs).
 #
 # Run it inside the build container, from anywhere in the checkout:
 #     ./docker_build.sh enter
@@ -14,9 +14,8 @@
 # What passes here:
 #   - the source audit, the pin check, the proof with --no-cheating and the
 #     negative controls of scripts/shard_host_core_proof.py;
-#   - a plain cargo build of the core and of its shell. The shell holds
-#     compile-time assertions that the status numbers the proof speaks about
-#     are the engine's, so the proof is not accepted without that build.
+#   - a plain cargo build of the core and runtime shell. Production scan
+#     bounds use the verified rules; OCC+2PC effects have separate contracts.
 #
 # What does not: the shell itself. It is not verified. That it calls the core
 # at the right moment, hands it the spans the caller sent and acts on the

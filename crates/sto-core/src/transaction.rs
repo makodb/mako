@@ -915,20 +915,20 @@ impl TerminalReadFrame {
 ///
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
-/// require_send::<sto_core::Transaction<'static>>();
+/// require_send::<crate::Transaction<'static>>();
 /// ```
 ///
 /// Shared access cannot cross threads either:
 ///
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
-/// require_sync::<sto_core::Transaction<'static>>();
+/// require_sync::<crate::Transaction<'static>>();
 /// ```
 ///
 /// The transaction cannot outlive its attached worker:
 ///
 /// ```compile_fail
-/// fn escape(transaction: sto_core::Transaction<'_>) -> sto_core::Transaction<'static> {
+/// fn escape(transaction: crate::Transaction<'_>) -> crate::Transaction<'static> {
 ///     transaction
 /// }
 /// ```
@@ -975,7 +975,7 @@ impl std::ops::DerefMut for TransactionFrameRef<'_> {
 ///
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
-/// require_send::<sto_core::TerminalReadTransaction<'static>>();
+/// require_send::<crate::TerminalReadTransaction<'static>>();
 /// ```
 pub struct TerminalReadTransaction<'worker, State = TerminalReadOpen> {
     worker: Option<&'worker mut WorkerContext>,

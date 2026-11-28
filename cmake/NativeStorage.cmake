@@ -127,26 +127,26 @@ if(MAKO_BUILD_PROFILE STREQUAL "MASSTREE_TX")
     return()
 endif()
 
+add_custom_target(workload_boundary_audit ALL
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check_workload_boundary.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" VERBATIM)
+
 # Cargo owns all application and network code. Only the audited storage archive
 # crosses the native boundary; SRPC is compiled directly as a Rust dependency.
 foreach(_program mako_node mako_bench mako_transactions mako_redis)
+    set(_program_package mako-runtime)
+    if(_program STREQUAL "mako_bench")
+        set(_program_package mako-workloads)
+    endif()
     add_custom_target(${_program} ALL
         COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
             "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
-            -p mako-runtime --features replication,rocksdb-engine --bin ${_program}
+            -p ${_program_package} --features replication,rocksdb-engine --bin ${_program}
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/${_program}" "${CMAKE_BINARY_DIR}/${_program}"
         DEPENDS mako_native_storage
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 endforeach()
-
-add_custom_target(mako_convert ALL
-    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
-        "${MAKO_NATIVE_CARGO}" build --locked --manifest-path "${_cargo_manifest}" ${_native_profile_flags}
-        -p mako-runtime --features logging --bin mako_convert
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${MAKO_NATIVE_CARGO_TARGET}/${_native_output}/mako_convert" "${CMAKE_BINARY_DIR}/mako_convert"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 
 # External clients only use native SRPC and the checked wire protocol.
 foreach(_program mako_client mako_admin)
@@ -169,7 +169,7 @@ add_custom_target(rust_sto_transaction_tests
 add_custom_target(rust_support_tests
     COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${MAKO_NATIVE_CARGO_TARGET}"
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-clock -p mako-history -p shard-host-core
+        -p mako-history -p shard-host-core
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_masstree_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
@@ -188,23 +188,31 @@ add_custom_target(rust_runtime_tests
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
         -p mako-runtime --lib
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
+add_custom_target(rust_workload_tests
+    COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s scripts/tests -p test_workload_boundary.py
+    COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
+        --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
+        --package mako-workloads --features replication,rocksdb-engine
+    DEPENDS mako_native_storage
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_shard_integration_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine
+        --package mako-runtime --package mako-rocksdb --package mako-workloads --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures,mako-workloads/replication,mako-workloads/rocksdb-engine
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME rust_shard_integration
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine)
+        --package mako-runtime --package mako-rocksdb --package mako-workloads --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures,mako-workloads/replication,mako-workloads/rocksdb-engine)
 add_custom_target(rust_runtime_release_tests
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/run_native_rust_tests.py"
         --cargo "${MAKO_NATIVE_CARGO}" --manifest "${_cargo_manifest}"
-        --package mako-runtime --package mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --release
+        --package mako-runtime --package mako-rocksdb --package mako-workloads --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures,mako-workloads/replication,mako-workloads/rocksdb-engine --release
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_custom_target(rust_native_dependency_audit
@@ -217,11 +225,11 @@ add_custom_target(rust_native_dependency_audit
 add_custom_target(rust_native_quality
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" clippy --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p mako-rocksdb -p mako-storage-api -p mako-storage-rocksdb -p raft-host
-        --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --all-targets --no-deps -- -D warnings
+        -p mako-runtime -p mako-rocksdb -p mako-workloads -p mako-storage-api -p mako-storage-rocksdb -p raft-host
+        --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures,mako-workloads/replication,mako-workloads/rocksdb-engine --all-targets --no-deps -- -D warnings
     COMMAND "${CMAKE_COMMAND}" -E env ${MAKO_NATIVE_CARGO_ENV}
         "${MAKO_NATIVE_CARGO}" test --locked --manifest-path "${_cargo_manifest}"
-        -p mako-runtime -p mako-rocksdb --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine --doc
+        -p mako-runtime -p mako-rocksdb -p mako-workloads --features mako-runtime/replication,mako-runtime/rocksdb-engine,mako-rocksdb/masstree-engine,mako-rocksdb/native-fixtures,mako-workloads/replication,mako-workloads/rocksdb-engine --doc
     DEPENDS mako_native_storage
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" USES_TERMINAL VERBATIM)
 add_test(NAME native_storage_source_audit
@@ -231,6 +239,6 @@ add_test(NAME native_storage_source_audit
 set_tests_properties(native_storage_source_audit rust_shard_integration PROPERTIES
     LABELS "native-rust" TIMEOUT 900)
 
-foreach(_program mako_node mako_bench mako_transactions mako_redis mako_convert mako_client mako_admin)
+foreach(_program mako_node mako_bench mako_transactions mako_redis mako_client mako_admin)
     install(PROGRAMS "${CMAKE_BINARY_DIR}/${_program}" DESTINATION bin)
 endforeach()

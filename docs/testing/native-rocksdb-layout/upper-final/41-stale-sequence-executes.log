@@ -1,0 +1,32 @@
+note: verifying module admission (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+  --> src/admission.rs:78:1
+   |
+78 | / pub fn admit(phase: Phase, lease: Option<u64>, last: Option<Header>, request: Header,
+79 | |     operation: Operation, minimum_term: u32, valid: bool, exact_receipt: bool) -> (out: Decision)
+   | |________________________________________________________________________________________________^
+
+error: postcondition not satisfied
+   --> src/admission.rs:82:9
+    |
+ 82 |         out == Decision::Continue <==> continues(phase,lease,last,request,operation,minimum_term,valid),
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+132 |             return Decision::Continue;
+    |             ------------------------- at this exit
+
+error: postcondition not satisfied
+   --> src/admission.rs:96:9
+    |
+ 96 | /         out == Decision::AbortedReplay ==> phase == Phase::Aborted && operation == Operation::Abort
+ 97 | |             && last is Some && same_attempt(request,last->Some_0) && same_stream(request,last->Some_0)
+ 98 | |             && request.sequence > last->Some_0.sequence && current(lease,request,minimum_term,valid),
+    | |____________________________________________________________________________________________________^ failed this postcondition
+...
+123 |               if matches!(phase, Phase::Aborted) && matches!(operation, Operation::Abort) { return Decision::AbortedReplay; }
+    |                                                                                             ------------------------------ at this exit
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors
+

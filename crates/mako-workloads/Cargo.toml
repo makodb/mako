@@ -1,0 +1,28 @@
+[package]
+name = "mako-workloads"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-storage = ["mako-runtime/native-storage"]
+rocksdb-engine = ["mako-runtime/rocksdb-engine"]
+logging = ["mako-runtime/logging"]
+replication = ["native-storage", "logging"]
+test-hooks = ["mako-runtime/test-hooks"]
+
+[dependencies]
+mako-runtime = { path = "../mako-runtime", features = ["runtime-storage"] }
+mako-storage-api = { path = "../mako-storage-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+srpc = { path = "../../src/srpc" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "mako_bench"
+path = "src/bin/bench.rs"

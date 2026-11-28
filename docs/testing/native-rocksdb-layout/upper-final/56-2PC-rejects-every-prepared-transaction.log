@@ -1,0 +1,15 @@
+note: verifying module two_phase (selected functions)
+
+error: postcondition not satisfied
+   --> src/two_phase.rs:160:13
+    |
+160 | /             self.outcome() == Decision::Pending ==>
+161 | |                 (matches!(out, Decision::Commit) <==> self.prepared() && !self.vetoed()),
+    | |________________________________________________________________________________________^ failed this postcondition
+...
+165 |           Decision::Abort
+    |           --------------- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

@@ -1643,3 +1643,6 @@ mod tests {
         ));
     }
 }
+
+#[path = "native_rows.rs"]
+pub mod rows;

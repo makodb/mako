@@ -4788,7 +4788,7 @@ fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
 #[cfg(feature = "distributed")]
 #[test]
 fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
-    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_core::clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
     use sto_core::{ParticipantError, ParticipantPhase};
 
     let acquire = fixture(vec![(Callback::Acquire, 2, Action::Panic)]);
@@ -4842,7 +4842,7 @@ fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
 #[cfg(feature = "distributed")]
 #[test]
 fn installed_participant_cleanup_failure_is_definitely_committed() {
-    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_core::clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
     let fixture = fixture(vec![(Callback::Finish, 1, Action::Panic)]);
     let mut worker = fixture.runtime.attach().unwrap();
     let mut participant = worker.begin().unwrap().into_participant();

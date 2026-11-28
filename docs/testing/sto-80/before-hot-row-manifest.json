@@ -1,0 +1,29 @@
+{
+  "revision": "7cf616061c009991c5de96aa938ca79709c454ac",
+  "dirty_worktree": true,
+  "source_sha256": {
+    "src/mako/storage/mtree_rows.cc": "1ef582ceded7c4bfe90ede3c91289a65149f159277dcbb1fb563985e53be53bc",
+    "src/mako/storage/mtree_rows.h": "d7eb166b76d1e933c8713fc7c9993fd60cc51202f399e83038854ebd2aa733ae",
+    "src/mako/storage/mtree_abi.cc": "dd632367b279023f4cc6feb23396492a546d5b1a512d6c24330968c48d831791",
+    "src/mako/masstree_btree.h": "8b0ee15c9aaf85d5a0afd29b6236c737b593f6e037469f29753f0a7981eb8e38",
+    "crates/masstree/src/native_rows.rs": "a3af81355a52cb0daa71bf218edc8cac27423ae080a5ce70e761fc6fe6f41507",
+    "crates/masstree/build.rs": "120c790443bf72281747140875181fda83b241d63cfc69aee7f50e9e08f67497",
+    "crates/sto-masstree/src/lib.rs": "48a3313c45e94570c5c4c52a555b6405a5119da338c7a0bfd70f2b43f1c6b791",
+    "crates/sto-masstree-api/src/native.rs": "886e6d3f2d2e8297c94c9bd2c2b0b91720d400bb00b1ea53816cdcf745fc8d91",
+    "crates/masstree/tests/native_rows.rs": "b5528bfe09d4cef96ce2f4c8887f2aa4addceb66421c5645a1db85a41aae7498",
+    "crates/sto-masstree-api/tests/leaf_contract.rs": "33843597e6842d7bfc5e4cd7bf127523014d7e230ad62a6bb5f17181ac171be5",
+    "crates/sto-masstree/examples/native_parity.rs": "dcd49475e8426b7c28dfbc7d1494c43e95d61329c8aec9456abc3774fda37454",
+    "crates/sto-core/src/runtime.rs": "09d571f1ad6d06d4d670efb8f142fca3713f3ccaddae576d7bf71d1e4b57f217",
+    "crates/Cargo.toml": "8cc96036fcc00a11b52f8b24454e9e7f6b4c2e4878c56e913f693ccf7a9777f5",
+    "crates/Cargo.lock": "8fb36b247fa91f497fdef768a09e55ef2f8e5fd38503da7970c6df5846297b73"
+  },
+  "binary_sha256": {
+    "build_sto_reference/cpp_string_clean": "7bcd1d47c8f5f5bc9d7c06072d387207dbfd31364f28e5f1a9d0b9b5ff0002ca",
+    "build_sto_perf/cargo/release/examples/native_parity": "4c5197bac5f3e651496a3071a291c51ea19cb584c6349f1b70407103c799fdf8"
+  },
+  "reference_revision": "0d26e2e0b",
+  "rust_lto": "fat",
+  "rustflags": "-C target-cpu=native",
+  "cpp_flags": "-O3 -DNDEBUG -march=native -stdlib=libc++",
+  "qualification": "five alternating pairs, independent median ratio >= 0.80 per cell"
+}

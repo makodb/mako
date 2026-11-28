@@ -1,0 +1,29 @@
+
+running 24 tests
+test epoch_admission::tests::authoritative_copy_includes_physical_aliases_and_absences_not_routing_domain ... ok
+test epoch_admission::tests::background_control_guards_track_entire_role_and_round_without_leases ... ok
+test epoch_admission::tests::late_request_uses_receiver_capture_not_sender_snapshot_number ... ok
+test epoch_admission::tests::matching_foreign_snapshot_label_never_proves_owner_incarnation_or_coordinate ... ok
+test epoch_admission::tests::old_capture_authorizes_new_accesses_after_freeze_but_fresh_capture_rejects ... ok
+test epoch_admission::tests::whole_ranges_detect_interior_frozen_holes_and_remote_suffixes ... ok
+test full_scan::tests::binary_cursor_and_explicit_eof ... ok
+test full_scan::tests::byte_full_page_and_callback_stop_are_terminal_without_replay ... ok
+test full_scan::tests::exact_page_limit_and_request_roundtrip ... ok
+test full_scan::tests::identity_roundtrip_distinguishes_fixed_empty_and_rejects_relabeling ... ok
+test full_scan::tests::oversized_and_out_of_range_rows_are_errors_not_eof ... ok
+test full_scan::tests::raw_identity_does_not_bound_raw_keys_to_coordinate_capacity ... ok
+test full_scan::tests::reverse_boundary_early_stop_and_malformed_page ... ok
+test full_scan::tests::reverse_pages_resume_strictly_below_exact_binary_cursor ... ok
+test full_scan::tests::unbounded_reverse_discovers_real_maximum_and_preserves_empty_key ... ok
+test full_scan::tests::wrong_snapshot_page_is_rejected_before_callbacks ... ok
+test gateway::tests::changed_grant_and_inflight_cannot_execute ... ok
+test gateway::tests::discovery_binds_route_pair_once_and_never_invents_provenance ... ok
+test gateway::tests::lost_success_is_replayed_and_old_sequence_is_fenced ... ok
+test gateway::tests::only_forwarded_transport_ambiguity_can_resume_identical_request ... ok
+test gateway::tests::sdk_timeout_keeps_identity_and_exhaustion_never_wraps ... ok
+test gateway::tests::session_control_replays_and_never_undoes_operations ... ok
+test gateway::tests::snapshot_relabeling_cannot_resume_or_replay ... ok
+test routing::tests::retained_snapshot_capture_never_relabels_old_grant ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

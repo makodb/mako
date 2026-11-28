@@ -22,7 +22,7 @@ class InventoryTests(unittest.TestCase):
             ('crates/a/tests/contract.rs', 'a', 'tests'),
             ('crates/a/src/tests.rs', 'a', 'tests'),
             ('crates/a/src/distributed/tests.rs', 'a', 'tests'),
-            ('crates/mako-runtime/src/tpcc/mod.rs', 'mako-runtime', 'auxiliary'),
+            ('crates/mako-workloads/src/tpcc/mod.rs', 'mako-workloads', 'source'),
             ('tla/mako-original/src/lib.rs', 'historical-models', 'proofs'),
         ]
         for path, owner, expected in cases:
@@ -69,6 +69,8 @@ b = { path = "../b" }
                 'docs/old/lib.rs': 'pub struct HistoricalCopy;\n',
                 'third-party/ext/lib.rs': 'pub struct External;\n',
                 'src/srpc/base/srpc_base.c': 'int leaf(void);\n',
+                'src/mako/storage/mtree_rows.cc': '// native row owner\n',
+                'crates/masstree/src/native_rows.rs': '// safe native row handles\n',
                 str(inv.BOOK): 'Book before\n' + inv.START + '\n' + inv.END + '\nBook after\n',
             }
             for path, text in files.items():
@@ -88,6 +90,8 @@ b = { path = "../b" }
                 self.assertEqual(report['components']['b']['in'], ['a'])
                 self.assertEqual(len(report['dependencies']), 3)
                 self.assertEqual(report['components']['srpc-native']['source'], 1)
+                self.assertEqual(report['components']['native-masstree-rows']['source'], 2)
+                self.assertEqual(report['components']['native-storage-support']['source'], 0)
                 self.assertEqual(len(report['excluded_source_files']), 2)
                 self.assertNotIn('b/untracked.rs', [f['path'] for f in report['files']])
                 self.assertEqual(len({f['path'] for f in report['files']}), len(report['files']))

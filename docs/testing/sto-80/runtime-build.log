@@ -1,0 +1,24 @@
+[1/20] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_rows.cc for CXX dependencies
+[2/20] Scanning /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc for CXX dependencies
+[3/20] Generating CXX dyndep file CMakeFiles/mako_native_storage.dir/CXX.dd
+[4/6] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_rows.cc.o
+[5/6] Building CXX object CMakeFiles/mako_native_storage.dir/src/mako/storage/mtree_abi.cc.o
+In file included from /var/tmp/mako-shard-rust/src/mako/storage/mtree_abi.cc:8:
+In file included from /var/tmp/mako-shard-rust/src/mako/masstree_btree.h:31:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_scan.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_tcursor.hh:23:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree_key.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/masstree.hh:24:
+In file included from /var/tmp/mako-shard-rust/src/masstree/ksearch.hh:22:
+In file included from /var/tmp/mako-shard-rust/src/masstree/kpermuter.hh:22:
+/var/tmp/mako-shard-rust/src/masstree/string.hh:194:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  194 |                 ++xmemo()->refcount;
+      |                 ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:197:32: warning: decrement of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  197 |             if (memo_offset && --xmemo()->refcount == 0)
+      |                                ^
+/var/tmp/mako-shard-rust/src/masstree/string.hh:216:17: warning: increment of object of volatile-qualified type 'volatile uint32_t' (aka 'volatile unsigned int') is deprecated [-Wdeprecated-volatile]
+  216 |                 ++m->refcount;
+      |                 ^
+3 warnings generated.
+[6/6] Linking CXX static library libmako_native_storage.a

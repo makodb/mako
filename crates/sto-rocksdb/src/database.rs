@@ -1,11 +1,12 @@
 use crate::command::{digest, put_u64, Decoder};
+use crate::layout::{Snapshot, Store as RocksBlobs};
 use crate::transaction::{Adapter, Key, KeyMeta, RangeState};
 use crate::{
     core, mutex, ApplyOutcome, Command, CommandBody, Error, Outcome, OutcomeKind, Position,
     RequestId, Result, Worker,
 };
+use mako_rocksdb_store::Durability;
 use mako_rocksdb_store::{BlobOp, Blobs};
-use mako_rocksdb_store::{Durability, RocksBlobs, Snapshot};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,7 @@ pub enum ApplyFault {
 }
 pub struct Database {
     pub(crate) root: PathBuf,
+    pub(crate) public: PathBuf,
     pub(crate) group: u64,
     pub(crate) sync_writes: bool,
     pub(crate) distributed: bool,
@@ -62,7 +64,7 @@ impl Database {
     /// writes on power/machine crash; reopening or installing the opposite mode
     /// is rejected rather than upgrading weak history to durable history.
     pub fn open(path: impl AsRef<Path>, group: u64, sync_writes: bool) -> Result<Arc<Self>> {
-        Self::open_mode(path.as_ref(), group, sync_writes, false)
+        Self::open_mode(path.as_ref(), group, sync_writes, false, None)
     }
     /// Separate format profile for externally decided distributed STO effects.
     pub fn open_distributed(
@@ -70,96 +72,61 @@ impl Database {
         group: u64,
         sync_writes: bool,
     ) -> Result<Arc<Self>> {
-        Self::open_mode(path.as_ref(), group, sync_writes, true)
+        Self::open_mode(path.as_ref(), group, sync_writes, true, None)
     }
+    /// Open or adopt native families with stable application table identities.
+    /// Adoption scans existing rows and initializes metadata without changing
+    /// user keys/values. The prior RocksDB writer must be stopped.
+    pub fn open_distributed_with_tables(
+        path: impl AsRef<Path>,
+        group: u64,
+        sync_writes: bool,
+        tables: &[Table],
+    ) -> Result<Arc<Self>> {
+        let mut tables = tables.to_vec();
+        tables.sort_by_key(|t| t.id);
+        let db = Self::open_mode(path.as_ref(), group, sync_writes, true, Some(&tables))?;
+        for table in &tables {
+            if db.lookup_table(&table.name)?.as_ref() != Some(table) {
+                return Err(Error::Corruption("column-family schema mismatch".into()));
+            }
+        }
+        Ok(db)
+    }
+
     fn open_mode(
         path: &Path,
         group: u64,
         sync_writes: bool,
         distributed: bool,
+        tables: Option<&[Table]>,
     ) -> Result<Arc<Self>> {
-        let root = std::path::absolute(path)?;
-        std::fs::create_dir_all(&root)?;
-        let root_lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(root.join("LOCK"))?;
-        root_lock
-            .try_lock()
-            .map_err(|error| Error::Storage(format!("database root lock: {error}")))?;
-        let current = root.join("CURRENT");
-        let name = if current.exists() {
-            let name = std::fs::read_to_string(&current)?;
-            if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-                return Err(Error::Corruption("invalid generation manifest".into()));
-            }
-            name
-        } else {
-            let name = "generation-0".to_owned();
-            std::fs::create_dir_all(root.join(&name))?;
-            name
-        };
-        let rocks = Arc::new(if current.exists() {
-            RocksBlobs::open_existing_strict(&root.join(&name), durability(sync_writes))?
-        } else {
-            RocksBlobs::open_strict(&root.join(&name), durability(sync_writes))?
-        });
-        if let Some(format) = rocks.get(FORMAT)? {
-            if rocks.get(crate::distributed::PROFILE)?.as_deref()
-                != distributed.then_some(crate::distributed::PROFILE_VALUE)
-            {
-                return Err(Error::Corruption(
-                    "storage application profile mismatch".into(),
-                ));
-            }
-            if format == format_bytes(group, !sync_writes) {
-                return Err(Error::Corruption(
-                    "database durability mode mismatch".into(),
-                ));
-            }
-            if format != format_bytes(group, sync_writes) {
-                return Err(Error::WrongGroup);
-            }
-        } else {
-            if current.exists() {
-                return Err(Error::Corruption(
-                    "selected generation has no format metadata".into(),
-                ));
-            }
-            let mut nonempty = false;
-            rocks.for_each_entry_from(b"", 1, &mut |_, _| {
-                nonempty = true;
-                Ok(false)
-            })?;
-            if nonempty {
-                return Err(Error::Corruption("unidentified nonempty database".into()));
-            }
-            let format = format_bytes(group, sync_writes);
-            let position = position_bytes(Position::default());
-            let zero_generation = 0u64.to_be_bytes();
-            let mut initial = vec![
-                BlobOp::Put {
-                    key: FORMAT,
-                    val: &format,
-                },
-                BlobOp::Put {
-                    key: APPLIED,
-                    val: &position,
-                },
-                BlobOp::Put {
-                    key: GENERATION,
-                    val: &zero_generation,
-                },
-            ];
-            if distributed {
-                initial.push(BlobOp::Put {
-                    key: crate::distributed::PROFILE,
-                    val: crate::distributed::PROFILE_VALUE,
-                });
-            }
-            rocks.write_batch(&initial)?;
+        let crate::directory::Opened {
+            root,
+            public,
+            name,
+            rocks,
+            lock: root_lock,
+        } = crate::directory::open(path, group, sync_writes, distributed, tables)?;
+        let expected = format_bytes(group, sync_writes);
+        let opposite = format_bytes(group, !sync_writes);
+        let format = rocks.get(FORMAT)?.ok_or_else(|| {
+            Error::Corruption("selected generation has no format metadata".into())
+        })?;
+        if rocks.get(crate::distributed::PROFILE)?.as_deref()
+            != distributed.then_some(crate::distributed::PROFILE_VALUE)
+        {
+            return Err(Error::Corruption(
+                "storage application profile mismatch".into(),
+            ));
+        }
+        if format == opposite {
+            return Err(Error::Corruption(
+                "database durability mode mismatch".into(),
+            ));
+        }
+        if format != expected {
+            return Err(Error::WrongGroup);
         }
         let position = read_position(&rocks)?;
         if (position.index == 0) != (position.term == 0) {
@@ -174,9 +141,6 @@ impl Database {
             }
         }
         let data_generation = required_u64(rocks.get(GENERATION)?, "data generation")?;
-        if !current.exists() {
-            crate::checkpoint::publish_manifest(&root, &name)?;
-        }
         let runtime = Runtime::new(
             RuntimeConfig::new()
                 .with_max_items_per_transaction(crate::MAX_OPERATIONS + 1)
@@ -203,6 +167,7 @@ impl Database {
             .map_err(core)?;
         Ok(Arc::new(Self {
             root,
+            public,
             group,
             sync_writes,
             distributed,
@@ -668,15 +633,16 @@ pub(crate) fn durability(sync_writes: bool) -> Durability {
     }
 }
 pub(crate) fn format_bytes(group: u64, sync_writes: bool) -> Vec<u8> {
-    // Keep the sync identity unchanged; async is a distinct, incompatible format.
+    // Async is a distinct, incompatible durability identity.
     let mut bytes = if sync_writes {
-        b"STORDB01".to_vec()
+        b"STORDB02".to_vec()
     } else {
-        b"STORDBA1".to_vec()
+        b"STORDBA2".to_vec()
     };
     put_u64(&mut bytes, group);
     bytes
 }
+
 pub(crate) fn position_bytes(position: Position) -> Vec<u8> {
     let mut bytes = position.index.to_be_bytes().to_vec();
     put_u64(&mut bytes, position.term);

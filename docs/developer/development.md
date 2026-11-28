@@ -37,7 +37,7 @@ profile under `build/storage-tests`.
 
 ### Masstree transaction component
 
-`sto-masstree` and `sto-tpcc-ffi` own the transaction adapter and its Rust/native
+`sto-masstree` and `sto-masstree-api` own the transaction adapter and its Rust/native
 wrapper. They share `sto-core` and the underlying Masstree index but have their
 own compilation and local-test entry point:
 
@@ -61,12 +61,11 @@ cmake --build build_masstree_tx --parallel 32 --target masstree_tx_tests masstre
 
 The default build compiles the two libraries and audits their dependency graph
 and actual artifacts. No application targets, RocksDB, SRPC or Raft are built.
-The only native archive is the audited Masstree/index support closure. Pure
-protocol and storage-host decision crates are shared dependencies.
+The only native archive is the audited Masstree/index support closure. Only STO and clock cores are shared dependencies. The wrapper does not depend
+on sharding, protocol decisions, node runtime or workloads.
 
-Local tests cover both adapter packages, including optional `fixed-u64` cases,
-owned lifetimes, participant transitions, replay/checkpoints and migration
-storage effects. Native cases run in fresh processes. Doctests and the wrapper's
+Local tests cover both adapter packages, including native byte rows and retained participant cases,
+owned lifetimes, local participant transitions and replay/checkpoints. Native cases run in fresh processes. Doctests and the wrapper's
 strict Clippy check retain their existing coverage. Core OCC tests, Rust/native
 index tests and distributed runtime integration remain separate suites. The
 compatibility target `rust_application_adapter_tests` delegates to this suite.
@@ -161,7 +160,9 @@ command is part of compilation or `ci upper`.
 
 `examples/run_native.py` owns every process it starts. It assigns ephemeral
 ports and stores configuration/logs below the selected build directory.
-It retains failures. `mako_node`, `mako_bench`, `mako_transactions`, `mako_redis`,
+It retains failures. Select `--engine rocksdb` for the `ROCKSDB_RUNTIME` build;
+the default `--engine masstree` uses the optional Masstree data layer.
+`mako_node`, `mako_bench`, `mako_transactions`, `mako_redis`,
 `mako_client` and `mako_admin` expose `--help`.
 
 The compatibility CLI reads the supported legacy topology/configuration

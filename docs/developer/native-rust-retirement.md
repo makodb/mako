@@ -38,7 +38,7 @@ third-party code. The dependency audit checks what executables actually link.
 | Retired implementation or driver | Native implementation and regression gate |
 | --- | --- |
 | Paxos protocol, workers, service and mode | Removed; Raft is the supported replication protocol. Unsupported selection fails. |
-| C++ transaction manager and workload wrappers | `sto-core`, `sto-test-datatypes`, `sto-tpcc-ffi`; independent transaction tests, owned API tests and compile-fail worker-affinity doctest |
+| C++ transaction manager and workload wrappers | `sto-core`, `sto-test-datatypes`, `sto-masstree-api`; independent transaction tests, owned API tests and compile-fail worker-affinity doctest |
 | C++ shard clients, receiver and transaction admission | `mako-runtime`; participant/coordinator integration, conflict cleanup, replayed messages, stream leases and unknown-outcome fencing |
 | C++ migration host and storage fixture drivers | `src/cluster`, `shard-host-core`, `mako-runtime::migration`; raw/warehouse relocation, live admission drain, paginated scans and separate-process migration |
 | C++ Raft host and transpiler shell | `raft-host` using retained `raft-core`/`raft-store`; quorum/no-op/read-barrier, isolation, failover, divergent tails, compaction and crash/restart tests |

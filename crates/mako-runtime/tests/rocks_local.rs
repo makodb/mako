@@ -53,6 +53,7 @@ fn start(root: &Path, create: bool) -> (Arc<LocalLog>, Arc<Store>) {
     }
     log.start_engine(
         raft_host::LocalConfig {
+            initial_state: [0; 32],
             group: 77,
             directory: root.join("log"),
             create,
@@ -149,7 +150,7 @@ fn rocks_local_checkpoint_reopens_atomic_data_and_metadata() {
 
 #[test]
 fn persistent_log_rejects_a_proposal_from_another_admission_term() {
-    use mako_protocol::{
+    use sto_core::protocol::{
         contracts::CommitLog,
         journal::{Journal, Member, Record, Transaction, TransactionId, VERSION},
     };

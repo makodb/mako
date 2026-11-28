@@ -5,6 +5,10 @@
 mod checkpoint;
 mod command;
 mod database;
+mod directory;
+mod layout;
+pub use directory::control_path;
+pub use layout::META as METADATA_COLUMN_FAMILY;
 pub mod distributed;
 mod transaction;
 

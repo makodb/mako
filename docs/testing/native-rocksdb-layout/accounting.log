@@ -1,0 +1,3 @@
+STO boundary: engine-only dependencies; forbidden edges rejected; Raft independent
+Workload boundary: 27 manifests checked; no incoming dependency
+component census is current

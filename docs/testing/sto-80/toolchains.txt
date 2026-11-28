@@ -1,0 +1,5 @@
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+Ubuntu clang version 22.1.8 (++20260714014902+ca7933e47d3a-1~exp1~20260714135019.80)
+Target: x86_64-pc-linux-gnu
+Thread model: posix
+InstalledDir: /usr/lib/llvm-22/bin

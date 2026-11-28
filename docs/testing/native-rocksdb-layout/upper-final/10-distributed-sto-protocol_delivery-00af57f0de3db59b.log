@@ -1,0 +1,10 @@
+
+running 5 tests
+test delayed_abort_cannot_cancel_successor_and_retired_lease_cannot_execute ... ok
+test lost_install_reply_replays_exact_receipt_without_repeating_effects ... ok
+test lost_stage_reply_still_enrolls_peer_and_cleanup_visits_every_peer ... ok
+test stale_reply_is_rejected_and_changed_target_cannot_rebind_an_attempt ... ok
+test uncertain_install_survives_lane_destruction_and_prevents_migration_drain ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

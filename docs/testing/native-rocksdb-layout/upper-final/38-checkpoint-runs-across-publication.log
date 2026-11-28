@@ -1,0 +1,17 @@
+note: verifying module recovery (selected functions)
+
+error: postcondition not satisfied
+  --> src/recovery.rs:12:13
+   |
+12 |       ensures ready <==> paused && row_cut == applied && metadata_cut == applied
+   |  _____________^
+13 | |         && saved_prepares == required_prepares,
+   | |______________________________________________^ failed this postcondition
+14 |   {
+15 | /     row_cut == applied && metadata_cut == applied
+16 | |         && saved_prepares == required_prepares
+   | |______________________________________________- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 1 previous error
+

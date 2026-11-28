@@ -894,10 +894,29 @@ fn interrupted_snapshot_stage_authority_and_generation_publication_recover() {
 }
 
 #[test]
+fn local_log_rejects_a_different_initial_application_state() {
+    use raft_host::{LocalConfig, LocalHost};
+    let root = Directory::new();
+    let mut config = LocalConfig {
+        initial_state: [7; 32], group: 71,
+        directory: root.0.join("log"), create: true, sync_writes: true,
+    };
+    let machine = Machine::open(root.0.join("rows"));
+    drop(LocalHost::start(config.clone(), machine.clone()).unwrap());
+    config.create = false;
+    drop(LocalHost::start(config.clone(), machine.clone()).unwrap());
+    for wrong in [[8; 32], [0; 32]] {
+        config.initial_state = wrong;
+        assert!(LocalHost::start(config.clone(), machine.clone()).is_err());
+    }
+}
+
+#[test]
 fn local_log_replays_a_saved_decision_after_application_failure() {
     use raft_host::{LocalConfig, LocalHost};
     let root = Directory::new();
     let config = LocalConfig {
+        initial_state: [0; 32],
         group: 71,
         directory: root.0.join("log"),
         create: true,
@@ -943,6 +962,7 @@ fn local_log_replays_a_saved_decision_after_application_failure() {
         .unwrap();
     assert!(LocalHost::start(
         LocalConfig {
+            initial_state: [0; 32],
             group: 71,
             directory: root.0.join("log"),
             create: false,
@@ -965,6 +985,7 @@ fn local_and_raft_drivers_write_the_same_rocksdb_entry_format() {
     let local_path = root.0.join("local");
     let local = LocalHost::start(
         LocalConfig {
+            initial_state: [0; 32],
             group: 72,
             directory: local_path.clone(),
             create: true,
@@ -1040,6 +1061,7 @@ fn local_checkpoint_failure_keeps_log_and_retry_uses_another_generation() {
     }
     let root = Directory::new();
     let config = LocalConfig {
+        initial_state: [0; 32],
         group: 72,
         directory: root.0.join("log"),
         create: true,
@@ -1119,4 +1141,23 @@ fn local_checkpoint_failure_keeps_log_and_retry_uses_another_generation() {
         ProposalStatus::Applied
     );
     assert_eq!(machine.bytes(), b"committed retained suffix");
+}
+
+#[test]
+fn different_initial_application_states_cannot_form_a_quorum() {
+    let root = Directory::new();
+    let members = peers(2);
+    let mut hosts = Vec::new();
+    for id in 1..=2 {
+        let mut cfg = config(&root.0, 880, id, &members, true);
+        cfg.initial_state = [id as u8;32];
+        let machine = Machine::open(root.0.join(format!("machine-{id}")));
+        hosts.push(Host::start(cfg, machine).unwrap());
+    }
+    let end = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < end {
+        assert!(hosts.iter().all(|h| !h.status().is_leader && h.status().committed.index == 0));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    for host in hosts { host.shutdown(); }
 }

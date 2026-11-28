@@ -1,0 +1,117 @@
+warning: field `value` has inconsistent type or visibility in different variants
+         ->value syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `snapshot` has inconsistent type or visibility in different variants
+         ->snapshot syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `generation` has inconsistent type or visibility in different variants
+         ->generation syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/ghost_log.rs:19:1
+   |
+19 | / /// Entry/field effects, not desired placement actions. Entry insertion is useful
+20 | | /// for initialization and immutable records; in-place replica/session changes
+21 | | /// have individual field writes. Directory snapshots can only be appended.
+22 | | pub enum Write {
+...  |
+47 | |     Reply { nonce: int, value: p::Outcome },
+48 | | }
+   | |_^
+
+warning: field `result` has inconsistent type or visibility in different variants
+         ->result syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_control_history.rs:6:1
+   |
+ 6 | / pub enum ControlCall {
+ 7 | |     Begin { id:TxnId,source:u32,destination:u32,range:KeyRange,result:Result<u64,Status> },
+ 8 | |     Transition { request:n::Request,status:Status },
+ 9 | |     Reply { id:TxnId,result:Option<Outcome> },
+10 | |     Receive { generation:u64,owner:u32,certificate:Certificate,status:Status },
+11 | | }
+   | |_^
+
+warning: field `before` has inconsistent type or visibility in different variants
+         ->before syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_engine_history.rs:6:1
+   |
+ 6 | / pub enum EngineRecord {
+ 7 | |     Settle { id:TxnId,outcome:EngineOutcome,before:EngineImages,after:EngineImages,
+ 8 | |         writes:Map<int,Option<Seq<u8>>> },
+ 9 | |     Completion { id:TxnId,outcome:EngineOutcome },
+10 | |     Read { id:TxnId,key:int,before:Image,after:Image,returned:Option<Seq<u8>> },
+11 | | }
+   | |_^
+
+warning: field `after` has inconsistent type or visibility in different variants
+         ->after syntax will not be available for this field
+         use #[allow(inconsistent_fields)] on the struct to silence the warnign
+  --> src/cluster/source_engine_history.rs:6:1
+   |
+ 6 | / pub enum EngineRecord {
+ 7 | |     Settle { id:TxnId,outcome:EngineOutcome,before:EngineImages,after:EngineImages,
+ 8 | |         writes:Map<int,Option<Seq<u8>>> },
+ 9 | |     Completion { id:TxnId,outcome:EngineOutcome },
+10 | |     Read { id:TxnId,key:int,before:Image,after:Image,returned:Option<Seq<u8>> },
+11 | | }
+   | |_^
+
+note: verifying module epoch_admission (selected functions)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+  --> src/cluster/epoch_admission.rs:19:1
+   |
+19 | / pub fn complete_request(terminal: bool, active: bool, unknown: bool, foreign: bool)
+20 | |     -> (decision: RequestCompletion)
+   | |___________________________________^
+
+error: postcondition not satisfied
+  --> src/cluster/epoch_admission.rs:23:9
+   |
+23 |           (decision is RetainFrame) == ((terminal || !active) && (unknown || foreign)),
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+27 | /     if !terminal && active { RequestCompletion::KeepOpen }
+28 | |     else if foreign { RequestCompletion::RetainFrame }
+29 | |     else if active { RequestCompletion::AbortThenFinish }
+30 | |     else { RequestCompletion::Finish }
+   | |______________________________________- at the end of the function body
+
+error: postcondition not satisfied
+  --> src/cluster/epoch_admission.rs:24:9
+   |
+24 |           (decision is Finish) == (!active && !unknown && !foreign),
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ failed this postcondition
+...
+27 | /     if !terminal && active { RequestCompletion::KeepOpen }
+28 | |     else if foreign { RequestCompletion::RetainFrame }
+29 | |     else if active { RequestCompletion::AbortThenFinish }
+30 | |     else { RequestCompletion::Finish }
+   | |______________________________________- at the end of the function body
+
+verification results:: 0 verified, 1 errors (partial verification with `--verify-*`)
+error: aborting due to 2 previous errors; 6 warnings emitted
+
